@@ -15,12 +15,21 @@
 #include <tuple>
 
 #include <rex/chrono/clock.h>
+#include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ui/keybinds.h>
 #include <rex/ui/ui_event.h>
 #include <rex/ui/virtual_key.h>
 
 #include <switch.h>
+
+// Face buttons (1.0.1). By default each Switch button acts as the Xbox 360 button with the same
+// letter: A accepts and B goes back, as in other Switch games. With true they go by position, as on
+// an Xbox pad: the bottom one (B on the Switch) acts as A, the mapping of 1.0.0. It applies at once;
+// the settings menu reads it too (window_switch.cpp).
+REXCVAR_DEFINE_BOOL(input_xbox_layout, false, "Input",
+                    "Face buttons by position, as on an Xbox pad (the bottom button, B, acts as A). "
+                    "false = by letter: A accepts and B goes back");
 
 namespace rex::ui {
 // rex/ui/overlay/debug_overlay.h (not included here because it pulls in ImGui).
@@ -45,13 +54,25 @@ struct ButtonMapping {
   uint16_t xinput;
 };
 
-// Positional, as on an Xbox pad: the bottom face button is A. On Switch pads
-// that button is labelled B.
-constexpr std::array<ButtonMapping, 14> kButtonMappings = {{
+// Face buttons by letter (the default): the Switch's A is the Xbox A.
+constexpr std::array<ButtonMapping, 4> kFrontalesPorLetra = {{
+    {HidNpadButton_A, X_INPUT_GAMEPAD_A},
+    {HidNpadButton_B, X_INPUT_GAMEPAD_B},
+    {HidNpadButton_X, X_INPUT_GAMEPAD_X},
+    {HidNpadButton_Y, X_INPUT_GAMEPAD_Y},
+}};
+
+// By position (input_xbox_layout), as on an Xbox pad: the bottom one is A.
+// On Switch pads that button is labelled B.
+constexpr std::array<ButtonMapping, 4> kFrontalesPorPosicion = {{
     {HidNpadButton_B, X_INPUT_GAMEPAD_A},
     {HidNpadButton_A, X_INPUT_GAMEPAD_B},
     {HidNpadButton_Y, X_INPUT_GAMEPAD_X},
     {HidNpadButton_X, X_INPUT_GAMEPAD_Y},
+}};
+
+// The other buttons are the same with both layouts.
+constexpr std::array<ButtonMapping, 10> kButtonMappings = {{
     {HidNpadButton_Up, X_INPUT_GAMEPAD_DPAD_UP},
     {HidNpadButton_Down, X_INPUT_GAMEPAD_DPAD_DOWN},
     {HidNpadButton_Left, X_INPUT_GAMEPAD_DPAD_LEFT},
@@ -276,6 +297,13 @@ void SwitchInputDriver::Poll(size_t index) {
   DispatchMenuShortcuts(slot, held);
   X_INPUT_GAMEPAD gamepad{};
   uint16_t buttons = 0;
+  const auto& frontales =
+      REXCVAR_GET(input_xbox_layout) ? kFrontalesPorPosicion : kFrontalesPorLetra;
+  for (const ButtonMapping& mapping : frontales) {
+    if (held & mapping.npad) {
+      buttons |= mapping.xinput;
+    }
+  }
   for (const ButtonMapping& mapping : kButtonMappings) {
     if (held & mapping.npad) {
       buttons |= mapping.xinput;

@@ -31,13 +31,15 @@
  *  - L+R and the right stick move the debug overlay (F3) if it is open (debug_overlay.cpp);
  *    meanwhile the game does not see L, R or that stick.
  *
- * Buttons, by position, as in the game's menus:
- *   B (bottom)      accept: check, open, choose
- *   A (right)       back: close a dropdown, leave a field
- *   X (top)         activate a text field (without a keyboard it does not type; A leaves)
+ * Buttons, as in the game's menus (input_xbox_layout, in switch_input_driver.cpp):
+ *   A               accept: check, open, choose
+ *   B               back: close a dropdown, leave a field
+ *   X (top)         activate a text field (without a keyboard it does not type; B leaves)
  *   Y (left)        nothing (see AplicarEntrada)
  *   D-pad           move
  *   left stick      scroll
+ * With input_xbox_layout = true they go by position, as in 1.0.0: the bottom one (B)
+ * accepts and the right one (A) goes back.
  * Touching the screen is a click.
  */
 
@@ -75,6 +77,8 @@ struct EntradaUi {
   // Touched point, already in ImGui logical coordinates.
   float toque_x = 0.0f;
   float toque_y = 0.0f;
+  // input_xbox_layout: face buttons by position instead of by letter.
+  bool por_posicion = false;
 };
 
 // What must be remembered from one frame to the next.
@@ -90,8 +94,8 @@ void LeerEntradaUi(EntradaUi& salida, float toque_a_logico_x, float toque_a_logi
 
 inline void ConfigurarNavegacion(ImGuiIO& io) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-  // By position: the bottom button accepts (B on Switch), as in the game.
-  io.ConfigNavSwapGamepadButtons = false;
+  // A accepts, as in the game; AplicarEntrada sets it every frame from input_xbox_layout.
+  io.ConfigNavSwapGamepadButtons = true;
 }
 
 namespace detalle {
@@ -133,6 +137,10 @@ inline void AplicarEntrada(ImGuiIO& io, const EntradaUi& e, EstadoEntradaUi& est
   } else {
     io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
   }
+  // ImGui reads the buttons by position: it accepts with the bottom one (B on the Switch) and goes
+  // back with the right one (A). Swapped, A accepts and B goes back, as in the game with the mapping
+  // by letter.
+  io.ConfigNavSwapGamepadButtons = !e.por_posicion;
 
   const uint64_t leidos = e.mando_conectado ? e.botones : 0;
   // With L and R held, the D-pad and ZL are input driver shortcuts: they open and close menus or

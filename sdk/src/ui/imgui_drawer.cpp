@@ -40,6 +40,22 @@ static_assert(sizeof(ImmediateVertex) == sizeof(ImDrawVert), "Vertex types must 
 
 namespace {
 
+// Scale of the menus. On the Switch the window is 1280x720 in handheld mode and 1920x1080 docked (and with
+// Reverse-NX's Fake Docked), with the medium DPI in both cases: at 1080p the menus had the same pixels and took
+// up a third less of the screen. Here they are always drawn on a logical canvas of 720 lines, which the immediate
+// drawer stretches to the window (the coordinate space of ImmediateDrawer::Begin, scissors included): they take up
+// the same part of the screen in both modes. The window DPI is left alone because the application uses it too
+// (rex_app.cpp: OnWindowResized and OnDpiScaleChanged).
+float FisicoALogico(const Window* window) {
+#if REX_PLATFORM_SWITCH
+  const uint32_t alto = window->GetActualPhysicalHeight();
+  if (alto) {
+    return 720.0f / float(alto);
+  }
+#endif
+  return float(window->GetMediumDpi()) / float(window->GetDpi());
+}
+
 void ApplyDefaultStyle(ImGuiStyle& style) {
   style.ScrollbarRounding = 0;
   style.WindowRounding = 0;
@@ -418,7 +434,7 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
   }
   last_frame_time_ticks_ = current_frame_time_ticks;
 
-  float physical_to_logical = float(window_->GetMediumDpi()) / float(window_->GetDpi());
+  const float physical_to_logical = FisicoALogico(window_);
   io.DisplaySize.x = window_->GetActualPhysicalWidth() * physical_to_logical;
   io.DisplaySize.y = window_->GetActualPhysicalHeight() * physical_to_logical;
 
@@ -667,7 +683,7 @@ void ImGuiDrawer::OnKey(KeyEvent& e, bool is_down) {
 
 void ImGuiDrawer::UpdateMousePosition(float x, float y) {
   auto& io = GetIO();
-  float physical_to_logical = float(window_->GetMediumDpi()) / float(window_->GetDpi());
+  const float physical_to_logical = FisicoALogico(window_);
   io.MousePos.x = x * physical_to_logical;
   io.MousePos.y = y * physical_to_logical;
 }

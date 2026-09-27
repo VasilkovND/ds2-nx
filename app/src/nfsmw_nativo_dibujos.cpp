@@ -396,8 +396,13 @@ REXCVAR_DEFINE_BOOL(nfsmw_nativo_mipmaps, true, "NFSMW",
  * cache at 313 MB), but that was with 384 and without the emergency path that exists now (stop the GPU,
  * release half the cache and retry). With 478 of 1375 MB used, 384 leaves a 700 MB margin.
  */
+/* 384 -> 512 on the Switch, with nfsmw_resolucion_interna = "automatico" (720p handheld and 1080p docked).
+ * In races at 1024x576 the cache already reached 272-281 MB, and at 720p and 1080p the resolved render targets
+ * are larger, so the resolution and the limit go up together: raising only the resolution once filled the cache,
+ * and releasing textures to upload them again caused stutters. GPU memory on the console: 514 MB used of
+ * 1,492 MB budgeted. nfsmw.toml has the same value. */
 #if REX_PLATFORM_SWITCH
-constexpr int32_t kTexturasMbMaxPorDefecto = 384;
+constexpr int32_t kTexturasMbMaxPorDefecto = 512;
 #else
 constexpr int32_t kTexturasMbMaxPorDefecto = 384;
 #endif

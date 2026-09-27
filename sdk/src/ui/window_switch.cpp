@@ -8,6 +8,7 @@
 
 #include <rex/ui/window_switch.h>
 
+#include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ui/surface_switch.h>
 #include <rex/ui/switch_imgui_input.h>
@@ -16,6 +17,8 @@
 #include <switch.h>
 
 #include "rex/ui/switch_saltynx.h"
+
+REXCVAR_DECLARE(bool, input_xbox_layout);  // defined in switch_input_driver.cpp
 
 namespace rex::ui {
 
@@ -211,6 +214,7 @@ void LeerEntradaUi(EntradaUi& salida, float toque_a_logico_x, float toque_a_logi
   }
 
   salida = EntradaUi{};
+  salida.por_posicion = REXCVAR_GET(input_xbox_layout);
   padUpdate(&mando);
   salida.mando_conectado = padIsConnected(&mando);
   if (salida.mando_conectado) {
