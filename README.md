@@ -245,7 +245,7 @@ the game for the code generator. The whole process is in [docs/building.md](docs
 - **[Tom Clay](https://github.com/rexglue/rexglue-sdk)** — the ReXGlue SDK, built on the work of the
   **[Xenia](https://xenia.jp)** team.
 - **[hedge-dev](https://github.com/hedge-dev/XenosRecomp)** — XenosRecomp, the Xenos shader translator.
-- **[danfromtico](https://github.com/danfromtico/mesa-switch)** and **[NaGaa95]**(https://github.com/NaGaa95/mesa-switch) — mesa-switch: Mesa, NVK and NAK on Horizon.
+- **[danfromtico](https://github.com/danfromtico/mesa-switch)** and **[NaGaa95](https://github.com/NaGaa95/mesa-switch)** — mesa-switch: Mesa, NVK and NAK on Horizon.
 - **[devkitPro](https://devkitpro.org) and [switchbrew](https://github.com/switchbrew/libnx)** — devkitA64 and libnx.
 - The other libraries listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
