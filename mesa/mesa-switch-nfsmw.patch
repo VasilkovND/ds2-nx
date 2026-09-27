@@ -1,0 +1,3335 @@
+diff --git a/bindgen-switch-wrapper.sh b/bindgen-switch-wrapper.sh
+index 36cadd7..288622f 100755
+--- a/bindgen-switch-wrapper.sh
++++ b/bindgen-switch-wrapper.sh
+@@ -36,6 +36,12 @@ else
+ fi
+ CLANG_RES_DIR="$("$CLANG_BIN" -print-resource-dir)/include"
+ 
++# __sFILE (devkitA64's FILE) fails the size check that bindgen generates
++# (it computes 184 and emits 176). Mesa only uses it through a pointer, so it is declared opaque.
++# The only structures whose size does not match are the Linux DRM ones (drm_agp_*, drm_map,
++# drm_wait_vblank...), which do not exist and are not used on Switch; all the others pass the check.
++set -- "--no-layout-tests" "--opaque-type" "__sFILE" "$@"
++
+ # Append a sentinel, then rotate args from front to back, injecting after "--".
+ inject_done=0
+ set -- "$@" "__BINDGEN_WRAPPER_END__"
+diff --git a/build-switch.sh b/build-switch.sh
+index cc2722d..cc7070f 100755
+--- a/build-switch.sh
++++ b/build-switch.sh
+@@ -99,7 +99,7 @@ export PATH="/usr/local/libexec:/project/builddir-native/src/compiler/clc:/proje
+ cd /project && meson setup builddir-switch --wipe \
+     --cross-file switch_cross_file.txt \
+     --buildtype=release \
+-    -Doptimization=1 \
++    -Doptimization=2 \
+     -Db_lto=false \
+     -Db_ndebug=true \
+     -Dvulkan-drivers=nouveau \
+diff --git a/build-unified.sh b/build-unified.sh
+index a31e5d2..d89f497 100755
+--- a/build-unified.sh
++++ b/build-unified.sh
+@@ -107,6 +107,7 @@ if [[ ! -x "${HOST_BUILD_DIR}/src/compiler/clc/mesa_clc.exe" ||
+         -Dgles2=disabled \
+         -Dtools=[] \
+         -Dllvm=enabled \
++        -Dshared-llvm=enabled \
+         -Dmesa-clc=enabled \
+         -Dprecomp-compiler=enabled \
+         -Dinstall-mesa-clc=true
+diff --git a/meson.build b/meson.build
+index 60ad845..948831b 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1990,7 +1990,8 @@ if with_clc
+   # all-targets is needed to support static linking LLVM build with multiple targets.
+   # windowsdriver is needded with LLVM>=15 and frontendhlsl is needed with LLVM>=16,
+   # but we don't know what LLVM version we are using yet
+-  llvm_optional_modules += ['all-targets', 'windowsdriver', 'frontendhlsl', 'frontenddriver']
++  # 'demangle' is needed when linking static clang with GCC/MinGW (llvm::demangle in libclangCodeGen).
++  llvm_optional_modules += ['all-targets', 'windowsdriver', 'frontendhlsl', 'frontenddriver', 'demangle']
+ endif
+ if draw_with_llvm
+   llvm_modules += 'native'
+diff --git a/rustc-native-msys2-wrapper.sh b/rustc-native-msys2-wrapper.sh
+index b77dfeb..a11fc5a 100755
+--- a/rustc-native-msys2-wrapper.sh
++++ b/rustc-native-msys2-wrapper.sh
+@@ -44,4 +44,12 @@ for arg in "$@"; do
+     esac
+ done
+ 
+-exec "$RUSTC_BIN" -C linker=C:/msys64/ucrt64/bin/gcc.exe "${ARGS[@]}"
++# The original machine had the UCRT64 environment; this MSYS2 is MINGW64. Whichever exists is used.
++NATIVE_LINKER="${MESA_SWITCH_NATIVE_LINKER:-}"
++if [ -z "$NATIVE_LINKER" ]; then
++    for cand in C:/msys64/ucrt64/bin/gcc.exe C:/msys64/mingw64/bin/gcc.exe C:/msys64/clang64/bin/gcc.exe; do
++        [ -x "$cand" ] && NATIVE_LINKER="$cand" && break
++    done
++fi
++[ -n "$NATIVE_LINKER" ] || NATIVE_LINKER="$(command -v gcc || command -v cc)"
++exec "$RUSTC_BIN" -C linker="$NATIVE_LINKER" "${ARGS[@]}"
+diff --git a/rustc-switch-wrapper.sh b/rustc-switch-wrapper.sh
+index 008e20d..0768620 100755
+--- a/rustc-switch-wrapper.sh
++++ b/rustc-switch-wrapper.sh
+@@ -65,6 +65,8 @@ done
+ # (e.g. the devkitpro-mesa-rust container) it does not exist and rustc would
+ # fail with "linker not found".
+ FALLBACK_LINKER=C:/msys64/ucrt64/bin/gcc.exe
++# The MSYS2 installed here is MINGW64, not UCRT64.
++[ -x "$FALLBACK_LINKER" ] || FALLBACK_LINKER=C:/msys64/mingw64/bin/gcc.exe
+ if [ ! -x "$FALLBACK_LINKER" ]; then
+     FALLBACK_LINKER="$(command -v cc || command -v gcc || true)"
+ fi
+diff --git a/src/nouveau/compiler/nak/opt_instr_sched_common.rs b/src/nouveau/compiler/nak/opt_instr_sched_common.rs
+index 2d8be48..23b8e26 100644
+--- a/src/nouveau/compiler/nak/opt_instr_sched_common.rs
++++ b/src/nouveau/compiler/nak/opt_instr_sched_common.rs
+@@ -284,12 +284,17 @@ pub fn estimate_variable_latency(sm: &ShaderModelInfo, op: &Op) -> u32 {
+         Op::Redux(_) | Op::R2UR(_) => 15,
+ 
+         // Texture ops
++        //
++        // 32 falls far short on a SoC with shared memory (GM20B + LPDDR4): a texture miss costs
++        // hundreds of cycles. Raising it makes the pre-pass separate the sample from its consumer
++        // and keep more requests in flight. It only affects the scheduler's priority;
++        // the scoreboard barriers are computed separately in calc_instr_deps.rs.
+         Op::Tex(_)
+         | Op::Tld(_)
+         | Op::Tld4(_)
+         | Op::Tmml(_)
+         | Op::Txd(_)
+-        | Op::Txq(_) => 32,
++        | Op::Txq(_) => 200,
+ 
+         // Surface ops
+         Op::SuLd(_)
+@@ -314,7 +319,10 @@ pub fn estimate_variable_latency(sm: &ShaderModelInfo, op: &Op) -> u32 {
+         | Op::Ipa(_)
+         | Op::CCtl(_)
+         | Op::LdTram(_)
+-        | Op::MemBar(_) => 32,
++        // Like textures, a global memory load from shared LPDDR4 does not take
++        // 32 cycles. Ipa and ALd are cheaper, but they share the same match arm and the only effect
++        // of overestimating them is placing them earlier.
++        | Op::MemBar(_) => 200,
+ 
+         // Control-flow ops
+         Op::WarpSync(_) => 16,
+diff --git a/src/nouveau/compiler/nak/sm50.rs b/src/nouveau/compiler/nak/sm50.rs
+index 294d71f..1fc4235 100644
+--- a/src/nouveau/compiler/nak/sm50.rs
++++ b/src/nouveau/compiler/nak/sm50.rs
+@@ -486,9 +486,12 @@ impl SM50Op for OpFAdd {
+         b.copy_alu_src_if_not_reg(src0, GPR, SrcType::F32);
+ 
+         if src1.as_imm_not_f20().is_some()
+-            && self.rnd_mode != FRndMode::NearestEven
++            && (self.rnd_mode != FRndMode::NearestEven || self.saturate)
+         {
+-            // Hardware cannot encode long-immediate + rounding mode
++            // Hardware cannot encode long-immediate + rounding mode.
++            // NFSMW: nor saturate. FADD32I has no SAT bit on SM50, so the
++            // .SAT of fsat(fadd(a, imm32)) was silently dropped (the sea of the
++            // coastal tracks came out black: saturate(x - 0.4) went negative).
+             b.copy_alu_src(src1, GPR, SrcType::F32);
+         }
+     }
+diff --git a/src/nouveau/compiler/nak_nir.c b/src/nouveau/compiler/nak_nir.c
+index beb01b1..f667c15 100644
+--- a/src/nouveau/compiler/nak_nir.c
++++ b/src/nouveau/compiler/nak_nir.c
+@@ -203,8 +203,19 @@ nak_optimize_nir(nir_shader *nir, const struct nak_compiler *nak)
+       LOOP_OPT(nir, nir_opt_dce);
+       LOOP_OPT(nir, nir_opt_cse);
+ 
++      /* NFSMW: NAK is the Mesa driver that flattens branches the least. With limit = 0 it only
++       * flattens ifs with both sides empty; ANV uses 8 and so does RADV. And NAK has no
++       * if-to-predicate pass, so every if that survives NIR becomes a real branch
++       * (SSY/BRA/SYNC) on Maxwell.
++       *
++       * In this game that matters a lot: the frame is pure shading, ~300 operations per
++       * fragment, and the scene runs at 31 % of the GPU's arithmetic peak. The shader translator
++       * already went from 1806 to 334 branches; the remaining ones have to be flattened by the driver.
++       *
++       * Watch with NVK_SHADER_STATS=1: flattening raises register pressure, and on GM20B a spill
++       * to local memory is very expensive. If "B de memoria local" goes above 0, go back to 0. */
+       nir_opt_peephole_select_options peephole_select_options = {
+-         .limit = 0,
++         .limit = 8,
+          .discard_ok = true,
+       };
+       LOOP_OPT_NOT_IDEMPOTENT(nir, nir_opt_peephole_select,
+diff --git a/src/nouveau/horizon/nouveau_horizon.h b/src/nouveau/horizon/nouveau_horizon.h
+index 6d99954..7f926c9 100644
+--- a/src/nouveau/horizon/nouveau_horizon.h
++++ b/src/nouveau/horizon/nouveau_horizon.h
+@@ -424,6 +424,14 @@ nouveau_horizon_runtime_put(struct nouveau_horizon_runtime *runtime);
+ void
+ nouveau_horizon_get_gm20b_info(struct nv_device_info *info_out);
+ 
++/* Fills in the ZCULL geometry by asking the kernel. Unlike the function above, this one
++ * needs the libnx services alive: a runtime reference must be held
++ * (nouveau_horizon_runtime_get()) while it is called. Without valid data it leaves has_zcull_info
++ * false and touches nothing else.
++ */
++void
++nouveau_horizon_add_zcull_info(struct nv_device_info *info_out);
++
+ enum nouveau_horizon_status
+ nouveau_horizon_device_create(
+    struct nouveau_horizon_runtime *runtime,
+diff --git a/src/nouveau/horizon/nouveau_horizon_device.c b/src/nouveau/horizon/nouveau_horizon_device.c
+index a920be8..c350022 100644
+--- a/src/nouveau/horizon/nouveau_horizon_device.c
++++ b/src/nouveau/horizon/nouveau_horizon_device.c
+@@ -61,19 +61,31 @@ nouveau_horizon_get_gm20b_info(struct nv_device_info *info_out)
+    info_out->nc_atom_size_B = 128;
+ }
+ 
+-static void
+-nouveau_horizon_add_runtime_device_info(struct nouveau_horizon_device *device)
++void
++nouveau_horizon_add_zcull_info(struct nv_device_info *info_out)
+ {
++   if (info_out == NULL)
++      return;
++
+    const nvioctl_zcull_info *zcull = nvGpuGetZcullInfo();
+    const uint32_t ctxsw_size = nvGpuGetZcullCtxSize();
+    if (zcull == NULL || ctxsw_size == 0 ||
+        zcull->width_align_pixels == 0 ||
+        zcull->height_align_pixels == 0 ||
+        zcull->pixel_squares_by_aliquots == 0 ||
+-       zcull->aliquot_total == 0)
++       zcull->aliquot_total == 0 ||
++       /* nil divides by these alignments and indexes a fixed array of 16 entries
++        * (src/nouveau/nil/zcull.rs). Odd data from the kernel would cause a division by zero or a
++        * Rust panic inside vkCreateImage. Here they are rejected and ZCULL stays off, which is
++        * the correct failure. NXVK validates the same (nvkmd_nvgpu_pdev.c:77-85).
++        */
++       zcull->subregion_width_align_pixels == 0 ||
++       zcull->subregion_height_align_pixels == 0 ||
++       zcull->subregion_count == 0 ||
++       zcull->subregion_count > 16)
+       return;
+ 
+-   device->info.zcull_info = (struct nv_zcull_device_info) {
++   info_out->zcull_info = (struct nv_zcull_device_info) {
+       .width_align_pixels = zcull->width_align_pixels,
+       .height_align_pixels = zcull->height_align_pixels,
+       .pixel_squares_by_aliquots = zcull->pixel_squares_by_aliquots,
+@@ -90,7 +102,7 @@ nouveau_horizon_add_runtime_device_info(struct nouveau_horizon_device *device)
+       /* nvhost allocates the GM20B Z-cull context at a 4 KiB boundary. */
+       .ctxsw_align = 0x1000,
+    };
+-   device->info.has_zcull_info = true;
++   info_out->has_zcull_info = true;
+ }
+ 
+ static uint32_t
+@@ -209,7 +221,7 @@ nouveau_horizon_device_create(
+       device->enable_timing = create_info->enable_timing;
+    }
+    nouveau_horizon_get_gm20b_info(&device->info);
+-   nouveau_horizon_add_runtime_device_info(device);
++   nouveau_horizon_add_zcull_info(&device->info);
+ 
+    const nvioctl_gpu_characteristics *gpu_info = nvGpuGetCharacteristics();
+    device->page_size_B = nouveau_horizon_choose_page_size(gpu_info);
+diff --git a/src/nouveau/horizon/nouveau_horizon_gm20b.c b/src/nouveau/horizon/nouveau_horizon_gm20b.c
+index 0468efc..460f707 100644
+--- a/src/nouveau/horizon/nouveau_horizon_gm20b.c
++++ b/src/nouveau/horizon/nouveau_horizon_gm20b.c
+@@ -90,24 +90,36 @@ nouveau_horizon_gm20b_build_fence(
+    enum nouveau_horizon_completion_mode completion_mode)
+ {
+    uint32_t *cmd = commands;
+-   uint32_t syncpoint_increment = syncpoint_id | (1u << 16);
++   const bool cpu_visible =
++      completion_mode == NOUVEAU_HORIZON_COMPLETION_CPU;
+ 
+-   /* UnknownFlush orders engine writes before the syncpoint action. */
+-   *cmd++ = 0x451 | (0 << 13) | (0 << 16) | (4u << 29);
+-   if (completion_mode == NOUVEAU_HORIZON_COMPLETION_CPU)
+-      syncpoint_increment |= 1u << 20;
++   uint32_t syncpoint_increment =
++      NVVAL(NVB197, INCREMENT_SYNC_POINT, INDEX, syncpoint_id) |
++      NVDEF(NVB197, INCREMENT_SYNC_POINT, CONDITION, ROP_WRITES_DONE);
+ 
+-   *cmd++ = 0x0B2 | (0 << 13) | (1 << 16) | (1u << 29);
++   /* Only a CPU or compositor read needs the GPU L2 written back. */
++   if (cpu_visible)
++      syncpoint_increment |=
++         NVDEF(NVB197, INCREMENT_SYNC_POINT, CLEAN_L2, TRUE);
++
++   *cmd++ = nouveau_horizon_gm20b_immediate_header(
++      NVB197_FLUSH_PENDING_WRITES, 0);
++   *cmd++ = nouveau_horizon_gm20b_incr_header(
++      NVB197_INCREMENT_SYNC_POINT, 1);
+    *cmd++ = syncpoint_increment;
+ 
+    /* GM20B CPU/compositor-visible completion needs the duplicated
+     * cache-clean syncpoint action used by public deko3d on this GPU.
+     */
+-   if (completion_mode == NOUVEAU_HORIZON_COMPLETION_CPU) {
+-      *cmd++ = 0x0B2 | (0 << 13) | (1 << 16) | (1u << 29);
++   if (cpu_visible) {
++      *cmd++ = nouveau_horizon_gm20b_incr_header(
++         NVB197_INCREMENT_SYNC_POINT, 1);
+       *cmd++ = syncpoint_increment;
+    }
+ 
++   assert((uint32_t)(cmd - commands) ==
++          (cpu_visible ? NOUVEAU_HORIZON_GM20B_FENCE_CPU_WORDS
++                       : NOUVEAU_HORIZON_GM20B_FENCE_GPU_WORDS));
+    return cmd - commands;
+ }
+ 
+diff --git a/src/nouveau/vulkan/nvk_cmd_buffer.c b/src/nouveau/vulkan/nvk_cmd_buffer.c
+index bdd6bf6..2b01464 100644
+--- a/src/nouveau/vulkan/nvk_cmd_buffer.c
++++ b/src/nouveau/vulkan/nvk_cmd_buffer.c
+@@ -18,6 +18,9 @@
+ #include "nvkmd/nvkmd.h"
+ 
+ #include "vk_pipeline_layout.h"
++#ifdef HAVE_SWITCH_PLATFORM
++#include "vk_pipeline.h" /* NFSMW: vk_switch_precarga */
++#endif
+ #include "vk_synchronization.h"
+ #include "util/compiler.h"
+ 
+@@ -275,6 +278,9 @@ nvk_cmd_buffer_flush_no_prefetch_push(struct nvk_cmd_buffer *cmd)
+ void
+ nvk_cmd_buffer_new_push(struct nvk_cmd_buffer *cmd)
+ {
++#ifdef HAVE_SWITCH_PLATFORM
++   const uint64_t t_sw = nvk_sw_ticks(); /* NFSMW: always, this path is rare */
++#endif
+    nvk_cmd_buffer_flush_push(cmd, false);
+ 
+    uint8_t subc_mask = nvk_cmd_buffer_subchannel_mask(cmd);
+@@ -295,6 +301,11 @@ nvk_cmd_buffer_new_push(struct nvk_cmd_buffer *cmd)
+       cmd->push_mem_limit =
+          (uint32_t *)((char *)cmd->push_mem->mem->map + NVK_CMD_MEM_SIZE);
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   cmd->state.sw.cuentas[NVK_SW_C_TROZOS]++;
++   cmd->state.sw.partes[NVK_SW_P_TROZO].veces++;
++   cmd->state.sw.partes[NVK_SW_P_TROZO].ticks += nvk_sw_ticks() - t_sw;
++#endif
+ }
+ 
+ void
+@@ -574,6 +585,9 @@ nvk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+    VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
+ 
+    nvk_reset_cmd_buffer(&cmd->vk, 0);
++#ifdef HAVE_SWITCH_PLATFORM
++   nvk_sw_empezar_bufer(cmd); /* NFSMW: measurement and improvements for this buffer */
++#endif
+ 
+    if (cmd->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY)
+       cmd->state.inherited_pipeline_statistics =
+@@ -623,6 +637,8 @@ nvk_EndCommandBuffer(VkCommandBuffer commandBuffer)
+     * the common in-buffer case is still deferred to its first real consumer.
+     */
+    nvk_cmd_buffer_switch_flush_pending_mme_sync(cmd);
++   nvk_switch_set4_sumar(cmd); /* NFSMW */
++   nvk_sw_sumar(cmd); /* NFSMW */
+ #endif
+ 
+    nvk_cmd_buffer_flush_push(cmd, false);
+@@ -1208,6 +1224,18 @@ nvk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd,
+    struct nvk_cmd_buffer *cmd = container_of(vk_cmd, struct nvk_cmd_buffer, vk);
+    struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: vkCmdBindPipeline measurement, 1 of every N. It is decided
++    * here, the first thing binding a graphics pipeline does, and
++    * nvk_sw_cmd_set_dynamic_graphics_state, which runs right after, uses it too.
++    */
++   const bool graficos_sw = stage_count > 0 &&
++                            stages[0] != MESA_SHADER_COMPUTE &&
++                            stages[0] != MESA_SHADER_KERNEL;
++   cmd->state.sw.midiendo_pipe = graficos_sw && nvk_sw_toca_medir(cmd, NVK_SW_T_PIPE);
++   const uint64_t t_sw = cmd->state.sw.midiendo_pipe ? nvk_sw_ticks() : 0;
++#endif
++
+    for (uint32_t i = 0; i < stage_count; i++) {
+       struct nvk_shader *shader =
+          container_of(shaders[i], struct nvk_shader, vk);
+@@ -1223,10 +1251,52 @@ nvk_cmd_bind_shaders(struct vk_command_buffer *vk_cmd,
+       else
+          nvk_cmd_bind_graphics_shader(cmd, stages[i], shader);
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   nvk_sw_parte(cmd, NVK_SW_P_PIPE_SHADERS, t_sw); /* NFSMW */
++#endif
+ }
+ 
+ #define NVK_VK_GRAPHICS_STAGE_BITS (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT)
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: NVK_SW_M_CBUFS. The cbuf groups of a set of stages (the
++ * usual loop), cached with their key: the stages and whether there is a task shader,
++ * which is all they depend on. When checking, it is recomputed and compared.
++ */
++static inline uint32_t
++nvk_sw_grupos_de_etapas(struct nvk_cmd_buffer *cmd, VkShaderStageFlags stages,
++                        bool usar_guardados, bool comprobar)
++{
++   const struct nvk_shader *mesh_shader =
++      cmd->state.gfx.shaders[MESA_SHADER_MESH];
++   const bool has_task_shader =
++      mesh_shader != NULL && mesh_shader->info.mesh.has_task_shader;
++   const bool guardados = usar_guardados &&
++                          cmd->state.gfx.sw_grupos_etapas == stages &&
++                          cmd->state.gfx.sw_grupos_tarea == has_task_shader;
++   if (guardados && !comprobar)
++      return cmd->state.gfx.sw_grupos;
++
++   uint32_t groups = 0;
++   u_foreach_bit(i, stages & NVK_VK_GRAPHICS_STAGE_BITS) {
++      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << i);
++      uint32_t g = nvk_cbuf_binding_for_stage(stage, has_task_shader);
++      groups |= BITFIELD_BIT(g);
++   }
++
++   if (guardados) {
++      if (groups == cmd->state.gfx.sw_grupos)
++         cmd->state.sw.validadas[NVK_SW_M_CBUFS]++;
++      else
++         nvk_sw_diferencia(cmd, NVK_SW_M_CBUFS, "grupos de cbufs guardados");
++   }
++   cmd->state.gfx.sw_grupos_etapas = stages;
++   cmd->state.gfx.sw_grupos_tarea = has_task_shader;
++   cmd->state.gfx.sw_grupos = groups;
++   return groups;
++}
++#endif
++
+ void
+ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
+                                     VkShaderStageFlags stages,
+@@ -1235,6 +1305,18 @@ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
+    if (!(stages & NVK_VK_GRAPHICS_STAGE_BITS))
+       return;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_CBUFS */
++   cmd->state.gfx.sw_cbufs_limpios = false;
++   const bool sw_cbufs = nvk_sw_activa(cmd, NVK_SW_M_CBUFS);
++   bool sw_comprobar = false;
++   if (sw_cbufs) {
++      cmd->state.sw.usos[NVK_SW_M_CBUFS]++;
++      sw_comprobar = nvk_sw_toca_comprobar(cmd, NVK_SW_M_CBUFS);
++   }
++   const uint32_t groups =
++      nvk_sw_grupos_de_etapas(cmd, stages, sw_cbufs, sw_comprobar);
++#else
+    const struct nvk_shader *mesh_shader =
+       cmd->state.gfx.shaders[MESA_SHADER_MESH];
+    const bool has_task_shader =
+@@ -1246,10 +1328,33 @@ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
+       uint32_t g = nvk_cbuf_binding_for_stage(stage, has_task_shader);
+       groups |= BITFIELD_BIT(g);
+    }
++#endif
+ 
+    u_foreach_bit(g, groups) {
+       struct nvk_cbuf_group *group = &cmd->state.gfx.cbuf_groups[g];
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: NVK_SW_M_CBUFS. Only the DESC_SET, UBO_DESC and
++       * DYNAMIC_UBO slots can get dirty, and those are desc_slots and
++       * dyn_ubo_slots (nvk_switch_set4_anotar_tipo keeps them up to date whenever
++       * cbufs[] changes): those are walked instead of all 16 with their switch. The
++       * guard walks all 16 as usual and compares the resulting dirty mask.
++       */
++      uint16_t sw_sucio = group->dirty;
++      if (sw_cbufs) {
++         unsigned casillas = group->desc_slots | group->dyn_ubo_slots;
++         while (casillas) {
++            const unsigned i = u_bit_scan(&casillas);
++            const struct nvk_cbuf *cbuf = &group->cbufs[i];
++            if (cbuf->desc_set >= sets_start && cbuf->desc_set < sets_end)
++               sw_sucio |= BITFIELD_BIT(i);
++         }
++         if (!sw_comprobar) {
++            group->dirty = sw_sucio;
++            continue;
++         }
++      }
++#endif
+       for (uint32_t i = 0; i < ARRAY_SIZE(group->cbufs); i++) {
+          const struct nvk_cbuf *cbuf = &group->cbufs[i];
+          switch (cbuf->type) {
+@@ -1269,9 +1374,375 @@ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
+             UNREACHABLE("Invalid cbuf type");
+          }
+       }
++#ifdef HAVE_SWITCH_PLATFORM
++      if (sw_cbufs && sw_comprobar) {
++         if (group->dirty == sw_sucio)
++            cmd->state.sw.validadas[NVK_SW_M_CBUFS]++;
++         else
++            nvk_sw_diferencia(cmd, NVK_SW_M_CBUFS, "casillas de cbufs a ensuciar");
++      }
++#endif
++   }
++}
++
++#ifdef HAVE_SWITCH_PLATFORM
++#include "util/u_debug.h"
++
++/* NFSMW: set 4 by differences (NVK_SWITCH_DYN_UBO_DELTA,
++ * on by default).
++ *
++ * The game binds set 4 (three dynamic UBOs: VS constants, PS constants and
++ * shared ones) in 70-78 % of the draws, almost always because one of the three
++ * offsets changed. On Maxwell, without a hardware root table,
++ * each bind cost 1.3 us of CPU on the recording thread:
++ * - four flush_root, one per word of the dynamic descriptors
++ * (dynamic_buffers[k], k = 0..3), even if only the low part of the
++ * address (k = 0) changes: the high part, the size and the zero are the same;
++ * - a walk over 5 groups x 16 slots to dirty all the cbufs of the
++ * set, and on the next draw four rebinds (VS b0 and b2, FS b1 and
++ * b2) with their SELECT_CB0, even if only one changed.
++ *
++ * By differences:
++ * - only the words that change or that have not been sent yet in this command
++ * buffer (dyn_synced) go to the GPU root table, with one command per
++ * array k that covers them: almost always a single command of one to three words
++ * (the low part of the address of the offsets that change);
++ * - only the DYNAMIC_UBO cbufs whose descriptor changed value get
++ * dirtied (all of them, if the start of a set's dynamic range changes); the
++ * DESC_SET and UBO_DESC ones of the bound sets, as always; and without
++ * walking empty slots (dyn_ubo_slots and desc_slots of each group).
++ *
++ * WHY IT IS EXACT. The GPU ends up with the same root table: whatever is not sent
++ * was already sent in this command buffer with that same value (between two points of
++ * a buffer, cb0 is only changed by the buffer itself, and dynamic_buffers is only
++ * written by nvk_bind_descriptor_sets). And every cbuf ends up bound to the same thing: a
++ * cbuf that is not dirty keeps what was bound in its last flush, which came from
++ * root; if since then no bind has changed the value of its descriptor,
++ * root still says the same. Dirty bits are not cleared until the next flush,
++ * so a change that is later reverted also rebinds. Changing
++ * shaders dirties on its own the slots whose map changes
++ * (nvk_cmd_flush_gfx_shaders), as always.
++ *
++ * SELF-CHECKING GUARD (nvk_switch_set4_comprobar, nvk_cmd_draw.c):
++ * in the first 200,000 draws of the process and then in 1 of every 4,096 of
++ * each command buffer, every DYNAMIC_UBO cbuf about to be used without a rebind
++ * is compared with what was really bound in that slot. On a
++ * difference: that slot and all DYNAMIC_UBO ones are rebound (the draw comes out
++ * right), DIFERENCIA on stderr and off for the rest of the session (apagado =
++ * 1, which the app forwards to its log with REXLOG_ERROR).
++ *
++ * The app (nfsmw_nativo_dibujos.cpp, cvar nfsmw_nativo_set4_diferencias) requests
++ * or withdraws it on every submit through pedido, and reads total for its C6 set 4 line.
++ * NVK_SWITCH_DYN_UBO_DELTA=false (in nfsmw_mesa_entorno) turns it off from outside.
++ */
++struct nvk_switch_set4 nvk_switch_set4 = {
++   .version = 1,
++   .pedido = -1,
++   .entorno = -1,
++   .apagado = 0,
++};
++
++DEBUG_GET_ONCE_BOOL_OPTION(nvk_switch_dyn_ubo_delta, "NVK_SWITCH_DYN_UBO_DELTA", true)
++
++int32_t
++nvk_switch_set4_leer_entorno(void)
++{
++   const int32_t entorno = debug_get_option_nvk_switch_dyn_ubo_delta() ? 1 : 0;
++   if (p_atomic_xchg(&nvk_switch_set4.entorno, entorno) < 0) {
++      fprintf(stderr, "[nvk] set 4 por diferencias (NFSMW, build 184): %s\n",
++              entorno ? "disponible (NVK_SWITCH_DYN_UBO_DELTA)"
++                      : "apagado por NVK_SWITCH_DYN_UBO_DELTA");
++   }
++   return entorno;
++}
++
++void
++nvk_switch_set4_sumar(struct nvk_cmd_buffer *cmd)
++{
++   struct nvk_switch_set4_cuentas *c = &cmd->state.set4;
++   struct nvk_switch_set4_cuentas *t = &nvk_switch_set4.total;
++
++   if (c->enlaces_diferencia)
++      p_atomic_add(&t->enlaces_diferencia, c->enlaces_diferencia);
++   if (c->enlaces_completos)
++      p_atomic_add(&t->enlaces_completos, c->enlaces_completos);
++   if (c->escrituras_raiz)
++      p_atomic_add(&t->escrituras_raiz, c->escrituras_raiz);
++   if (c->dwords_raiz)
++      p_atomic_add(&t->dwords_raiz, c->dwords_raiz);
++   if (c->cbufs_sucios)
++      p_atomic_add(&t->cbufs_sucios, c->cbufs_sucios);
++   if (c->cbufs_ahorrados)
++      p_atomic_add(&t->cbufs_ahorrados, c->cbufs_ahorrados);
++   if (c->dibujos)
++      p_atomic_add(&t->dibujos, c->dibujos);
++   if (c->comprobaciones)
++      p_atomic_add(&t->comprobaciones, c->comprobaciones);
++   if (c->diferencias)
++      p_atomic_add(&t->diferencias, c->diferencias);
++   memset(c, 0, sizeof(*c));
++}
++
++/* Sends to the root table only the words dynamic_buffers[k][d], with d from
++ * inicio to fin - 1, that change or have not been sent yet in this command
++ * buffer, with one command per array k that covers them. Returns in *cambiados
++ * the descriptors whose value changed (so that only their cbufs get dirtied).
++ */
++static void
++nvk_switch_set4_escribir_raiz(struct nvk_cmd_buffer *cmd,
++                              struct nvk_descriptor_state *desc,
++                              uint32_t dynamic_buffers[4][NVK_MAX_DYNAMIC_BUFFERS],
++                              uint32_t inicio, uint32_t fin,
++                              uint64_t *cambiados)
++{
++   const struct nvk_root_descriptor_table *raiz =
++      (const struct nvk_root_descriptor_table *)desc->root;
++   uint64_t distintos = 0;
++
++   for (uint32_t k = 0; k < 4; k++) {
++      uint32_t primero = fin, ultimo = inicio;
++      for (uint32_t d = inicio; d < fin; d++) {
++         const bool distinto =
++            raiz->dynamic_buffers[k][d] != dynamic_buffers[k][d];
++         if (distinto)
++            distintos |= BITFIELD64_BIT(d);
++         if (distinto || !(desc->dyn_synced & BITFIELD64_BIT(d))) {
++            if (primero == fin)
++               primero = d;
++            ultimo = d;
++         }
++      }
++      if (primero < fin) {
++         const uint32_t n = ultimo - primero + 1;
++         nvk_descriptor_state_set_root_array(cmd, desc, dynamic_buffers[k],
++                                             primero, n,
++                                             &dynamic_buffers[k][primero]);
++         cmd->state.set4.escrituras_raiz++;
++         cmd->state.set4.dwords_raiz += n;
++      }
+    }
++   if (fin > inicio) {
++      desc->dyn_synced |= BITFIELD64_RANGE(inicio, fin - inicio);
++      cmd->state.set4.enlaces_diferencia++;
++   }
++   *cambiados = distintos;
++}
++
++/* The usual path, as is, recording that what was sent is up to date. */
++static void
++nvk_switch_set4_escribir_raiz_completa(struct nvk_cmd_buffer *cmd,
++                                       struct nvk_descriptor_state *desc,
++                                       uint32_t dynamic_buffers[4][NVK_MAX_DYNAMIC_BUFFERS],
++                                       uint32_t inicio, uint32_t fin)
++{
++   for (int i = 0; i < 4; i++)
++      nvk_descriptor_state_set_root_array(cmd, desc, dynamic_buffers[i],
++                                          inicio, fin - inicio,
++                                          &dynamic_buffers[i][inicio]);
++   if (desc->flush_root != NULL && fin > inicio)
++      desc->dyn_synced |= BITFIELD64_RANGE(inicio, fin - inicio);
++   if (desc == &cmd->state.gfx.descriptors && fin > inicio)
++      cmd->state.set4.enlaces_completos++;
+ }
+ 
++/* Like nvk_cmd_dirty_cbufs_for_descriptors, but the DYNAMIC_UBO cbufs are only
++ * dirtied if the descriptor they read changed value. The DESC_SET and
++ * UBO_DESC ones of the bound sets are always dirtied, as before.
++ */
++static void
++nvk_switch_set4_ensuciar(struct nvk_cmd_buffer *cmd,
++                         VkShaderStageFlags stages,
++                         uint32_t sets_start, uint32_t sets_end,
++                         const uint8_t *inicio_dinamico,
++                         uint64_t cambiados)
++{
++   if (!(stages & NVK_VK_GRAPHICS_STAGE_BITS))
++      return;
++
++   /* NFSMW: NVK_SW_M_CBUFS: something gets dirtied, and the cached groups of
++    * these stages (nvk_sw_grupos_de_etapas)
++    */
++   cmd->state.gfx.sw_cbufs_limpios = false;
++   const bool sw_cbufs = nvk_sw_activa(cmd, NVK_SW_M_CBUFS);
++   bool sw_comprobar = false;
++   if (sw_cbufs) {
++      cmd->state.sw.usos[NVK_SW_M_CBUFS]++;
++      sw_comprobar = nvk_sw_toca_comprobar(cmd, NVK_SW_M_CBUFS);
++   }
++   const uint32_t groups =
++      nvk_sw_grupos_de_etapas(cmd, stages, sw_cbufs, sw_comprobar);
++
++   u_foreach_bit(g, groups) {
++      struct nvk_cbuf_group *group = &cmd->state.gfx.cbuf_groups[g];
++
++      unsigned conjuntos = group->desc_slots;
++      while (conjuntos) {
++         const unsigned i = u_bit_scan(&conjuntos);
++         const struct nvk_cbuf *cbuf = &group->cbufs[i];
++         if (cbuf->desc_set >= sets_start && cbuf->desc_set < sets_end)
++            group->dirty |= BITFIELD_BIT(i);
++      }
++
++      unsigned dinamicos = group->dyn_ubo_slots;
++      while (dinamicos) {
++         const unsigned i = u_bit_scan(&dinamicos);
++         const struct nvk_cbuf *cbuf = &group->cbufs[i];
++         if (cbuf->desc_set < sets_start || cbuf->desc_set >= sets_end)
++            continue;
++
++         const uint32_t d = inicio_dinamico[cbuf->desc_set] + cbuf->dynamic_idx;
++         if (d >= NVK_MAX_DYNAMIC_BUFFERS || (cambiados & BITFIELD64_BIT(d))) {
++            group->dirty |= BITFIELD_BIT(i);
++            cmd->state.set4.cbufs_sucios++;
++         } else {
++            cmd->state.set4.cbufs_ahorrados++;
++         }
++      }
++   }
++}
++#endif
++
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: per-part measurement of the draw and exact improvements
++ * (nvk_switch_dibujo, NVK_SWITCH_DIBUJO).
++ *
++ * The thread that records the draws spends about 3.4 us per draw inside NVK in
++ * a race ("C6 subetapas" line: Draw 1.4-2.0 us; BindPipeline 3.2-4.4 us
++ * in 25-27 % of the draws; set 4 1.2-1.5 us in 64-72 %). That is about
++ * 6.5 ms per frame on the game's bottleneck. Before optimizing blindly, it is
++ * measured inside NVK:
++ *
++ * - partes: CNTPCT_EL0 ticks (19.2 MHz: 52 ns per tick; with thousands of
++ * samples the average is unbiased) of each piece of vkCmdDraw*,
++ * vkCmdBindPipeline and vkCmdBindDescriptorSets, 1 of every N calls (the app
++ * sets N in medir; 0 = not measured and the cost is one branch per call);
++ * - cuentas: dirty dynamic bits per draw, dirty shaders, rebound
++ * cbufs, dwords per draw, pipeline state copies that changed
++ * nothing, root table uploads and new pushbuf chunks;
++ * - medir_fallos: in the measured ones, before the pipeline copy and the shader
++ * flush all their data is read and that time is counted apart (the TOQUE parts).
++ *
++ * The improvements p02..p06 also use this structure: each has its pedido
++ * (the app), its apagado (its guard) and its counts. They are all exact: they leave
++ * the same commands with the same data in the pushbuf. Each has a
++ * self-checking guard (the first NVK_SW_A_COMPROBAR uses of the
++ * process and then 1 of every NVK_SW_CADA): it takes the usual path,
++ * compares it with the new one and, if they differ, keeps the usual one, reports it on
++ * stderr and turns that improvement off for the rest of the session.
++ */
++struct nvk_switch_dibujo nvk_switch_dibujo = {
++   .version = 1,
++   .medir = 0,
++   .medir_fallos = 0,
++   .entorno = -1,
++   .mejoras = {
++      [NVK_SW_M_EMISION] = { .pedido = -1 },
++      [NVK_SW_M_CBUFS] = { .pedido = -1 },
++      [NVK_SW_M_DINAMICO] = { .pedido = -1 },
++      [NVK_SW_M_SET4_RAPIDO] = { .pedido = -1 },
++      [NVK_SW_M_PRECARGA] = { .pedido = -1 },
++   },
++};
++
++DEBUG_GET_ONCE_BOOL_OPTION(nvk_switch_dibujo, "NVK_SWITCH_DIBUJO", true)
++
++static int32_t
++nvk_sw_leer_entorno(void)
++{
++   const int32_t entorno = debug_get_option_nvk_switch_dibujo() ? 1 : 0;
++   uint64_t frecuencia = 0;
++#if defined(__aarch64__)
++   __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frecuencia));
++#endif
++   p_atomic_set(&nvk_switch_dibujo.ticks_por_segundo, frecuencia);
++   if (p_atomic_xchg(&nvk_switch_dibujo.entorno, entorno) < 0) {
++      fprintf(stderr, "[nvk] c186 medida por partes y mejoras del dibujo: %s "
++              "(reloj %llu Hz)\n",
++              entorno ? "disponibles (NVK_SWITCH_DIBUJO)"
++                      : "apagadas por NVK_SWITCH_DIBUJO",
++              (unsigned long long)frecuencia);
++   }
++   return entorno;
++}
++
++/* In vkBeginCommandBuffer, after the reset memset: what is measured and which
++ * improvements take the new path in this buffer. Whatever the app changes afterwards
++ * applies to the next buffer.
++ */
++void
++nvk_sw_empezar_bufer(struct nvk_cmd_buffer *cmd)
++{
++   struct nvk_sw_cmd *sw = &cmd->state.sw;
++   int32_t entorno = p_atomic_read_relaxed(&nvk_switch_dibujo.entorno);
++   if (unlikely(entorno < 0))
++      entorno = nvk_sw_leer_entorno();
++
++   const int32_t medir = p_atomic_read_relaxed(&nvk_switch_dibujo.medir);
++   sw->mascara_medir =
++      (entorno > 0 && medir > 0 && util_is_power_of_two_nonzero((unsigned)medir))
++         ? (uint32_t)medir - 1 : UINT32_MAX;
++   sw->medir_fallos = sw->mascara_medir != UINT32_MAX &&
++                      p_atomic_read_relaxed(&nvk_switch_dibujo.medir_fallos) > 0;
++   sw->activas = 0;
++   if (entorno > 0) {
++      for (uint32_t m = 0; m < NVK_SW_MEJORAS; m++) {
++         const struct nvk_sw_mejora_estado *e = &nvk_switch_dibujo.mejoras[m];
++         if (p_atomic_read_relaxed(&e->pedido) != 0 &&
++             p_atomic_read_relaxed(&e->apagado) == 0)
++            sw->activas |= 1u << m;
++      }
++   }
++   /* p06: the runtime's prefetch when binding pipelines goes with NVK's */
++   p_atomic_set(&vk_switch_precarga,
++                (int32_t)((sw->activas >> NVK_SW_M_PRECARGA) & 1));
++}
++
++static void
++nvk_sw_sumar_u64(uint64_t *total, uint64_t *local)
++{
++   if (*local != 0) {
++      p_atomic_add(total, *local);
++      *local = 0;
++   }
++}
++
++void
++nvk_sw_sumar(struct nvk_cmd_buffer *cmd)
++{
++   struct nvk_sw_cmd *sw = &cmd->state.sw;
++   for (uint32_t i = 0; i < NVK_SW_PARTES; i++) {
++      nvk_sw_sumar_u64(&nvk_switch_dibujo.partes[i].veces, &sw->partes[i].veces);
++      nvk_sw_sumar_u64(&nvk_switch_dibujo.partes[i].ticks, &sw->partes[i].ticks);
++   }
++   for (uint32_t i = 0; i < NVK_SW_CUENTAS; i++)
++      nvk_sw_sumar_u64(&nvk_switch_dibujo.cuentas[i], &sw->cuentas[i]);
++   for (uint32_t m = 0; m < NVK_SW_MEJORAS; m++) {
++      struct nvk_sw_mejora_estado *e = &nvk_switch_dibujo.mejoras[m];
++      nvk_sw_sumar_u64(&e->usos, &sw->usos[m]);
++      nvk_sw_sumar_u64(&e->validadas, &sw->validadas[m]);
++      nvk_sw_sumar_u64(&e->diferencias, &sw->diferencias[m]);
++      nvk_sw_sumar_u64(&e->sin_comprobar, &sw->sin_comprobar[m]);
++   }
++}
++
++/* The guard of improvement m saw a difference. The caller has already kept
++ * the result of the usual path. It is turned off for the session (the
++ * following buffers do not enable it; this one stops using it right away).
++ */
++void
++nvk_sw_diferencia(struct nvk_cmd_buffer *cmd, enum nvk_sw_mejora m,
++                  const char *que)
++{
++   cmd->state.sw.diferencias[m]++;
++   cmd->state.sw.activas &= ~(1u << m);
++   if (p_atomic_xchg(&nvk_switch_dibujo.mejoras[m].apagado, 1) == 0) {
++      fprintf(stderr, "[nvk] c186: DIFERENCIA en la mejora %u (%s): este caso "
++              "sale por el camino de siempre y la mejora se apaga para el resto "
++              "de la sesion\n", (unsigned)m, que);
++   }
++}
++#endif
++
+ static void
+ nvk_bind_descriptor_sets(struct nvk_cmd_buffer *cmd,
+                          struct nvk_descriptor_state *desc,
+@@ -1309,6 +1780,9 @@ nvk_bind_descriptor_sets(struct nvk_cmd_buffer *cmd,
+       pipeline_layout->dynamic_descriptor_offset[info->firstSet];
+    uint8_t dyn_buffer_end = dyn_buffer_start;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   bool inicio_dinamico_cambiado = false; /* NFSMW */
++#endif
+    uint32_t next_dyn_offset = 0;
+    for (uint32_t i = 0; i < info->descriptorSetCount; ++i) {
+       unsigned s = i + info->firstSet;
+@@ -1329,6 +1803,14 @@ nvk_bind_descriptor_sets(struct nvk_cmd_buffer *cmd,
+          nvk_descriptor_state_set_root(cmd, desc, sets[s], set_addr);
+       }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: if the start of a set's dynamic range changes, its
++       * DYNAMIC_UBO cbufs read another descriptor: they are all
++       * dirtied, as always.
++       */
++      if (set_dynamic_buffer_start[s] != dyn_buffer_end)
++         inicio_dinamico_cambiado = true;
++#endif
+       set_dynamic_buffer_start[s] = dyn_buffer_end;
+ 
+       if (pipeline_layout->set_layouts[s] != NULL) {
+@@ -1364,21 +1846,67 @@ nvk_bind_descriptor_sets(struct nvk_cmd_buffer *cmd,
+    assert(dyn_buffer_end <= NVK_MAX_DYNAMIC_BUFFERS);
+    assert(next_dyn_offset <= info->dynamicOffsetCount);
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: measurement of the root table part */
++   uint64_t t_sw = unlikely(cmd->state.sw.midiendo_sets) ? nvk_sw_ticks() : 0;
++   /* NFSMW: set 4 by differences (see nvk_switch_set4). */
++   const bool por_diferencias = desc == &cmd->state.gfx.descriptors &&
++                                desc->flush_root != NULL &&
++                                !nvk_use_hw_root_table(&pdev->info, true) &&
++                                nvk_switch_set4_activo();
++   uint64_t dinamicos_cambiados = 0;
++   if (por_diferencias) {
++      nvk_switch_set4_escribir_raiz(cmd, desc, dynamic_buffers,
++                                    dyn_buffer_start, dyn_buffer_end,
++                                    &dinamicos_cambiados);
++   } else {
++      nvk_switch_set4_escribir_raiz_completa(cmd, desc, dynamic_buffers,
++                                             dyn_buffer_start, dyn_buffer_end);
++   }
++#else
+    for (int i = 0; i < 4; i++)
+       nvk_descriptor_state_set_root_array(cmd, desc, dynamic_buffers[i],
+                                           dyn_buffer_start, dyn_buffer_end - dyn_buffer_start,
+                                           &dynamic_buffers[i][dyn_buffer_start]);
++#endif
+ 
+    /* We need to at least sync everything from first_set to NVK_MAX_SETS.
+     * However, we only save anything if firstSet >= 4 so we may as well sync
+     * everything just to be safe.
+     */
+-   nvk_descriptor_state_set_root_array(cmd, desc, set_dynamic_buffer_start,
+-                                       0, NVK_MAX_SETS,
+-                                       set_dynamic_buffer_start);
++   /* NFSMW: without a hardware root table (Maxwell) each upload of this
++    * is 10 dwords in the pushbuf, and the game binds set 4 in 70 %
++    * of the draws without anything changing here. It is skipped only if it was already
++    * sent in this same command buffer (the CPU copy matches the GPU's).
++    */
++   {
++      const struct nvk_root_descriptor_table *root_actual =
++         (const struct nvk_root_descriptor_table *)desc->root;
++      if (desc->flush_root == NULL || !desc->dyn_start_synced ||
++          memcmp(root_actual->set_dynamic_buffer_start, set_dynamic_buffer_start,
++                 sizeof(set_dynamic_buffer_start)) != 0) {
++         nvk_descriptor_state_set_root_array(cmd, desc, set_dynamic_buffer_start,
++                                             0, NVK_MAX_SETS,
++                                             set_dynamic_buffer_start);
++         desc->dyn_start_synced = desc->flush_root != NULL;
++      }
++   }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   t_sw = nvk_sw_parte(cmd, NVK_SW_P_SETS_RAIZ, t_sw); /* NFSMW */
++   if (por_diferencias && !inicio_dinamico_cambiado) {
++      nvk_switch_set4_ensuciar(cmd, info->stageFlags, info->firstSet,
++                               info->firstSet + info->descriptorSetCount,
++                               set_dynamic_buffer_start, dinamicos_cambiados);
++      nvk_sw_parte(cmd, NVK_SW_P_SETS_ENSUCIAR, t_sw); /* NFSMW */
++      return;
++   }
++#endif
+    nvk_cmd_dirty_cbufs_for_descriptors(cmd, info->stageFlags, info->firstSet,
+                                        info->firstSet + info->descriptorSetCount);
++#ifdef HAVE_SWITCH_PLATFORM
++   nvk_sw_parte(cmd, NVK_SW_P_SETS_ENSUCIAR, t_sw); /* NFSMW */
++#endif
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+@@ -1388,6 +1916,18 @@ nvk_CmdBindDescriptorSets2KHR(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+ 
+    if (pBindDescriptorSetsInfo->stageFlags & NVK_VK_GRAPHICS_STAGE_BITS) {
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: per-part measurement, 1 of every N */
++      if (unlikely(nvk_sw_toca_medir(cmd, NVK_SW_T_SETS))) {
++         cmd->state.sw.midiendo_sets = true;
++         const uint64_t t_sw = nvk_sw_ticks();
++         nvk_bind_descriptor_sets(cmd, &cmd->state.gfx.descriptors,
++                                  pBindDescriptorSetsInfo);
++         nvk_sw_parte(cmd, NVK_SW_P_SETS, t_sw);
++         cmd->state.sw.midiendo_sets = false;
++         cmd->state.sw.cuentas[NVK_SW_C_SETS_MEDIDOS]++;
++      } else
++#endif
+       nvk_bind_descriptor_sets(cmd, &cmd->state.gfx.descriptors,
+                                pBindDescriptorSetsInfo);
+    }
+@@ -1595,8 +2135,18 @@ nvk_cmd_buffer_flush_push_descriptors(struct nvk_cmd_buffer *cmd,
+    VkResult result;
+ 
+    u_foreach_bit(set_idx, desc->push_dirty) {
+-      if (desc->sets[set_idx].type != NVK_DESCRIPTOR_SET_TYPE_PUSH)
++      if (desc->sets[set_idx].type != NVK_DESCRIPTOR_SET_TYPE_PUSH) {
++#ifdef HAVE_SWITCH_PLATFORM
++         /* NFSMW: NVK_SW_M_CBUFS. A set that is no longer a push descriptor set
++          * is not uploaded in any flush until it becomes one again, and then its
++          * bit is set again (nvk_cmd_push_descriptors
++          * and nvk_meta_end_gfx): it is cleared so that it is not walked on every draw.
++          */
++         if (nvk_sw_activa(cmd, NVK_SW_M_CBUFS))
++            desc->push_dirty &= ~BITFIELD_BIT(set_idx);
++#endif
+          continue;
++      }
+ 
+       struct nvk_push_descriptor_set *push_set = desc->sets[set_idx].push;
+       uint64_t push_set_addr;
+diff --git a/src/nouveau/vulkan/nvk_cmd_buffer.h b/src/nouveau/vulkan/nvk_cmd_buffer.h
+index 324a2b7..cfbfd21 100644
+--- a/src/nouveau/vulkan/nvk_cmd_buffer.h
++++ b/src/nouveau/vulkan/nvk_cmd_buffer.h
+@@ -121,6 +121,22 @@ struct nvk_descriptor_state {
+ 
+    struct nvk_descriptor_set_binding sets[NVK_MAX_SETS];
+    uint32_t push_dirty;
++
++   /* NFSMW: set_dynamic_buffer_start was already sent to the GPU in this
++    * command buffer with the values root holds. Set to false by the
++    * state memset (reset and invalidate) and by nvk_cmd_buffer_begin_graphics.
++    */
++   bool dyn_start_synced;
++
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: set 4 by differences. Bit d says that the four words
++    * dynamic_buffers[k][d] of root were already sent to the GPU in
++    * this command buffer with the values root holds. Set to 0 by the
++    * state memset (reset and invalidate) and by nvk_cmd_buffer_begin_graphics,
++    * same as dyn_start_synced.
++    */
++   uint64_t dyn_synced;
++#endif
+ };
+ 
+ #define nvk_descriptor_state_get_root(desc, member, dst) do { \
+@@ -210,9 +226,47 @@ struct nvk_graphics_state {
+ 
+    struct nvk_cbuf_group {
+       uint16_t dirty;
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: slots of cbufs[] that are DYNAMIC_UBO and
++       * slots that are DESC_SET or UBO_DESC. Kept up to date by
++       * nvk_cmd_flush_gfx_shaders every time it copies a map entry
++       * (nvk_switch_set4_anotar_tipo), so they always agree with
++       * cbufs[], also in the slots left by a previous shader. The
++       * state memset sets them to 0 together with cbufs[].
++       */
++      uint16_t dyn_ubo_slots;
++      uint16_t desc_slots;
++#endif
+       struct nvk_cbuf cbufs[16];
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: the last thing bound in each slot through
++       * SET_CONSTANT_BUFFER_SELECTOR (address and already aligned size), for
++       * the guard of set 4 by differences (nvk_switch_set4_comprobar).
++       */
++      uint64_t bound_addr[16];
++      uint32_t bound_size[16];
++#endif
+    } cbuf_groups[5];
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_CBUFS.
++    *
++    * sw_cbuf_shaders: the shader of each cbuf group, as
++    * nvk_cmd_flush_gfx_cbufs looks it up; nvk_cmd_flush_gfx_shaders computes it every time
++    * the shaders change. sw_cbufs_limpios: no cbuf in use has its
++    * dirty bit set (computed at the end of nvk_cmd_flush_gfx_cbufs and cleared by
++    * whoever dirties a cbuf or changes a shader). sw_grupos*: the cbuf groups
++    * of a set of stages, with their key. The state memset leaves everything at 0:
++    * no map, cleanliness unknown and no cached groups.
++    */
++   const struct nvk_shader *sw_cbuf_shaders[5];
++   bool sw_cbuf_shaders_validos;
++   bool sw_cbufs_limpios;
++   bool sw_grupos_tarea;
++   VkShaderStageFlags sw_grupos_etapas;
++   uint32_t sw_grupos;
++#endif
++
+    /* Used for meta save/restore */
+    VkDeviceAddressRangeKHR vb0;
+ 
+@@ -227,6 +281,183 @@ struct nvk_compute_state {
+    bool active_compute_invocations_query;
+ };
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++#include "util/u_atomic.h"
++
++/* NFSMW: set 4 by differences (NVK_SWITCH_DYN_UBO_DELTA).
++ * The full explanation is in nvk_cmd_buffer.c, next to nvk_switch_set4.
++ */
++struct nvk_switch_set4_cuentas {
++   uint64_t enlaces_diferencia; /* enlaces con dinamicos por diferencias */
++   uint64_t enlaces_completos;  /* enlaces con dinamicos como siempre */
++   uint64_t escrituras_raiz;    /* flush_root de dynamic_buffers mandados */
++   uint64_t dwords_raiz;        /* palabras de dynamic_buffers mandadas */
++   uint64_t cbufs_sucios;       /* cbufs DYNAMIC_UBO ensuciados */
++   uint64_t cbufs_ahorrados;    /* cbufs DYNAMIC_UBO que no hacia falta ensuciar */
++   uint64_t dibujos;            /* dibujos con el camino nuevo activo */
++   uint64_t comprobaciones;     /* cbufs comprobados por la guardia */
++   uint64_t diferencias;        /* cbufs mal enlazados que vio la guardia */
++};
++
++/* The app (nfsmw_nativo_dibujos.cpp) reads and writes this structure by its
++ * name, through a weak symbol: the order and types of the fields are a
++ * contract. If they change, bump version.
++ */
++struct nvk_switch_set4 {
++   int32_t version;  /* 1 */
++   int32_t pedido;   /* lo escribe la app: 1 si, 0 no; -1 no lo dice */
++   int32_t entorno;  /* NVK_SWITCH_DYN_UBO_DELTA: -1 sin leer, 0 no, 1 si */
++   int32_t apagado;  /* 1: la guardia vio una DIFERENCIA (para la sesion) */
++   struct nvk_switch_set4_cuentas total; /* de los buferes terminados */
++};
++
++extern struct nvk_switch_set4 nvk_switch_set4;
++
++int32_t nvk_switch_set4_leer_entorno(void);
++void nvk_switch_set4_sumar(struct nvk_cmd_buffer *cmd);
++
++static inline bool
++nvk_switch_set4_activo(void)
++{
++   int32_t entorno = p_atomic_read_relaxed(&nvk_switch_set4.entorno);
++   if (unlikely(entorno < 0))
++      entorno = nvk_switch_set4_leer_entorno();
++   return entorno > 0 &&
++          p_atomic_read_relaxed(&nvk_switch_set4.pedido) != 0 &&
++          p_atomic_read_relaxed(&nvk_switch_set4.apagado) == 0;
++}
++
++/* After copying entry i of a shader's map into group->cbufs[i]. */
++static inline void
++nvk_switch_set4_anotar_tipo(struct nvk_cbuf_group *group, uint32_t i)
++{
++   const uint16_t bit = (uint16_t)BITFIELD_BIT(i);
++   const enum nvk_cbuf_type tipo = group->cbufs[i].type;
++
++   group->dyn_ubo_slots &= (uint16_t)~bit;
++   group->desc_slots &= (uint16_t)~bit;
++   if (tipo == NVK_CBUF_TYPE_DYNAMIC_UBO)
++      group->dyn_ubo_slots |= bit;
++   else if (tipo == NVK_CBUF_TYPE_DESC_SET || tipo == NVK_CBUF_TYPE_UBO_DESC)
++      group->desc_slots |= bit;
++}
++#endif
++
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: per-part measurement of the draw and exact improvements.
++ * The full explanation is in nvk_cmd_buffer.c, next to nvk_switch_dibujo.
++ */
++enum nvk_sw_parte {
++   NVK_SW_P_DIBUJO = 0,    /* vkCmdDraw y vkCmdDrawIndexed enteros */
++   NVK_SW_P_PUSH_DESC,     /* nvk_cmd_buffer_flush_push_descriptors */
++   NVK_SW_P_DINAMICO,      /* nvk_cmd_flush_gfx_dynamic_state */
++   NVK_SW_P_TOQUE_SHADERS, /* medir_fallos: leer antes los shaders sucios */
++   NVK_SW_P_SHADERS,       /* nvk_cmd_flush_gfx_shaders */
++   NVK_SW_P_CBUFS,         /* nvk_cmd_flush_gfx_cbufs */
++   NVK_SW_P_EMITIR,        /* la orden del dibujo en el pushbuf */
++   NVK_SW_P_PIPE_SHADERS,  /* vkCmdBindPipeline: nvk_cmd_bind_shaders */
++   NVK_SW_P_PIPE_TOQUE,    /* medir_fallos: leer antes el estado del pipeline */
++   NVK_SW_P_PIPE_COPIA,    /* vkCmdBindPipeline: vk_dynamic_graphics_state_copy */
++   NVK_SW_P_SETS,          /* vkCmdBindDescriptorSets de graficos entero */
++   NVK_SW_P_SETS_RAIZ,     /* dentro: descriptores dinamicos a la tabla raiz */
++   NVK_SW_P_SETS_ENSUCIAR, /* dentro: ensuciar cbufs */
++   NVK_SW_P_RAIZ,          /* nvk_cmd_flush_gfx_root_desc, todas las llamadas */
++   NVK_SW_P_TROZO,         /* nvk_cmd_buffer_new_push (trozo nuevo del pushbuf) */
++   NVK_SW_P_ENLACE_VB,     /* vkCmdBindVertexBuffers */
++   NVK_SW_PARTES
++};
++
++enum nvk_sw_cuenta {
++   NVK_SW_C_DIBUJOS_MEDIDOS = 0, /* dibujos medidos por partes */
++   NVK_SW_C_DWORDS_DIBUJO,     /* dwords de pushbuf de esos dibujos (flush y orden) */
++   NVK_SW_C_DIN_CON_TRABAJO,   /* de esos, con algun bit dinamico sucio */
++   NVK_SW_C_DIN_BITS,          /* bits dinamicos sucios que llevaban */
++   NVK_SW_C_SHADERS_SUCIOS,    /* de esos, con shaders sucios */
++   NVK_SW_C_CBUFS_REENLAZADOS, /* cbufs reenlazados en esos */
++   NVK_SW_C_PIPES_MEDIDOS,     /* enlaces de pipeline medidos */
++   NVK_SW_C_PIPES_SIN_EFECTO,  /* de esos, copias que no cambiaron NADA */
++   NVK_SW_C_PIPES_BITS_NUEVOS, /* bits sucios nuevos que dejo la copia */
++   NVK_SW_C_SETS_MEDIDOS,      /* enlaces de conjuntos medidos */
++   NVK_SW_C_RAIZ,              /* subidas a la tabla raiz (todas) */
++   NVK_SW_C_RAIZ_DWORDS,       /* sus dwords de datos (todas) */
++   NVK_SW_C_TROZOS,            /* trozos nuevos del pushbuf (todos) */
++   NVK_SW_CUENTAS
++};
++
++enum nvk_sw_mejora {
++   NVK_SW_M_EMISION = 0, /* p02: cada orden entera de una vez (mismos bytes) */
++   NVK_SW_M_CBUFS,       /* p03: cbufs sin trabajo repetido */
++   NVK_SW_M_DINAMICO,    /* p04: estado dinamico por grupos sucios */
++   NVK_SW_M_SET4_RAPIDO, /* p05: set 4 por el camino rapido */
++   NVK_SW_M_PRECARGA,    /* p06: precarga de pipeline y shaders */
++   NVK_SW_MEJORAS
++};
++
++/* Each turno counts calls of one type, to measure 1 of every N. */
++enum nvk_sw_turno {
++   NVK_SW_T_DIBUJO = 0,
++   NVK_SW_T_PIPE,
++   NVK_SW_T_SETS,
++   NVK_SW_T_RAIZ,
++   NVK_SW_T_VB,
++   NVK_SW_TURNOS
++};
++
++struct nvk_sw_parte_total {
++   uint64_t veces;
++   uint64_t ticks; /* CNTPCT_EL0, a ticks_por_segundo (19,2 MHz en la Switch) */
++};
++
++struct nvk_sw_mejora_estado {
++   int32_t pedido;         /* lo escribe la app: 1 si, 0 no; -1 no lo dice (= si) */
++   int32_t apagado;        /* 1: su guardia vio una DIFERENCIA (para la sesion) */
++   uint64_t usos;          /* veces que se decidio por el camino nuevo */
++   uint64_t validadas;     /* comprobaciones de la guardia que salieron iguales */
++   uint64_t diferencias;   /* comprobaciones que salieron distintas */
++   uint64_t sin_comprobar; /* comprobaciones que no se pudieron hacer */
++};
++
++/* The app (nfsmw_nativo_dibujos.cpp) reads and writes this structure by its
++ * name, through a weak symbol: the order and types of the fields are a
++ * contract. If they change, bump version. The totals come from finished
++ * command buffers (nvk_EndCommandBuffer).
++ */
++struct nvk_switch_dibujo {
++   int32_t version;      /* 1 */
++   int32_t medir;        /* app: N > 0 potencia de 2 = medir 1 de cada N; si no, no se mide */
++   int32_t medir_fallos; /* app: 1 = leer antes lo que se va a usar y medirlo aparte */
++   int32_t entorno;      /* NVK_SWITCH_DIBUJO: -1 sin leer, 0 todo apagado, 1 si */
++   uint64_t ticks_por_segundo;
++   struct nvk_sw_parte_total partes[NVK_SW_PARTES];
++   uint64_t cuentas[NVK_SW_CUENTAS];
++   struct nvk_sw_mejora_estado mejoras[NVK_SW_MEJORAS];
++};
++
++extern struct nvk_switch_dibujo nvk_switch_dibujo;
++
++/* Per-command-buffer data. It lives in nvk_cmd_state: the reset memset
++ * zeroes it and nvk_sw_empezar_bufer configures it in vkBeginCommandBuffer.
++ */
++struct nvk_sw_cmd {
++   struct nvk_sw_parte_total partes[NVK_SW_PARTES];
++   uint64_t cuentas[NVK_SW_CUENTAS];
++   uint64_t usos[NVK_SW_MEJORAS];
++   uint64_t validadas[NVK_SW_MEJORAS];
++   uint64_t diferencias[NVK_SW_MEJORAS];
++   uint64_t sin_comprobar[NVK_SW_MEJORAS];
++   uint32_t turno[NVK_SW_TURNOS];
++   uint32_t mascara_medir; /* N - 1, o UINT32_MAX si no se mide */
++   uint32_t activas;       /* bit m: la mejora m va por el camino nuevo */
++   bool medir_fallos;
++   bool midiendo;          /* el dibujo en curso se mide por partes */
++   bool midiendo_pipe;     /* el vkCmdBindPipeline en curso se mide */
++   bool midiendo_sets;     /* el vkCmdBindDescriptorSets en curso se mide */
++   uint32_t *dw_inicio;    /* pushbuf al empezar el dibujo medido */
++   const struct nvk_cmd_mem *mem_inicio;
++   int8_t modo_emision;    /* p02: NVK_SW_DE_SIEMPRE, NVK_SW_RAPIDO o NVK_SW_COMPROBAR */
++};
++#endif
++
+ struct nvk_cmd_push {
+    void *map;
+    uint64_t addr;
+@@ -243,6 +474,16 @@ struct nvk_cmd_buffer {
+       struct nvk_graphics_state gfx;
+       struct nvk_compute_state cs;
+       VkQueryPipelineStatisticFlags inherited_pipeline_statistics;
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: counts of set 4 by differences for this
++       * command buffer; nvk_EndCommandBuffer adds them to nvk_switch_set4.
++       */
++      struct nvk_switch_set4_cuentas set4;
++      /* NFSMW: per-part measurement and state of the improvements for
++       * this buffer; nvk_EndCommandBuffer adds it to nvk_switch_dibujo.
++       */
++      struct nvk_sw_cmd sw;
++#endif
+    } state;
+ 
+    /** List of nvk_cmd_mem
+@@ -285,6 +526,81 @@ VK_DEFINE_HANDLE_CASTS(nvk_cmd_buffer, vk.base, VkCommandBuffer,
+ 
+ extern const struct vk_command_buffer_ops nvk_cmd_buffer_ops;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: helpers for the per-part measurement and the improvements. */
++static inline uint64_t
++nvk_sw_ticks(void)
++{
++#if defined(__aarch64__)
++   uint64_t t;
++   __asm__ volatile("mrs %0, cntpct_el0" : "=r"(t));
++   return t;
++#else
++   return 0;
++#endif
++}
++
++/* Current tick if the draw in progress is being measured; otherwise 0. */
++static inline uint64_t
++nvk_sw_t0(const struct nvk_cmd_buffer *cmd)
++{
++   return unlikely(cmd->state.sw.midiendo) ? nvk_sw_ticks() : 0;
++}
++
++/* Adds the time since t to part p and returns the current tick. With t = 0
++ * (not measured) it does nothing and returns 0.
++ */
++static inline uint64_t
++nvk_sw_parte(struct nvk_cmd_buffer *cmd, enum nvk_sw_parte p, uint64_t t)
++{
++   if (likely(t == 0))
++      return 0;
++   const uint64_t ahora = nvk_sw_ticks();
++   cmd->state.sw.partes[p].veces++;
++   cmd->state.sw.partes[p].ticks += ahora - t;
++   return ahora;
++}
++
++/* Is this call due to be measured? 1 of every N, counting per type. */
++static inline bool
++nvk_sw_toca_medir(struct nvk_cmd_buffer *cmd, enum nvk_sw_turno turno)
++{
++   const uint32_t m = cmd->state.sw.mascara_medir;
++   return unlikely(m != UINT32_MAX) && ((++cmd->state.sw.turno[turno]) & m) == 0;
++}
++
++static inline bool
++nvk_sw_activa(const struct nvk_cmd_buffer *cmd, enum nvk_sw_mejora m)
++{
++   return (cmd->state.sw.activas & (1u << m)) != 0;
++}
++
++/* Should the guard of improvement m check this use? The first
++ * NVK_SW_A_COMPROBAR uses of the process and then 1 of every NVK_SW_CADA, with the
++ * process-wide count: a command buffer may never reach NVK_SW_CADA
++ * uses (that is what happened to the set 4 guard, which stopped
++ * checking after 200,000 draws). The caller has already counted this use.
++ */
++#define NVK_SW_A_COMPROBAR 20000
++#define NVK_SW_CADA 1024
++
++static inline bool
++nvk_sw_toca_comprobar(const struct nvk_cmd_buffer *cmd, enum nvk_sw_mejora m)
++{
++   const uint64_t n =
++      p_atomic_read_relaxed(&nvk_switch_dibujo.mejoras[m].usos) +
++      cmd->state.sw.usos[m];
++   return n <= NVK_SW_A_COMPROBAR || (n & (NVK_SW_CADA - 1)) == 0;
++}
++
++void nvk_sw_diferencia(struct nvk_cmd_buffer *cmd, enum nvk_sw_mejora m,
++                       const char *que);
++void nvk_sw_empezar_bufer(struct nvk_cmd_buffer *cmd);
++void nvk_sw_sumar(struct nvk_cmd_buffer *cmd);
++void nvk_sw_cmd_set_dynamic_graphics_state(struct vk_command_buffer *vk_cmd,
++                                           const struct vk_dynamic_graphics_state *state);
++#endif
++
+ static inline struct nvk_device *
+ nvk_cmd_buffer_device(struct nvk_cmd_buffer *cmd)
+ {
+@@ -315,6 +631,58 @@ nvk_cmd_buffer_push(struct nvk_cmd_buffer *cmd, uint32_t dw_count)
+    return &cmd->push;
+ }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: batched emission (NVK_SW_M_EMISION). See
++ * nvk_sw_comprobar_1inc in nvk_cmd_draw.c.
++ *
++ * A ONEINCR command of the 3D subchannel with its n data words, written at once: the
++ * header with the final count (the count field is the same, bits 28:16,
++ * in INCR, ONEINCR and METHOD_COUNT of cl906f.h) and the data after it. It leaves the
++ * same bytes as P_1INC followed by n P_INLINE_DATA, and nv_push with the same
++ * end, last_hdr and last_hdr_dw. The caller has reserved 1 + n dwords.
++ */
++#define NVK_SW_DE_SIEMPRE 0
++#define NVK_SW_RAPIDO 1
++#define NVK_SW_COMPROBAR 2
++#define NVK_SW_BORRADOR 72
++
++static inline void
++nvk_sw_1inc_rapido(struct nv_push *p, uint32_t mthd,
++                   const uint32_t *datos, uint32_t n)
++{
++   uint32_t *d = p->end;
++   const uint32_t cabecera = NVC0_FIFO_PKHDR_1I(SUBC_NV9097, mthd, n);
++   d[0] = cabecera;
++   for (uint32_t i = 0; i < n; i++)
++      d[1 + i] = datos[i];
++   p->last_hdr = d;
++   p->last_hdr_dw = cabecera;
++   p->end = d + 1 + n;
++}
++
++/* The mode of the upcoming emissions, until the end of the next draw:
++ * decided once per draw (when its command ends) so as not to pay for the
++ * decision at every site. Both paths give the same bytes: which one is used
++ * only changes the cost and whether it is checked.
++ */
++static inline int
++nvk_sw_emision_modo(struct nvk_cmd_buffer *cmd)
++{
++   if (!nvk_sw_activa(cmd, NVK_SW_M_EMISION))
++      return NVK_SW_DE_SIEMPRE;
++   cmd->state.sw.usos[NVK_SW_M_EMISION]++;
++   return unlikely(nvk_sw_toca_comprobar(cmd, NVK_SW_M_EMISION))
++             ? NVK_SW_COMPROBAR : NVK_SW_RAPIDO;
++}
++
++/* Guard: compares what the usual code has just emitted into p, from
++ * inicio, with the fast command built in a scratch buffer.
++ */
++void nvk_sw_comprobar_1inc(struct nvk_cmd_buffer *cmd, const struct nv_push *p,
++                           const uint32_t *inicio, uint32_t mthd,
++                           const uint32_t *datos, uint32_t n);
++#endif
++
+ void
+ nvk_cmd_buffer_push_indirect(struct nvk_cmd_buffer *cmd,
+                              uint64_t addr, uint32_t dw_count);
+diff --git a/src/nouveau/vulkan/nvk_cmd_draw.c b/src/nouveau/vulkan/nvk_cmd_draw.c
+index eac173e..12cc204 100644
+--- a/src/nouveau/vulkan/nvk_cmd_draw.c
++++ b/src/nouveau/vulkan/nvk_cmd_draw.c
+@@ -774,6 +774,137 @@ nvk_cmd_buffer_dirty_render_pass(struct nvk_cmd_buffer *cmd)
+    BITSET_SET(dyn->dirty, MESA_VK_DYNAMIC_RS_DEPTH_CLIP_ENABLE);
+ }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: batched emission (NVK_SW_M_EMISION); see
++ * nvk_sw_1inc_rapido in nvk_cmd_buffer.h. Here: the guard and the two commands
++ * that are not a ONEINCR with n data words: binding a cbuf and the upload to the
++ * root table without a hardware root table.
++ */
++static bool
++nvk_sw_emitido_igual(const struct nv_push *p, const uint32_t *inicio,
++                     const struct nv_push *b, const uint32_t *b_inicio)
++{
++   const size_t n = p->end - inicio;
++   const size_t nb = b->end - b_inicio;
++   if (n != nb || memcmp(inicio, b_inicio, n * 4) != 0)
++      return false;
++   if (p->last_hdr_dw != b->last_hdr_dw)
++      return false;
++   if (p->last_hdr == NULL || b->last_hdr == NULL)
++      return p->last_hdr == NULL && b->last_hdr == NULL;
++   return (p->last_hdr - inicio) == (b->last_hdr - b_inicio);
++}
++
++static void
++nvk_sw_emision_resultado(struct nvk_cmd_buffer *cmd, bool iguales,
++                         const char *que)
++{
++   if (iguales) {
++      cmd->state.sw.validadas[NVK_SW_M_EMISION]++;
++   } else {
++      cmd->state.sw.modo_emision = NVK_SW_DE_SIEMPRE;
++      nvk_sw_diferencia(cmd, NVK_SW_M_EMISION, que);
++   }
++}
++
++void
++nvk_sw_comprobar_1inc(struct nvk_cmd_buffer *cmd, const struct nv_push *p,
++                      const uint32_t *inicio, uint32_t mthd,
++                      const uint32_t *datos, uint32_t n)
++{
++   uint32_t dw[NVK_SW_BORRADOR];
++   struct nv_push b;
++   if (n + 1 > NVK_SW_BORRADOR) {
++      cmd->state.sw.sin_comprobar[NVK_SW_M_EMISION]++;
++      return;
++   }
++   nv_push_init(&b, dw, ARRAY_SIZE(dw), SUBC_MASK_ALL);
++   nvk_sw_1inc_rapido(&b, mthd, datos, n);
++   nvk_sw_emision_resultado(cmd, nvk_sw_emitido_igual(p, inicio, &b, dw),
++                            "orden ONEINCR");
++}
++
++/* Binding a cbuf: SET_CONSTANT_BUFFER_SELECTOR_A..C (INCR, 3 data words) if
++ * it has a size, and an immediate BIND_GROUP_CONSTANT_BUFFER(g) (valid in bit 0,
++ * shader_slot in 8:4). The caller has reserved 5 dwords.
++ */
++static inline void
++nvk_sw_cbuf_rapido(struct nv_push *p, uint32_t g, uint32_t c,
++                   struct nvk_buffer_address ba)
++{
++   uint32_t *d = p->end;
++   if (ba.size > 0) {
++      d[0] = NVC0_FIFO_PKHDR_SQ(SUBC_NV9097,
++                                NV9097_SET_CONSTANT_BUFFER_SELECTOR_A, 3);
++      d[1] = ba.size;
++      d[2] = (uint32_t)(ba.base_addr >> 32);
++      d[3] = (uint32_t)ba.base_addr;
++      d += 4;
++   }
++   const uint32_t enlace =
++      NVC0_FIFO_PKHDR_IL(SUBC_NV9097, NV9097_BIND_GROUP_CONSTANT_BUFFER(g),
++                         (ba.size > 0 ? 1u : 0u) | (c << 4));
++   d[0] = enlace;
++   p->last_hdr = d;
++   p->last_hdr_dw = enlace;
++   p->end = d + 1;
++}
++
++static void
++nvk_sw_comprobar_cbuf(struct nvk_cmd_buffer *cmd, const struct nv_push *p,
++                      const uint32_t *inicio, uint32_t g, uint32_t c,
++                      struct nvk_buffer_address ba)
++{
++   uint32_t dw[NVK_SW_BORRADOR];
++   struct nv_push b;
++   nv_push_init(&b, dw, ARRAY_SIZE(dw), SUBC_MASK_ALL);
++   nvk_sw_cbuf_rapido(&b, g, c, ba);
++   nvk_sw_emision_resultado(cmd, nvk_sw_emitido_igual(p, inicio, &b, dw),
++                            "enlace de cbuf");
++}
++
++/* The upload to the root table without a hardware root table: ONEINCR to
++ * LOAD_CONSTANT_BUFFER_OFFSET with the offset and the n data words after it (they go
++ * to LOAD_CONSTANT_BUFFER(0)). The caller has reserved 2 + n dwords.
++ */
++static inline void
++nvk_sw_raiz_rapido(struct nv_push *p, uint32_t desplazamiento,
++                   const uint32_t *datos, uint32_t n)
++{
++   uint32_t *d = p->end;
++   const uint32_t cabecera =
++      NVC0_FIFO_PKHDR_1I(SUBC_NV9097, NV9097_LOAD_CONSTANT_BUFFER_OFFSET, n + 1);
++   d[0] = cabecera;
++   d[1] = desplazamiento;
++   if (n <= 8) {
++      for (uint32_t i = 0; i < n; i++)
++         d[2 + i] = datos[i];
++   } else {
++      memcpy(&d[2], datos, n * 4);
++   }
++   p->last_hdr = d;
++   p->last_hdr_dw = cabecera;
++   p->end = d + 2 + n;
++}
++
++static void
++nvk_sw_comprobar_raiz(struct nvk_cmd_buffer *cmd, const struct nv_push *p,
++                      const uint32_t *inicio, uint32_t desplazamiento,
++                      const uint32_t *datos, uint32_t n)
++{
++   uint32_t dw[NVK_SW_BORRADOR];
++   struct nv_push b;
++   if (n + 2 > NVK_SW_BORRADOR) {
++      cmd->state.sw.sin_comprobar[NVK_SW_M_EMISION]++;
++      return;
++   }
++   nv_push_init(&b, dw, ARRAY_SIZE(dw), SUBC_MASK_ALL);
++   nvk_sw_raiz_rapido(&b, desplazamiento, datos, n);
++   nvk_sw_emision_resultado(cmd, nvk_sw_emitido_igual(p, inicio, &b, dw),
++                            "subida a la tabla raiz");
++}
++#endif
++
+ static void
+ nvk_cmd_flush_gfx_root_desc(struct nvk_cmd_buffer *cmd,
+                             struct nvk_descriptor_state *desc,
+@@ -785,6 +916,12 @@ nvk_cmd_flush_gfx_root_desc(struct nvk_cmd_buffer *cmd,
+    const uint32_t start_dw = offset / 4;
+    const uint32_t end_dw = DIV_ROUND_UP(offset + size, 4);
+    const uint32_t *root_dw = (uint32_t *)desc->root;
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: all are counted; 1 of every N is measured */
++   cmd->state.sw.cuentas[NVK_SW_C_RAIZ]++;
++   cmd->state.sw.cuentas[NVK_SW_C_RAIZ_DWORDS] += end_dw - start_dw;
++   const uint64_t t_sw = nvk_sw_toca_medir(cmd, NVK_SW_T_RAIZ) ? nvk_sw_ticks() : 0;
++#endif
+ 
+    if (nvk_use_hw_root_table(&pdev->info, true)) {
+       const uint32_t TABLE_SIZE_DW = NVK_HW_ROOT_TABLE_SIZE / sizeof(uint32_t);
+@@ -813,11 +950,29 @@ nvk_cmd_flush_gfx_root_desc(struct nvk_cmd_buffer *cmd,
+       const uint32_t len_dw = end_dw - start_dw;
+ 
+       struct nv_push *p = nvk_cmd_buffer_push(cmd, 2 + len_dw);
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: NVK_SW_M_EMISION, the same command written at once */
++      const int modo_sw = cmd->state.sw.modo_emision;
++      uint32_t *const inicio_sw = p->end;
++      if (modo_sw == NVK_SW_RAPIDO) {
++         nvk_sw_raiz_rapido(p, start_dw * 4, &root_dw[start_dw], len_dw);
++      } else
++#endif
++      {
+       P_1INC(p, NV9097, LOAD_CONSTANT_BUFFER_OFFSET);
+       P_NV9097_LOAD_CONSTANT_BUFFER_OFFSET(p, start_dw * 4);
+ 
+       P_INLINE_ARRAY(p, &root_dw[start_dw], len_dw);
++#ifdef HAVE_SWITCH_PLATFORM
++      if (modo_sw == NVK_SW_COMPROBAR)
++         nvk_sw_comprobar_raiz(cmd, p, inicio_sw, start_dw * 4,
++                               &root_dw[start_dw], len_dw);
++#endif
++      }
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   nvk_sw_parte(cmd, NVK_SW_P_RAIZ, t_sw); /* NFSMW */
++#endif
+ }
+ 
+ void
+@@ -848,6 +1003,10 @@ nvk_cmd_buffer_begin_graphics(struct nvk_cmd_buffer *cmd,
+    }
+ 
+    cmd->state.gfx.descriptors.flush_root = nvk_cmd_flush_gfx_root_desc;
++   cmd->state.gfx.descriptors.dyn_start_synced = false; /* NFSMW */
++#ifdef HAVE_SWITCH_PLATFORM
++   cmd->state.gfx.descriptors.dyn_synced = 0; /* NFSMW */
++#endif
+ 
+    if (cmd->vk.level != VK_COMMAND_BUFFER_LEVEL_PRIMARY &&
+        (pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)) {
+@@ -1939,6 +2098,32 @@ nvk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
+    }
+ }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: prefetch (NVK_SW_M_PRECARGA). PRFM only. */
++static inline void
++nvk_sw_precargar_bytes(const void *p, size_t bytes)
++{
++   const char *c = p;
++   if (p == NULL || bytes == 0)
++      return;
++   for (size_t i = 0; i < bytes; i += 64)
++      __builtin_prefetch(c + i, 0, 3);
++   __builtin_prefetch(c + bytes - 1, 0, 3);
++}
++
++/* What nvk_cmd_flush_gfx_shaders will read from a new shader: the cbuf
++ * map and the fields of its commands (the commands, when the flush starts).
++ */
++static inline void
++nvk_sw_precargar_shader(const struct nvk_shader *shader)
++{
++   nvk_sw_precargar_bytes(&shader->cbuf_map, sizeof(shader->cbuf_map));
++   nvk_sw_precargar_bytes(&shader->push_dw_count,
++                          (const char *)(&shader->push_dw + 1) -
++                          (const char *)&shader->push_dw_count);
++}
++#endif
++
+ void
+ nvk_cmd_bind_graphics_shader(struct nvk_cmd_buffer *cmd,
+                              const mesa_shader_stage stage,
+@@ -1959,6 +2144,13 @@ nvk_cmd_bind_graphics_shader(struct nvk_cmd_buffer *cmd,
+ 
+    cmd->state.gfx.shaders[stage] = shader;
+    cmd->state.gfx.shaders_dirty |= mesa_to_vk_shader_stage(stage);
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_PRECARGA */
++   if (shader != NULL && nvk_sw_activa(cmd, NVK_SW_M_PRECARGA)) {
++      cmd->state.sw.usos[NVK_SW_M_PRECARGA]++;
++      nvk_sw_precargar_shader(shader);
++   }
++#endif
+ }
+ 
+ #define NVK_MME_TESS_PARAMS(domain, spacing, prims) \
+@@ -2303,12 +2495,71 @@ const struct nvk_mme_test_case nvk_mme_set_tess_params_tests[] = {{
+ },
+ {}};
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: NVK_SW_M_CBUFS. The same loop as at the start of
++ * nvk_cmd_flush_gfx_cbufs; nvk_cmd_flush_gfx_shaders uses it to leave the result
++ * computed every time the shaders change.
++ */
++static void
++nvk_sw_buscar_cbuf_shaders(const struct nvk_cmd_buffer *cmd,
++                           const struct nvk_shader *cbuf_shaders[5])
++{
++   const struct nvk_shader *mesh_shader =
++      cmd->state.gfx.shaders[MESA_SHADER_MESH];
++   const bool has_task_shader =
++      mesh_shader != NULL && mesh_shader->info.mesh.has_task_shader;
++
++   for (uint32_t g = 0; g < 5; g++)
++      cbuf_shaders[g] = NULL;
++   for (mesa_shader_stage stage = 0; stage < MESA_SHADER_MESH_STAGES; stage++) {
++      const struct nvk_shader *shader = cmd->state.gfx.shaders[stage];
++      if (shader == NULL)
++         continue;
++
++      uint32_t group = nvk_cbuf_binding_for_stage(stage, has_task_shader);
++      assert(group < 5);
++      cbuf_shaders[group] = shader;
++   }
++}
++
++/* Does no cbuf in use (within cbuf_count) have its dirty bit set? */
++static inline bool
++nvk_sw_cbufs_estan_limpios(const struct nvk_cmd_buffer *cmd,
++                           const struct nvk_shader *const cbuf_shaders[5])
++{
++   for (uint32_t g = 0; g < 5; g++) {
++      if (cbuf_shaders[g] != NULL &&
++          (cmd->state.gfx.cbuf_groups[g].dirty &
++           BITFIELD_MASK(cbuf_shaders[g]->cbuf_map.cbuf_count)))
++         return false;
++   }
++   return true;
++}
++#endif
++
+ void
+ nvk_cmd_flush_gfx_shaders(struct nvk_cmd_buffer *cmd)
+ {
+    if (cmd->state.gfx.shaders_dirty == 0)
+       return;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_PRECARGA: the commands of the dirty shaders,
++    * before comparing their cbuf maps.
++    */
++   if (nvk_sw_activa(cmd, NVK_SW_M_PRECARGA)) {
++      u_foreach_bit(s, cmd->state.gfx.shaders_dirty & NVK_SHADER_STAGE_GRAPHICS_BITS) {
++         const struct nvk_shader *sh =
++            cmd->state.gfx.shaders[vk_to_mesa_shader_stage(1 << s)];
++         if (sh != NULL) {
++            nvk_sw_precargar_bytes(sh->push_dw,
++                                   (size_t)MAX2(sh->push_dw_count,
++                                                sh->vtgm_push_dw_count) * 4);
++         }
++      }
++   }
++#endif
++
+    /* Map shader types to shaders */
+    struct nvk_shader *type_shader[6] = { NULL, };
+    uint32_t types_dirty = 0;
+@@ -2346,6 +2597,10 @@ nvk_cmd_flush_gfx_shaders(struct nvk_cmd_buffer *cmd)
+                        sizeof(cbuf_group->cbufs[i])) != 0) {
+                cbuf_group->cbufs[i] = cbuf_map->cbufs[i];
+                cbuf_group->dirty |= BITFIELD_BIT(i);
++#ifdef HAVE_SWITCH_PLATFORM
++               /* NFSMW: the set 4 masks */
++               nvk_switch_set4_anotar_tipo(cbuf_group, i);
++#endif
+             }
+          }
+       }
+@@ -2394,6 +2649,14 @@ nvk_cmd_flush_gfx_shaders(struct nvk_cmd_buffer *cmd)
+       nv_push_raw(p, &last_vtgm->push_dw[dw_start], dw_count);
+    }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_CBUFS: the shader of each cbuf group, and the cbufs
++    * marked as not known to be clean (the maps may have changed).
++    */
++   nvk_sw_buscar_cbuf_shaders(cmd, cmd->state.gfx.sw_cbuf_shaders);
++   cmd->state.gfx.sw_cbuf_shaders_validos = true;
++   cmd->state.gfx.sw_cbufs_limpios = false;
++#endif
+    cmd->state.gfx.shaders_dirty = 0;
+ }
+ 
+@@ -4214,6 +4477,143 @@ nvk_flush_cb_state(struct nvk_cmd_buffer *cmd)
+    }
+ }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: dynamic state by dirty groups
++ * (NVK_SW_M_DINAMICO). The bits of each nvk_flush_*_state, copied from their
++ * BITSET_TEST. All of them are below 64 (the asserts below).
++ */
++#define NVK_SW_DYN(e) (UINT64_C(1) << MESA_VK_DYNAMIC_##e)
++
++static const uint64_t nvk_sw_dyn_vi =
++   NVK_SW_DYN(VI) | NVK_SW_DYN(VI_BINDINGS_VALID) |
++   NVK_SW_DYN(VI_BINDING_STRIDES);
++static const uint64_t nvk_sw_dyn_ia =
++   NVK_SW_DYN(IA_PRIMITIVE_TOPOLOGY) | NVK_SW_DYN(IA_PRIMITIVE_RESTART_ENABLE);
++static const uint64_t nvk_sw_dyn_ts =
++   NVK_SW_DYN(TS_PATCH_CONTROL_POINTS) | NVK_SW_DYN(TS_DOMAIN_ORIGIN);
++static const uint64_t nvk_sw_dyn_vp =
++   NVK_SW_DYN(VP_VIEWPORTS) | NVK_SW_DYN(VP_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE) |
++   NVK_SW_DYN(VP_DEPTH_CLAMP_RANGE) | NVK_SW_DYN(VP_SCISSOR_COUNT) |
++   NVK_SW_DYN(VP_SCISSORS) | NVK_SW_DYN(FSR);
++static const uint64_t nvk_sw_dyn_dr =
++   NVK_SW_DYN(DR_ENABLE) | NVK_SW_DYN(DR_MODE) | NVK_SW_DYN(DR_RECTANGLES);
++static const uint64_t nvk_sw_dyn_rs =
++   NVK_SW_DYN(RS_RASTERIZER_DISCARD_ENABLE) | NVK_SW_DYN(RS_DEPTH_CLIP_ENABLE) |
++   NVK_SW_DYN(RS_DEPTH_CLAMP_ENABLE) | NVK_SW_DYN(RS_POLYGON_MODE) |
++   NVK_SW_DYN(RS_CULL_MODE) | NVK_SW_DYN(RS_FRONT_FACE) |
++   NVK_SW_DYN(RS_PROVOKING_VERTEX) | NVK_SW_DYN(RS_DEPTH_BIAS_ENABLE) |
++   NVK_SW_DYN(RS_DEPTH_BIAS_FACTORS) | NVK_SW_DYN(RS_LINE_WIDTH) |
++   NVK_SW_DYN(RS_LINE_MODE) | NVK_SW_DYN(RS_LINE_STIPPLE_ENABLE) |
++   NVK_SW_DYN(RS_LINE_STIPPLE) | NVK_SW_DYN(RS_RASTERIZATION_STREAM) |
++   NVK_SW_DYN(RS_CONSERVATIVE_MODE) |
++   NVK_SW_DYN(RS_EXTRA_PRIMITIVE_OVERESTIMATION_SIZE);
++static const uint64_t nvk_sw_dyn_fsr = NVK_SW_DYN(FSR);
++static const uint64_t nvk_sw_dyn_ms =
++   NVK_SW_DYN(MS_RASTERIZATION_SAMPLES) |
++   NVK_SW_DYN(MS_ALPHA_TO_COVERAGE_ENABLE) |
++   NVK_SW_DYN(MS_ALPHA_TO_ONE_ENABLE) | NVK_SW_DYN(MS_SAMPLE_LOCATIONS) |
++   NVK_SW_DYN(MS_SAMPLE_LOCATIONS_ENABLE) | NVK_SW_DYN(MS_SAMPLE_MASK);
++static const uint64_t nvk_sw_dyn_ds =
++   NVK_SW_DYN(DS_DEPTH_TEST_ENABLE) | NVK_SW_DYN(DS_DEPTH_WRITE_ENABLE) |
++   NVK_SW_DYN(DS_DEPTH_COMPARE_OP) | NVK_SW_DYN(DS_DEPTH_BOUNDS_TEST_ENABLE) |
++   NVK_SW_DYN(DS_DEPTH_BOUNDS_TEST_BOUNDS) | NVK_SW_DYN(DS_STENCIL_TEST_ENABLE) |
++   NVK_SW_DYN(DS_STENCIL_OP) | NVK_SW_DYN(DS_STENCIL_COMPARE_MASK) |
++   NVK_SW_DYN(DS_STENCIL_WRITE_MASK) | NVK_SW_DYN(DS_STENCIL_REFERENCE);
++static const uint64_t nvk_sw_dyn_cb =
++   NVK_SW_DYN(CB_LOGIC_OP_ENABLE) | NVK_SW_DYN(CB_LOGIC_OP) |
++   NVK_SW_DYN(CB_BLEND_ENABLES) | NVK_SW_DYN(CB_BLEND_EQUATIONS) |
++   NVK_SW_DYN(CB_WRITE_MASKS) | NVK_SW_DYN(CB_COLOR_WRITE_ENABLES) |
++   NVK_SW_DYN(RP_ATTACHMENTS) | NVK_SW_DYN(COLOR_ATTACHMENT_MAP) |
++   NVK_SW_DYN(CB_BLEND_CONSTANTS);
++
++/* Guard: a function without dirty bits should not emit anything. Everything it
++ * may request is reserved first (so that it does not switch chunks inside) and
++ * the pushbuf is checked not to advance. Whatever it emits stays: it is the usual output.
++ */
++static ATTRIBUTE_NOINLINE void
++nvk_sw_dinamico_vacio(struct nvk_cmd_buffer *cmd,
++                      void (*flush)(struct nvk_cmd_buffer *cmd),
++                      bool *iguales)
++{
++   nvk_cmd_buffer_push(cmd, NVK_CMD_BUFFER_MAX_PUSH);
++   const uint32_t *antes = cmd->push.end;
++   flush(cmd);
++   if (cmd->push.end != antes)
++      *iguales = false;
++}
++
++static void
++nvk_sw_flush_dinamico_por_grupos(struct nvk_cmd_buffer *cmd,
++                                 struct vk_dynamic_graphics_state *dyn)
++{
++   STATIC_ASSERT(BITSET_WORDBITS == 32);
++   STATIC_ASSERT(MESA_VK_DYNAMIC_COLOR_ATTACHMENT_MAP < 64);
++   STATIC_ASSERT(MESA_VK_DYNAMIC_RP_ATTACHMENTS < 64);
++   STATIC_ASSERT(MESA_VK_DYNAMIC_CB_BLEND_CONSTANTS < 64);
++   STATIC_ASSERT(MESA_VK_DYNAMIC_DS_STENCIL_REFERENCE < 64);
++
++   /* Bits 0-63; no function looks at bit 64 (CB_BLEND_ADVANCED). */
++   const uint64_t sucios =
++      (uint64_t)dyn->dirty[0] | ((uint64_t)dyn->dirty[1] << 32);
++
++   cmd->state.sw.usos[NVK_SW_M_DINAMICO]++;
++   const bool comprobar = nvk_sw_toca_comprobar(cmd, NVK_SW_M_DINAMICO);
++   bool iguales = true;
++
++   /* In the same order as always */
++   if (sucios & nvk_sw_dyn_vi)
++      nvk_flush_vi_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_vi_state, &iguales);
++   if (sucios & nvk_sw_dyn_ia)
++      nvk_flush_ia_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_ia_state, &iguales);
++   if (sucios & nvk_sw_dyn_ts)
++      nvk_flush_ts_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_ts_state, &iguales);
++   if (sucios & nvk_sw_dyn_vp)
++      nvk_flush_vp_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_vp_state, &iguales);
++   if (sucios & nvk_sw_dyn_dr)
++      nvk_flush_dr_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_dr_state, &iguales);
++   if (sucios & nvk_sw_dyn_rs)
++      nvk_flush_rs_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_rs_state, &iguales);
++   if (sucios & nvk_sw_dyn_fsr)
++      nvk_flush_fsr_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_fsr_state, &iguales);
++   if (sucios & nvk_sw_dyn_ms)
++      nvk_flush_ms_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_ms_state, &iguales);
++   if (sucios & nvk_sw_dyn_ds)
++      nvk_flush_ds_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_ds_state, &iguales);
++   if (sucios & nvk_sw_dyn_cb)
++      nvk_flush_cb_state(cmd);
++   else if (unlikely(comprobar))
++      nvk_sw_dinamico_vacio(cmd, nvk_flush_cb_state, &iguales);
++
++   if (unlikely(comprobar)) {
++      if (iguales)
++         cmd->state.sw.validadas[NVK_SW_M_DINAMICO]++;
++      else
++         nvk_sw_diferencia(cmd, NVK_SW_M_DINAMICO,
++                           "una funcion de estado dinamico emitio sin bits sucios");
++   }
++
++   vk_dynamic_graphics_state_clear_dirty(dyn);
++}
++#endif
++
+ void
+ nvk_cmd_flush_gfx_dynamic_state(struct nvk_cmd_buffer *cmd)
+ {
+@@ -4223,6 +4623,14 @@ nvk_cmd_flush_gfx_dynamic_state(struct nvk_cmd_buffer *cmd)
+    if (!vk_dynamic_graphics_state_any_dirty(dyn))
+       return;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_DINAMICO: only the groups with dirty bits */
++   if (nvk_sw_activa(cmd, NVK_SW_M_DINAMICO)) {
++      nvk_sw_flush_dinamico_por_grupos(cmd, dyn);
++      return;
++   }
++#endif
++
+    nvk_flush_vi_state(cmd);
+    nvk_flush_ia_state(cmd);
+    nvk_flush_ts_state(cmd);
+@@ -4324,6 +4732,78 @@ nvk_mme_bind_cbuf_desc(struct mme_builder *b)
+    mme_emit(b, cb);
+ }
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: the guard of set 4 by differences.
++ *
++ * With the new path, a DYNAMIC_UBO cbuf that is not dirty must still be
++ * bound to what root says now. It is checked against what was really sent
++ * to that slot (bound_addr and bound_size), not against the reasoning
++ * that decided not to dirty it. In the first NVK_SWITCH_SET4_A_COMPROBAR
++ * draws of the process and then in 1 of every 4,096 of each command buffer.
++ * On a difference: that slot and all DYNAMIC_UBO ones of all groups
++ * are dirtied (this same draw and the following ones come out right), it is counted,
++ * DIFERENCIA on stderr and the new path is turned off for the session.
++ */
++#define NVK_SWITCH_SET4_A_COMPROBAR 200000
++
++static inline bool
++nvk_switch_set4_toca_comprobar(struct nvk_cmd_buffer *cmd)
++{
++   if (!nvk_switch_set4_activo())
++      return false;
++
++   const uint64_t n = ++cmd->state.set4.dibujos;
++   /* NFSMW: 1 of every 4,096 with the process-wide count. With the
++    * buffer's count (n & 4095) it never checked: no command buffer reaches
++    * 4,096 draws (an earlier version checked 386,000 cbufs in the first 200,000
++    * draws, with no difference, and 0 for the rest of the session).
++    */
++   const uint64_t total = p_atomic_read_relaxed(&nvk_switch_set4.total.dibujos) + n;
++   return total <= NVK_SWITCH_SET4_A_COMPROBAR || (total & 4095) == 0;
++}
++
++static void
++nvk_switch_set4_comprobar(struct nvk_cmd_buffer *cmd,
++                          const struct nvk_descriptor_state *desc,
++                          const struct nvk_shader *shader,
++                          struct nvk_cbuf_group *group, uint32_t g,
++                          uint32_t cbuf_count, uint32_t min_cbuf_alignment)
++{
++   unsigned pendientes = group->dyn_ubo_slots & ~group->dirty &
++                         BITFIELD_MASK(cbuf_count);
++   while (pendientes) {
++      const unsigned c = u_bit_scan(&pendientes);
++      struct nvk_buffer_address ba;
++      if (!nvk_cmd_buffer_get_cbuf_addr(cmd, desc, shader, &group->cbufs[c], &ba))
++         continue;
++
++      ba.size = align(ba.size, min_cbuf_alignment);
++      ba.size = MIN2(ba.size, NVK_MAX_CBUF_SIZE);
++      cmd->state.set4.comprobaciones++;
++      if (ba.size == group->bound_size[c] &&
++          (ba.size == 0 || ba.base_addr == group->bound_addr[c]))
++         continue;
++
++      group->dirty |= BITFIELD_BIT(c);
++      cmd->state.set4.diferencias++;
++      /* And all DYNAMIC_UBO ones of all groups, to be rebound: from here on
++       * the usual path is in charge and nothing bound by the new one remains.
++       */
++      for (uint32_t h = 0; h < ARRAY_SIZE(cmd->state.gfx.cbuf_groups); h++)
++         cmd->state.gfx.cbuf_groups[h].dirty |= cmd->state.gfx.cbuf_groups[h].dyn_ubo_slots;
++      if (p_atomic_xchg(&nvk_switch_set4.apagado, 1) == 0) {
++         fprintf(stderr,
++                 "[nvk] set 4 por diferencias: DIFERENCIA en el grupo %u, cbuf %u "
++                 "(enlazado 0x%llx+%u, pedido 0x%llx+%u): se arregla este dibujo "
++                 "y se apaga para el resto de la sesion\n",
++                 g, c, (unsigned long long)group->bound_addr[c],
++                 group->bound_size[c], (unsigned long long)ba.base_addr,
++                 ba.size);
++      }
++   }
++}
++#endif
++
+ void
+ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+ {
+@@ -4332,13 +4812,29 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+    const uint32_t min_cbuf_alignment = nvk_min_cbuf_alignment(&pdev->info);
+    struct nvk_descriptor_state *desc = &cmd->state.gfx.descriptors;
+ 
++   /* Find cbuf maps for the 5 cbuf groups */
++   const struct nvk_shader *cbuf_shaders[5] = { NULL, };
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_CBUFS. The shader of each group is left
++    * computed by nvk_cmd_flush_gfx_shaders when the shaders change; the
++    * guard recomputes it with the usual loop and compares.
++    */
++   bool sw_cbufs = false, sw_comprobar = false;
++   if (nvk_sw_activa(cmd, NVK_SW_M_CBUFS) &&
++       cmd->state.gfx.sw_cbuf_shaders_validos) {
++      sw_cbufs = true;
++      cmd->state.sw.usos[NVK_SW_M_CBUFS]++;
++      sw_comprobar = nvk_sw_toca_comprobar(cmd, NVK_SW_M_CBUFS);
++   }
++   if (sw_cbufs && !sw_comprobar) {
++      memcpy(cbuf_shaders, cmd->state.gfx.sw_cbuf_shaders, sizeof(cbuf_shaders));
++   } else {
++#endif
+    const struct nvk_shader *mesh_shader =
+       cmd->state.gfx.shaders[MESA_SHADER_MESH];
+    const bool has_task_shader =
+       mesh_shader != NULL && mesh_shader->info.mesh.has_task_shader;
+ 
+-   /* Find cbuf maps for the 5 cbuf groups */
+-   const struct nvk_shader *cbuf_shaders[5] = { NULL, };
+    for (mesa_shader_stage stage = 0; stage < MESA_SHADER_MESH_STAGES; stage++) {
+       const struct nvk_shader *shader = cmd->state.gfx.shaders[stage];
+       if (shader == NULL)
+@@ -4348,7 +4844,37 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+       assert(group < ARRAY_SIZE(cbuf_shaders));
+       cbuf_shaders[group] = shader;
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   if (sw_comprobar) {
++      if (memcmp(cmd->state.gfx.sw_cbuf_shaders, cbuf_shaders,
++                 sizeof(cbuf_shaders)) == 0) {
++         cmd->state.sw.validadas[NVK_SW_M_CBUFS]++;
++      } else {
++         nvk_sw_diferencia(cmd, NVK_SW_M_CBUFS, "mapa de grupos de cbufs");
++         sw_cbufs = false;
++      }
++   }
++   }
++#endif
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   const bool comprobar_set4 = nvk_switch_set4_toca_comprobar(cmd); /* NFSMW */
++
++   /* NFSMW: NVK_SW_M_CBUFS. With no dirty cbuf in use, the
++    * loop below neither emits nor changes anything: it is skipped. The guard checks
++    * that nothing is really dirty and runs the loop as always.
++    */
++   const bool sw_limpios = sw_cbufs && cmd->state.gfx.sw_cbufs_limpios &&
++                           !comprobar_set4;
++   if (sw_limpios) {
++      if (!sw_comprobar)
++         return;
++      if (nvk_sw_cbufs_estan_limpios(cmd, cbuf_shaders))
++         cmd->state.sw.validadas[NVK_SW_M_CBUFS]++;
++      else
++         nvk_sw_diferencia(cmd, NVK_SW_M_CBUFS, "cbufs marcados limpios con algo sucio");
++   }
++#endif
+    bool bound_any_cbuf = false;
+    for (uint32_t g = 0; g < ARRAY_SIZE(cbuf_shaders); g++) {
+       if (cbuf_shaders[g] == NULL)
+@@ -4358,6 +4884,12 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+       const struct nvk_cbuf_map *cbuf_map = &shader->cbuf_map;
+       struct nvk_cbuf_group *group = &cmd->state.gfx.cbuf_groups[g];
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++      if (unlikely(comprobar_set4)) {
++         nvk_switch_set4_comprobar(cmd, desc, shader, group, g,
++                                   cbuf_map->cbuf_count, min_cbuf_alignment);
++      }
++#endif
+       /* We only bother to re-bind cbufs that are in use */
+       const uint32_t rebind =
+          group->dirty & BITFIELD_MASK(cbuf_map->cbuf_count);
+@@ -4372,6 +4904,10 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+             continue;
+ 
+          bound_any_cbuf = true;
++#ifdef HAVE_SWITCH_PLATFORM
++         if (unlikely(cmd->state.sw.midiendo)) /* NFSMW */
++            cmd->state.sw.cuentas[NVK_SW_C_CBUFS_REENLAZADOS]++;
++#endif
+ 
+          struct nvk_buffer_address ba;
+          if (nvk_cmd_buffer_get_cbuf_addr(cmd, desc, shader, cbuf, &ba)) {
+@@ -4381,6 +4917,15 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+ 
+             struct nv_push *p = nvk_cmd_buffer_push(cmd, 6);
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++            /* NFSMW: NVK_SW_M_EMISION, the same command written at once */
++            const int modo_sw = cmd->state.sw.modo_emision;
++            uint32_t *const inicio_sw = p->end;
++            if (modo_sw == NVK_SW_RAPIDO) {
++               nvk_sw_cbuf_rapido(p, g, c, ba);
++            } else
++#endif
++            {
+             if (ba.size > 0) {
+                P_MTHD(p, NV9097, SET_CONSTANT_BUFFER_SELECTOR_A);
+                P_NV9097_SET_CONSTANT_BUFFER_SELECTOR_A(p, ba.size);
+@@ -4392,6 +4937,16 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+                .valid = ba.size > 0,
+                .shader_slot = c,
+             });
++#ifdef HAVE_SWITCH_PLATFORM
++            if (modo_sw == NVK_SW_COMPROBAR)
++               nvk_sw_comprobar_cbuf(cmd, p, inicio_sw, g, c, ba);
++#endif
++            }
++#ifdef HAVE_SWITCH_PLATFORM
++            /* NFSMW: what was bound, for the guard */
++            group->bound_addr[c] = ba.base_addr;
++            group->bound_size[c] = ba.size;
++#endif
+          } else {
+             uint64_t desc_addr =
+                nvk_cmd_buffer_get_cbuf_descriptor_addr(cmd, desc, cbuf);
+@@ -4404,6 +4959,17 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+                P_INLINE_DATA(p, desc_addr >> 32);
+                P_INLINE_DATA(p, desc_addr);
+             } else {
++#ifdef HAVE_SWITCH_PLATFORM
++               /* nvk_cmd_buffer_push_indirect() flushes a deferred Horizon MME
++                * sync before it splits the pushbuf.  Left to itself that emits
++                * NV906F_SEMAPHORE* methods BETWEEN the CALL_MME_MACRO header
++                * below and the three descriptor words the indirect push
++                * supplies, so the macro consumes the semaphore payload as its
++                * cbuf descriptor and the channel dies on the first draw.
++                * Flush it here, while there is no half-built method.
++                */
++               nvk_cmd_buffer_switch_mme_consumer(cmd);
++#endif
+                struct nv_push *p = nvk_cmd_buffer_push(cmd, 2);
+ 
+                P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_BIND_CBUF_DESC));
+@@ -4428,7 +4994,155 @@ nvk_cmd_flush_gfx_cbufs(struct nvk_cmd_buffer *cmd)
+       P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_SELECT_CB0));
+       P_INLINE_DATA(p, 0);
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_CBUFS: as they end up (the set 4 guard
++    * may have dirtied groups that were already walked).
++    */
++   if (sw_cbufs)
++      cmd->state.gfx.sw_cbufs_limpios = nvk_sw_cbufs_estan_limpios(cmd, cbuf_shaders);
++#endif
++}
++
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: per-part measurement (see nvk_switch_dibujo in
++ * nvk_cmd_buffer.c). None of this changes a command or a state.
++ */
++static void
++nvk_sw_tocar(const void *p, size_t bytes)
++{
++   const volatile uint8_t *b = p;
++   if (p == NULL || bytes == 0)
++      return;
++   for (size_t i = 0; i < bytes; i += 64)
++      (void)b[i];
++   (void)b[bytes - 1];
++}
++
++/* medir_fallos: reads what nvk_cmd_flush_gfx_shaders is going to read from the
++ * dirty shaders (cbuf map and commands), to measure the misses separately.
++ */
++static void
++nvk_sw_tocar_shaders(const struct nvk_cmd_buffer *cmd)
++{
++   u_foreach_bit(s, cmd->state.gfx.shaders_dirty & NVK_SHADER_STAGE_GRAPHICS_BITS) {
++      const mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
++      const struct nvk_shader *shader = cmd->state.gfx.shaders[stage];
++      if (shader == NULL)
++         continue;
++      nvk_sw_tocar(&shader->cbuf_map, sizeof(shader->cbuf_map));
++      nvk_sw_tocar(&shader->push_dw_count,
++                   (const char *)(&shader->push_dw + 1) -
++                   (const char *)&shader->push_dw_count);
++      nvk_sw_tocar(shader->push_dw,
++                   (size_t)MAX2(shader->push_dw_count,
++                                shader->vtgm_push_dw_count) * 4);
++   }
++}
++
++static void
++nvk_sw_contar_antes_del_flush(struct nvk_cmd_buffer *cmd)
++{
++   const struct vk_dynamic_graphics_state *dyn =
++      &cmd->vk.dynamic_graphics_state;
++   uint32_t bits = 0;
++   for (uint32_t w = 0; w < ARRAY_SIZE(dyn->dirty); w++)
++      bits += util_bitcount(dyn->dirty[w]);
++   if (bits > 0) {
++      cmd->state.sw.cuentas[NVK_SW_C_DIN_CON_TRABAJO]++;
++      cmd->state.sw.cuentas[NVK_SW_C_DIN_BITS] += bits;
++   }
++   if (cmd->state.gfx.shaders_dirty != 0)
++      cmd->state.sw.cuentas[NVK_SW_C_SHADERS_SUCIOS]++;
++}
++
++/* Starts a draw: if it is due to be measured, marks the buffer and returns the
++ * current tick; otherwise 0.
++ */
++static inline uint64_t
++nvk_sw_empezar_dibujo(struct nvk_cmd_buffer *cmd)
++{
++   if (likely(!nvk_sw_toca_medir(cmd, NVK_SW_T_DIBUJO)))
++      return 0;
++   cmd->state.sw.midiendo = true;
++   cmd->state.sw.dw_inicio = cmd->push.end;
++   cmd->state.sw.mem_inicio = cmd->push_mem;
++   return nvk_sw_ticks();
++}
++
++static inline void
++nvk_sw_terminar_dibujo(struct nvk_cmd_buffer *cmd, uint64_t t0)
++{
++   if (likely(t0 == 0))
++      return;
++   nvk_sw_parte(cmd, NVK_SW_P_DIBUJO, t0);
++   cmd->state.sw.cuentas[NVK_SW_C_DIBUJOS_MEDIDOS]++;
++   if (cmd->push_mem == cmd->state.sw.mem_inicio &&
++       cmd->push.end >= cmd->state.sw.dw_inicio)
++      cmd->state.sw.cuentas[NVK_SW_C_DWORDS_DIBUJO] +=
++         cmd->push.end - cmd->state.sw.dw_inicio;
++   cmd->state.sw.midiendo = false;
++}
++
++/* The usual copy of the pipeline's fixed state
++ * (vk_cmd_set_dynamic_graphics_state), measured in 1 of every N binds. In the
++ * measured ones, it also records whether the copy changed nothing (no values, no
++ * set, no dirty, no vertex input, no sample positions) and how many new dirty
++ * bits it left.
++ * The copies taken before and after, for that comparison, are kept outside
++ * the measured part.
++ */
++static ATTRIBUTE_NOINLINE void
++nvk_sw_copia_medida(struct nvk_cmd_buffer *cmd,
++                    const struct vk_dynamic_graphics_state *state)
++{
++   struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
++
++   if (cmd->state.sw.medir_fallos) {
++      const uint64_t t = nvk_sw_ticks();
++      nvk_sw_tocar(state, sizeof(*state));
++      nvk_sw_tocar(state->vi, sizeof(*state->vi));
++      nvk_sw_tocar(state->ms.sample_locations,
++                   sizeof(*state->ms.sample_locations));
++      nvk_sw_parte(cmd, NVK_SW_P_PIPE_TOQUE, t);
++   }
++
++   struct vk_dynamic_graphics_state antes;
++   struct vk_vertex_input_state vi_antes;
++   struct vk_sample_locations_state sl_antes;
++   memcpy(&antes, dyn, sizeof(antes));
++   memcpy(&vi_antes, &cmd->state.gfx._dynamic_vi, sizeof(vi_antes));
++   memcpy(&sl_antes, &cmd->state.gfx._dynamic_sl, sizeof(sl_antes));
++
++   const uint64_t t0 = nvk_sw_ticks();
++   vk_cmd_set_dynamic_graphics_state(&cmd->vk, state);
++   nvk_sw_parte(cmd, NVK_SW_P_PIPE_COPIA, t0);
++
++   cmd->state.sw.cuentas[NVK_SW_C_PIPES_MEDIDOS]++;
++   uint32_t nuevos = 0;
++   for (uint32_t w = 0; w < ARRAY_SIZE(dyn->dirty); w++)
++      nuevos += util_bitcount(dyn->dirty[w] & ~antes.dirty[w]);
++   cmd->state.sw.cuentas[NVK_SW_C_PIPES_BITS_NUEVOS] += nuevos;
++   if (memcmp(&antes, dyn, sizeof(antes)) == 0 &&
++       memcmp(&vi_antes, &cmd->state.gfx._dynamic_vi, sizeof(vi_antes)) == 0 &&
++       memcmp(&sl_antes, &cmd->state.gfx._dynamic_sl, sizeof(sl_antes)) == 0)
++      cmd->state.sw.cuentas[NVK_SW_C_PIPES_SIN_EFECTO]++;
++}
++
++void
++nvk_sw_cmd_set_dynamic_graphics_state(struct vk_command_buffer *vk_cmd,
++                                      const struct vk_dynamic_graphics_state *state)
++{
++   struct nvk_cmd_buffer *cmd =
++      container_of(vk_cmd, struct nvk_cmd_buffer, vk);
++
++   if (likely(!cmd->state.sw.midiendo_pipe)) {
++      vk_cmd_set_dynamic_graphics_state(vk_cmd, state);
++      return;
++   }
++   cmd->state.sw.midiendo_pipe = false;
++   nvk_sw_copia_medida(cmd, state);
+ }
++#endif
+ 
+ static void
+ nvk_cmd_flush_gfx_state(struct nvk_cmd_buffer *cmd)
+@@ -4443,10 +5157,37 @@ nvk_cmd_flush_gfx_state(struct nvk_cmd_buffer *cmd)
+                                        dev->interlock_memory->va->addr);
+       }
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: per-part measurement (only in the measured draws) */
++   if (unlikely(cmd->state.sw.midiendo))
++      nvk_sw_contar_antes_del_flush(cmd);
++   uint64_t t_sw = nvk_sw_t0(cmd);
++   /* NFSMW: NVK_SW_M_CBUFS: with no bits in push_dirty the function
++    * does nothing (it only walks those bits).
++    */
++   if (!nvk_sw_activa(cmd, NVK_SW_M_CBUFS) ||
++       cmd->state.gfx.descriptors.push_dirty != 0)
++#endif
+    nvk_cmd_buffer_flush_push_descriptors(cmd, &cmd->state.gfx.descriptors);
++#ifdef HAVE_SWITCH_PLATFORM
++   t_sw = nvk_sw_parte(cmd, NVK_SW_P_PUSH_DESC, t_sw);
++#endif
+    nvk_cmd_flush_gfx_dynamic_state(cmd);
++#ifdef HAVE_SWITCH_PLATFORM
++   t_sw = nvk_sw_parte(cmd, NVK_SW_P_DINAMICO, t_sw);
++   if (unlikely(t_sw != 0 && cmd->state.sw.medir_fallos)) {
++      nvk_sw_tocar_shaders(cmd);
++      t_sw = nvk_sw_parte(cmd, NVK_SW_P_TOQUE_SHADERS, t_sw);
++   }
++#endif
+    nvk_cmd_flush_gfx_shaders(cmd);
++#ifdef HAVE_SWITCH_PLATFORM
++   t_sw = nvk_sw_parte(cmd, NVK_SW_P_SHADERS, t_sw);
++#endif
+    nvk_cmd_flush_gfx_cbufs(cmd);
++#ifdef HAVE_SWITCH_PLATFORM
++   nvk_sw_parte(cmd, NVK_SW_P_CBUFS, t_sw);
++#endif
+ 
+    if (NAK_CAN_PRINTF)
+       nvk_cmd_buffer_flush_printf_buffer(cmd, &cmd->state.gfx.descriptors);
+@@ -4663,12 +5404,31 @@ nvk_cmd_bind_vertex_buffer(struct nvk_cmd_buffer *cmd, uint32_t vb_idx,
+       cmd->state.gfx.vb0 = addr_range;
+ 
+    struct nv_push *p = nvk_cmd_buffer_push(cmd, 5);
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_EMISION, the same command written at once */
++   const uint32_t datos_sw[4] = {
++      vb_idx, (uint32_t)(addr_range.address >> 32),
++      (uint32_t)addr_range.address, (uint32_t)addr_range.size,
++   };
++   const int modo_sw = cmd->state.sw.modo_emision;
++   uint32_t *const inicio_sw = p->end;
++   if (modo_sw == NVK_SW_RAPIDO) {
++      nvk_sw_1inc_rapido(p, NV9097_CALL_MME_MACRO(NVK_MME_BIND_VB), datos_sw, 4);
++   } else
++#endif
++   {
+    P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_BIND_VB));
+    P_INLINE_DATA(p, vb_idx);
+    P_INLINE_DATA(p, addr_range.address >> 32);
+    P_INLINE_DATA(p, addr_range.address);
+    assert(addr_range.size <= UINT32_MAX);
+    P_INLINE_DATA(p, addr_range.size);
++#ifdef HAVE_SWITCH_PLATFORM
++   if (modo_sw == NVK_SW_COMPROBAR)
++      nvk_sw_comprobar_1inc(cmd, p, inicio_sw,
++                            NV9097_CALL_MME_MACRO(NVK_MME_BIND_VB), datos_sw, 4);
++#endif
++   }
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+@@ -4678,6 +5438,9 @@ nvk_CmdBindVertexBuffers3KHR(VkCommandBuffer commandBuffer,
+                              const VkBindVertexBuffer3InfoKHR* pBindingInfos)
+ {
+    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
++#ifdef HAVE_SWITCH_PLATFORM
++   const uint64_t t_sw = nvk_sw_toca_medir(cmd, NVK_SW_T_VB) ? nvk_sw_ticks() : 0; /* NFSMW */
++#endif
+ 
+    vk_cmd_set_vertex_binding_strides2(&cmd->vk, firstBinding,
+                                        bindingCount, pBindingInfos);
+@@ -4693,6 +5456,9 @@ nvk_CmdBindVertexBuffers3KHR(VkCommandBuffer commandBuffer,
+ 
+       nvk_cmd_bind_vertex_buffer(cmd, idx, addr_range);
+    }
++#ifdef HAVE_SWITCH_PLATFORM
++   nvk_sw_parte(cmd, NVK_SW_P_ENLACE_VB, t_sw); /* NFSMW */
++#endif
+ }
+ 
+ static void
+@@ -4933,15 +5699,44 @@ nvk_CmdDraw(VkCommandBuffer commandBuffer,
+    if (unlikely(!vertexCount || !instanceCount))
+       return;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   const uint64_t t_dibujo_sw = nvk_sw_empezar_dibujo(cmd); /* NFSMW */
++#endif
+    nvk_cmd_flush_gfx_state(cmd);
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   const uint64_t t_emitir_sw = nvk_sw_t0(cmd);
++#endif
+    struct nv_push *p = nvk_cmd_buffer_push(cmd, 6);
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_EMISION, the same command written at once */
++   const uint32_t datos_sw[5] = {
++      0 /* draw_index */, vertexCount, instanceCount, firstVertex, firstInstance,
++   };
++   const int modo_sw = cmd->state.sw.modo_emision;
++   uint32_t *const inicio_sw = p->end;
++   if (modo_sw == NVK_SW_RAPIDO) {
++      nvk_sw_1inc_rapido(p, NV9097_CALL_MME_MACRO(NVK_MME_DRAW), datos_sw, 5);
++   } else
++#endif
++   {
+    P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_DRAW));
+    P_INLINE_DATA(p, 0 /* draw_index */);
+    P_INLINE_DATA(p, vertexCount);
+    P_INLINE_DATA(p, instanceCount);
+    P_INLINE_DATA(p, firstVertex);
+    P_INLINE_DATA(p, firstInstance);
++#ifdef HAVE_SWITCH_PLATFORM
++   if (modo_sw == NVK_SW_COMPROBAR)
++      nvk_sw_comprobar_1inc(cmd, p, inicio_sw,
++                            NV9097_CALL_MME_MACRO(NVK_MME_DRAW), datos_sw, 5);
++#endif
++   }
++#ifdef HAVE_SWITCH_PLATFORM
++   cmd->state.sw.modo_emision = nvk_sw_emision_modo(cmd);
++   nvk_sw_parte(cmd, NVK_SW_P_EMITIR, t_emitir_sw);
++   nvk_sw_terminar_dibujo(cmd, t_dibujo_sw);
++#endif
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+@@ -5111,9 +5906,29 @@ nvk_CmdDrawIndexed(VkCommandBuffer commandBuffer,
+    if (unlikely(!indexCount || !instanceCount))
+       return;
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   const uint64_t t_dibujo_sw = nvk_sw_empezar_dibujo(cmd); /* NFSMW */
++#endif
+    nvk_cmd_flush_gfx_state(cmd);
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++   const uint64_t t_emitir_sw = nvk_sw_t0(cmd);
++#endif
+    struct nv_push *p = nvk_cmd_buffer_push(cmd, 7);
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: NVK_SW_M_EMISION, the same command written at once */
++   const uint32_t datos_sw[6] = {
++      0 /* draw_index */, indexCount, instanceCount, firstIndex,
++      (uint32_t)vertexOffset, firstInstance,
++   };
++   const int modo_sw = cmd->state.sw.modo_emision;
++   uint32_t *const inicio_sw = p->end;
++   if (modo_sw == NVK_SW_RAPIDO) {
++      nvk_sw_1inc_rapido(p, NV9097_CALL_MME_MACRO(NVK_MME_DRAW_INDEXED),
++                         datos_sw, 6);
++   } else
++#endif
++   {
+    P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_DRAW_INDEXED));
+    P_INLINE_DATA(p, 0 /* draw_index */);
+    P_INLINE_DATA(p, indexCount);
+@@ -5121,6 +5936,18 @@ nvk_CmdDrawIndexed(VkCommandBuffer commandBuffer,
+    P_INLINE_DATA(p, firstIndex);
+    P_INLINE_DATA(p, vertexOffset);
+    P_INLINE_DATA(p, firstInstance);
++#ifdef HAVE_SWITCH_PLATFORM
++   if (modo_sw == NVK_SW_COMPROBAR)
++      nvk_sw_comprobar_1inc(cmd, p, inicio_sw,
++                            NV9097_CALL_MME_MACRO(NVK_MME_DRAW_INDEXED),
++                            datos_sw, 6);
++#endif
++   }
++#ifdef HAVE_SWITCH_PLATFORM
++   cmd->state.sw.modo_emision = nvk_sw_emision_modo(cmd);
++   nvk_sw_parte(cmd, NVK_SW_P_EMITIR, t_emitir_sw);
++   nvk_sw_terminar_dibujo(cmd, t_dibujo_sw);
++#endif
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+diff --git a/src/nouveau/vulkan/nvk_cmd_meta.c b/src/nouveau/vulkan/nvk_cmd_meta.c
+index e27f000..16378fb 100644
+--- a/src/nouveau/vulkan/nvk_cmd_meta.c
++++ b/src/nouveau/vulkan/nvk_cmd_meta.c
+@@ -12,6 +12,8 @@
+ 
+ #include "vk_format.h"
+ 
++#include "util/u_debug.h"
++
+ #include "nv_push_cl9097.h"
+ #include "nv_push_cl90c0.h"
+ #include "nv_push_clb197.h"
+@@ -416,6 +418,28 @@ nvk_cmd_copy_image_to_buffer_meta(struct nvk_cmd_buffer *cmd,
+    nvk_meta_end_compute(cmd, &save);
+ }
+ 
++/* On a unified-memory SoC copies should be cheaper on the copy engine
++ * (DMA) than with vk_meta shaders, because those occupy the same SMs that are shading pixels.
++ * Ported from NXVK (src/nouveau/vulkan/nvk_cmd_meta.c, nvk_copy_prefers_copy_engine).
++ *
++ * Measured on the console and turned off. It came out backwards: the copies category of the C2
++ * report went from 2.67 to 3.79 ms per frame, i.e. +1.12 ms, for nothing in return. It was also
++ * suspected of making the car body darken at times, since the rear-view mirror cubemap uses copies.
++ * The function and its four uses stay in place so it can be measured again without touching code:
++ * NVK_COPY_ENGINE=1 (through nfsmw_mesa_entorno) turns it on.
++ */
++static bool
++nvk_copy_prefers_copy_engine(struct nvk_cmd_buffer *cmd)
++{
++   const struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
++   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
++
++   if (pdev->info.type != NV_DEVICE_TYPE_SOC)
++      return false;
++
++   return debug_get_bool_option("NVK_COPY_ENGINE", false);
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ nvk_CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
+                           const VkCopyImageToBufferInfo2 *pCopyImageToBufferInfo)
+@@ -424,7 +448,8 @@ nvk_CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(nvk_image, src, pCopyImageToBufferInfo->srcImage);
+ 
+    VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
+-   if ((queue_flags & VK_QUEUE_COMPUTE_BIT) &&
++   if (!nvk_copy_prefers_copy_engine(cmd) &&
++       (queue_flags & VK_QUEUE_COMPUTE_BIT) &&
+        nvk_meta_image_copy_compute_supported(src)) {
+       nvk_cmd_copy_image_to_buffer_meta(cmd, pCopyImageToBufferInfo);
+    } else {
+@@ -458,7 +483,8 @@ nvk_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(nvk_image, dst, pCopyBufferToImageInfo->dstImage);
+ 
+    VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
+-   if ((queue_flags & VK_QUEUE_COMPUTE_BIT) &&
++   if (!nvk_copy_prefers_copy_engine(cmd) &&
++       (queue_flags & VK_QUEUE_COMPUTE_BIT) &&
+        nvk_meta_image_copy_compute_supported(dst)) {
+       nvk_cmd_copy_buffer_to_image_meta(cmd, pCopyBufferToImageInfo,
+                               VK_PIPELINE_BIND_POINT_COMPUTE);
+@@ -498,7 +524,9 @@ nvk_CmdCopyImage2(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(nvk_image, dst, pCopyImageInfo->dstImage);
+ 
+    VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
+-   if ((queue_flags & VK_QUEUE_GRAPHICS_BIT) &&
++   if (nvk_copy_prefers_copy_engine(cmd)) {
++      nvk_cmd_copy_image_ce(cmd, pCopyImageInfo);
++   } else if ((queue_flags & VK_QUEUE_GRAPHICS_BIT) &&
+        nvk_meta_image_copy_gfx_supported(src) &&
+        nvk_meta_image_copy_gfx_supported(dst)) {
+       nvk_cmd_copy_image_meta(cmd, pCopyImageInfo,
+@@ -532,7 +560,8 @@ nvk_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+ 
+    VkQueueFlags queue_flags = nvk_cmd_buffer_queue_flags(cmd);
+-   if (queue_flags & VK_QUEUE_COMPUTE_BIT) {
++   if (!nvk_copy_prefers_copy_engine(cmd) &&
++       (queue_flags & VK_QUEUE_COMPUTE_BIT)) {
+       nvk_cmd_copy_buffer_meta(cmd, pCopyBufferInfo);
+    } else {
+       nvk_cmd_copy_buffer_ce(cmd, pCopyBufferInfo);
+diff --git a/src/nouveau/vulkan/nvk_cmd_pool.c b/src/nouveau/vulkan/nvk_cmd_pool.c
+index bd2ddd9..bfe87ff 100644
+--- a/src/nouveau/vulkan/nvk_cmd_pool.c
++++ b/src/nouveau/vulkan/nvk_cmd_pool.c
+@@ -23,14 +23,8 @@ nvk_cmd_mem_create(struct nvk_cmd_pool *pool, bool force_gart, struct nvk_cmd_me
+ 
+    enum nvkmd_mem_flags flags = force_gart ? NVKMD_MEM_GART
+                                            : NVKMD_MEM_LOCAL;
+-   if (dev->cmd_mem_cpu_uncached) {
+-      /* On Horizon, COHERENT selects a CPU-uncached NvMap.  Do not set
+-       * GPU_UNCACHED: command fetches and transient command-buffer uploads
+-       * retain GPU caching, with submission's system-memory acquire making
+-       * new CPU writes visible.
+-       */
++   if (dev->cpu_write_mem_uncached)
+       flags |= NVKMD_MEM_COHERENT;
+-   }
+ 
+    result = nvkmd_dev_alloc_mapped_mem(dev->nvkmd, &pool->vk.base,
+                                        NVK_CMD_MEM_SIZE, 0,
+diff --git a/src/nouveau/vulkan/nvk_descriptor_set.c b/src/nouveau/vulkan/nvk_descriptor_set.c
+index ccaee7b..73452a3 100644
+--- a/src/nouveau/vulkan/nvk_descriptor_set.c
++++ b/src/nouveau/vulkan/nvk_descriptor_set.c
+@@ -737,8 +737,12 @@ nvk_CreateDescriptorPool(VkDevice _device,
+             return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
+          }
+       } else {
++         enum nvkmd_mem_flags mem_flags = NVKMD_MEM_LOCAL;
++         if (dev->cpu_write_mem_uncached)
++            mem_flags |= NVKMD_MEM_COHERENT;
++
+          result = nvkmd_dev_alloc_mapped_mem(dev->nvkmd, &dev->vk.base,
+-                                             mem_size, 0, NVKMD_MEM_LOCAL,
++                                             mem_size, 0, mem_flags,
+                                              NVKMD_MEM_MAP_WR, &pool->mem);
+          if (result != VK_SUCCESS) {
+             nvk_destroy_descriptor_pool(dev, pAllocator, pool);
+diff --git a/src/nouveau/vulkan/nvk_descriptor_table.c b/src/nouveau/vulkan/nvk_descriptor_table.c
+index e76e37f..6e7a3ca 100644
+--- a/src/nouveau/vulkan/nvk_descriptor_table.c
++++ b/src/nouveau/vulkan/nvk_descriptor_table.c
+@@ -72,7 +72,11 @@ nvk_descriptor_table_init(struct nvk_device *dev,
+    assert(util_is_power_of_two_nonzero(min_descriptor_count));
+    assert(util_is_power_of_two_nonzero(max_descriptor_count));
+ 
+-   result = nvk_mem_arena_init(dev, &table->arena, NVKMD_MEM_LOCAL,
++   enum nvkmd_mem_flags mem_flags = NVKMD_MEM_LOCAL;
++   if (dev->cpu_write_mem_uncached)
++      mem_flags |= NVKMD_MEM_COHERENT;
++
++   result = nvk_mem_arena_init(dev, &table->arena, mem_flags,
+                                NVKMD_MEM_MAP_WR, true /* contiguous */,
+                                max_descriptor_count * descriptor_size);
+    if (result != VK_SUCCESS)
+@@ -147,7 +151,6 @@ nvk_descriptor_table_write_locked(struct nvk_descriptor_table *table,
+ 
+    assert(desc_size == table->desc_size);
+    memcpy(map, desc_data, table->desc_size);
+-   nvk_mem_arena_set_map_dirty(&table->arena);
+    nvk_descriptor_table_publish_locked(table, index);
+ }
+ 
+@@ -158,7 +161,6 @@ nvk_descriptor_table_clear_locked(struct nvk_descriptor_table *table,
+    void *map = nvk_descriptor_table_map_locked(table, index);
+ 
+    memset(map, 0, table->desc_size);
+-   nvk_mem_arena_set_map_dirty(&table->arena);
+    nvk_descriptor_table_publish_locked(table, index);
+ }
+ 
+diff --git a/src/nouveau/vulkan/nvk_descriptor_table.h b/src/nouveau/vulkan/nvk_descriptor_table.h
+index 43035e9..8e77e09 100644
+--- a/src/nouveau/vulkan/nvk_descriptor_table.h
++++ b/src/nouveau/vulkan/nvk_descriptor_table.h
+@@ -55,13 +55,6 @@ void nvk_descriptor_table_remove(struct nvk_device *dev,
+                                  struct nvk_descriptor_table *table,
+                                  uint32_t index);
+ 
+-static void
+-nvk_descriptor_table_flush_map(struct nvk_device *dev,
+-                               struct nvk_descriptor_table *table)
+-{
+-   nvk_mem_arena_flush_map(dev, &table->arena);
+-}
+-
+ static inline uint64_t
+ nvk_descriptor_table_base_address(struct nvk_descriptor_table *table)
+ {
+diff --git a/src/nouveau/vulkan/nvk_device.c b/src/nouveau/vulkan/nvk_device.c
+index 00949e1..6194a11 100644
+--- a/src/nouveau/vulkan/nvk_device.c
++++ b/src/nouveau/vulkan/nvk_device.c
+@@ -284,13 +284,11 @@ init_dispatch_tables(struct nvk_device *dev)
+ static void
+ nvk_device_init_cpu_write_mem_policy(struct nvk_device *dev)
+ {
+-   /* Default Horizon command/transient storage to CPU-uncached, GPU-cached
+-    * memory. Environment options permit cached-CPU comparisons.
++   /* Storage the CPU only writes is mapped uncached, so publishing it to the
++    * GPU costs nothing. Environment options permit cached-CPU comparisons.
+     */
+-   dev->cmd_mem_cpu_uncached =
+-      debug_get_bool_option("NVK_SWITCH_CMD_MEM_CPU_UNCACHED", true);
+-   dev->mem_stream_cpu_uncached =
+-      debug_get_bool_option("NVK_SWITCH_MEM_STREAM_CPU_UNCACHED", true);
++   dev->cpu_write_mem_uncached =
++      debug_get_bool_option("NVK_SWITCH_CPU_WRITE_MEM_UNCACHED", true);
+ }
+ 
+ static bool
+diff --git a/src/nouveau/vulkan/nvk_device.h b/src/nouveau/vulkan/nvk_device.h
+index 3c81d83..9eda6f2 100644
+--- a/src/nouveau/vulkan/nvk_device.h
++++ b/src/nouveau/vulkan/nvk_device.h
+@@ -52,8 +52,7 @@ struct nvk_device {
+     * memory; GPU caching is controlled separately by
+     * NVKMD_MEM_GPU_UNCACHED.
+     */
+-   bool cmd_mem_cpu_uncached;
+-   bool mem_stream_cpu_uncached;
++   bool cpu_write_mem_uncached;
+ 
+    struct nvk_upload_queue upload;
+ 
+diff --git a/src/nouveau/vulkan/nvk_heap.h b/src/nouveau/vulkan/nvk_heap.h
+index 1107a00..2069e77 100644
+--- a/src/nouveau/vulkan/nvk_heap.h
++++ b/src/nouveau/vulkan/nvk_heap.h
+@@ -35,12 +35,6 @@ VkResult nvk_heap_upload(struct nvk_device *dev, struct nvk_heap *heap,
+ void nvk_heap_free(struct nvk_device *dev, struct nvk_heap *heap,
+                    uint64_t addr, uint64_t size);
+ 
+-static void
+-nvk_heap_flush_maps(struct nvk_device *dev, struct nvk_heap *heap)
+-{
+-   nvk_mem_arena_flush_map(dev, &heap->arena);
+-}
+-
+ static inline uint64_t
+ nvk_heap_contiguous_base_address(struct nvk_heap *heap)
+ {
+diff --git a/src/nouveau/vulkan/nvk_image.c b/src/nouveau/vulkan/nvk_image.c
+index 69d0165..792cc56 100644
+--- a/src/nouveau/vulkan/nvk_image.c
++++ b/src/nouveau/vulkan/nvk_image.c
+@@ -2,6 +2,7 @@
+  * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+  * SPDX-License-Identifier: MIT
+  */
++#include <stdio.h>   /* NFSMW: ZCULL trace */
+ #include "nvk_image.h"
+ 
+ #include "nvk_device.h"
+@@ -1083,7 +1084,16 @@ nvk_image_init(struct nvk_device *dev,
+       }
+    }
+ 
+-#ifndef __SWITCH__
++/* ZCULL enabled on Switch as well.
++ *
++ * This block was wrapped in #ifndef __SWITCH__ without any note justifying it. NXVK
++ * (the same NVK ported to the same console) has it enabled with this same code, so there is
++ * no known reason to turn it off. ZCULL rejects occluded pixels before shading them, which
++ * is exactly what this game needs: 13.6 M fragments per frame at ~280 operations.
++ *
++ * Note: the image is only eligible if it has no uses other than depth attachment and reads.
++ * The game's renderer had to stop requesting TRANSFER_DST on its depth render targets.
++ */
+    const VkImageUsageFlagBits READ_ONLY_IMAGE_USAGE =
+       VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+       VK_IMAGE_USAGE_SAMPLED_BIT |
+@@ -1106,8 +1116,35 @@ nvk_image_init(struct nvk_device *dev,
+       image->zcull.nil = nil_zcull_new(&pdev->info.zcull_info, 0, 0,
+                                        image->vk.extent.width,
+                                        image->vk.extent.height);
++      /* One trace line per size, to confirm from the console log that the ZCULL plane
++       * is really assigned. Without it there is no way to tell "ZCULL active" from
++       * "ZCULL silently inert", which is exactly what happened here.
++       */
++      static uint32_t avisados_zcull = 0;
++      if (avisados_zcull < 8) {
++         avisados_zcull++;
++         fprintf(stderr,
++                 "[nvk] ZCULL: plano de %u bytes para profundidad %ux%u (align %u)\n",
++                 (unsigned)image->zcull.nil.size_B,
++                 image->vk.extent.width, image->vk.extent.height,
++                 (unsigned)image->zcull.nil.align_B);
++      }
++   } else if ((image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
++              (image->vk.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
++      /* Depth without a ZCULL plane. Say why: that is what takes hours to find out. */
++      static uint32_t avisados_sin_zcull = 0;
++      if (avisados_sin_zcull < 8) {
++         avisados_sin_zcull++;
++         fprintf(stderr,
++                 "[nvk] ZCULL: SIN plano para profundidad %ux%u:%s%s%s%s\n",
++                 image->vk.extent.width, image->vk.extent.height,
++                 !pdev->info.has_zcull_info ? " el driver no sabe que la GPU tiene zcull" : "",
++                 (image->vk.usage & ~ZCULL_COMPATIBLE_IMAGE_USAGE) ?
++                    " usos incompatibles (TRANSFER_DST?)" : "",
++                 (image->vk.create_flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT) ? " sparse" : "",
++                 image->vk.tiling != VK_IMAGE_TILING_OPTIMAL ? " tiling no optimo" : "");
++      }
+    }
+-#endif
+ 
+    const enum pipe_format plane0_format = image->planes[0].nil.format.p_format;
+    if (plane0_format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT) {
+diff --git a/src/nouveau/vulkan/nvk_mem_arena.c b/src/nouveau/vulkan/nvk_mem_arena.c
+index 618dd93..5d00a29 100644
+--- a/src/nouveau/vulkan/nvk_mem_arena.c
++++ b/src/nouveau/vulkan/nvk_mem_arena.c
+@@ -158,31 +158,6 @@ nvk_mem_arena_map(const struct nvk_mem_arena *arena,
+    return mem->mem->map + mem_offset_B;
+ }
+ 
+-static void
+-nvk_mem_arena_flush_map_locked(struct nvk_device *dev,
+-                               struct nvk_mem_arena *arena)
+-{
+-   if (p_atomic_xchg(&arena->map_dirty, 0) == 0)
+-      return;
+-
+-   const uint32_t mem_count = nvk_mem_arena_mem_count(arena);
+-
+-   for (uint32_t mem_idx = 0; mem_idx < mem_count; mem_idx++) {
+-      const struct nvk_arena_mem *mem = &arena->mem[mem_idx];
+-      const uint64_t mem_size_B = nvk_mem_arena_mem_size_B(mem_idx);
+-      nvkmd_mem_sync_map_to_gpu(mem->mem, 0, mem_size_B);
+-   }
+-}
+-
+-void
+-nvk_mem_arena_flush_map(struct nvk_device *dev,
+-                        struct nvk_mem_arena *arena)
+-{
+-   simple_mtx_lock(&arena->mutex);
+-   nvk_mem_arena_flush_map_locked(dev, arena);
+-   simple_mtx_unlock(&arena->mutex);
+-}
+-
+ static void
+ nvk_mem_arena_sync_written_range(struct nvkmd_mem *mem,
+                                  uint64_t offset_B, uint64_t range_B)
+diff --git a/src/nouveau/vulkan/nvk_mem_arena.h b/src/nouveau/vulkan/nvk_mem_arena.h
+index d9c8a7f..a09d5bc 100644
+--- a/src/nouveau/vulkan/nvk_mem_arena.h
++++ b/src/nouveau/vulkan/nvk_mem_arena.h
+@@ -72,9 +72,6 @@ struct nvk_mem_arena {
+     */
+    uint32_t mem_count;
+ 
+-   /* Non-zero if any maps of this arena are dirty */
+-   uint32_t map_dirty;
+-
+    struct nvk_arena_mem mem[NVK_MEM_ARENA_MAX_MEM_COUNT];
+ };
+ 
+@@ -191,22 +188,6 @@ nvk_contiguous_mem_arena_map_offset(const struct nvk_mem_arena *arena,
+ void *nvk_mem_arena_map(const struct nvk_mem_arena *arena,
+                         uint64_t addr, size_t map_range_B);
+ 
+-/** Mark the arena map dirty
+- *
+- * This should be called after writing data into the arena via a pointer
+- * returned by nvk_mem_arena_map().  It must be called after the write, not
+- * before, to ensure that the next call to nvk_mem_arena_flush_map() will
+- * flush out the new writes.
+- */
+-static inline void
+-nvk_mem_arena_set_map_dirty(struct nvk_mem_arena *arena)
+-{
+-   return p_atomic_set(&arena->map_dirty, 1);
+-}
+-
+-void nvk_mem_arena_flush_map(struct nvk_device *dev,
+-                             struct nvk_mem_arena *arena);
+-
+ void nvk_mem_arena_copy_to_gpu(struct nvk_mem_arena *arena,
+                                uint64_t dst_addr,
+                                const void *src, size_t size_B);
+diff --git a/src/nouveau/vulkan/nvk_mem_stream.c b/src/nouveau/vulkan/nvk_mem_stream.c
+index fb6db80..73ae032 100644
+--- a/src/nouveau/vulkan/nvk_mem_stream.c
++++ b/src/nouveau/vulkan/nvk_mem_stream.c
+@@ -48,13 +48,8 @@ nvk_mem_stream_chunk_create(struct nvk_device *dev,
+       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
+ 
+    enum nvkmd_mem_flags flags = NVKMD_MEM_GART;
+-   if (dev->mem_stream_cpu_uncached) {
+-      /* Keep GPU caching enabled.  Horizon's COHERENT flag only changes the
+-       * CPU mapping to uncached, making explicit CPU cache publication a
+-       * safe no-op for these write-only streaming chunks.
+-       */
++   if (dev->cpu_write_mem_uncached)
+       flags |= NVKMD_MEM_COHERENT;
+-   }
+ 
+    result = nvkmd_dev_alloc_mapped_mem(dev->nvkmd, &dev->vk.base,
+                                        NVK_MEM_STREAM_MAX_ALLOC_SIZE, 0,
+diff --git a/src/nouveau/vulkan/nvk_nir_lower_descriptors.c b/src/nouveau/vulkan/nvk_nir_lower_descriptors.c
+index 9361402..fb7df95 100644
+--- a/src/nouveau/vulkan/nvk_nir_lower_descriptors.c
++++ b/src/nouveau/vulkan/nvk_nir_lower_descriptors.c
+@@ -460,11 +460,29 @@ build_cbuf_map(nir_shader *nir, struct lower_descriptors_ctx *ctx)
+          continue;
+ 
+       /* Prior to Turing, indirect cbufs require splitting the pushbuf and
+-       * pushing bits of the descriptor set.  Doing this every draw call is
+-       * probably more overhead than it's worth.
++       * pushing bits of the descriptor set.  Upstream skips that because
++       * "doing this every draw call is probably more overhead than it's worth".
++       *
++       * On GM20B it is not a performance trade-off but a CORRECTNESS
++       * requirement.  Skipping the promotion turns every descriptor-set UBO
++       * read into a global LDG, and a fragment shader that issues an LDG for
++       * data consumed by a hardware loop never retires on this part: the warp
++       * hangs and the channel dies on a faultless timeout.  Measured on the
++       * Godot sky shader with the loop intact and DOES_GLOBAL_STORE off:
++       *
++       *    LDG 55 / LDC 0  -> hangs
++       *    LDG  0 / LDC 5  -> renders
++       *
++       * nvc0, which drives the same silicon correctly, likewise reads uniforms
++       * from the constant banks.  The promoted shaders are also smaller and
++       * use fewer registers (sky FS 593->569 instructions, 32->24 GPRs), so
++       * the performance argument does not hold here either.
++       *
++       * Set NVK_SWITCH_NO_UBO_CBUF=1 to restore the upstream behaviour.
+        */
+       if (ctx->dev_info->cls_eng3d < TURING_A &&
+-          cbufs[i].key.type == NVK_CBUF_TYPE_UBO_DESC)
++          cbufs[i].key.type == NVK_CBUF_TYPE_UBO_DESC &&
++          debug_get_bool_option("NVK_SWITCH_NO_UBO_CBUF", false))
+          continue;
+ 
+       ctx->cbuf_map->cbufs[ctx->cbuf_map->cbuf_count++] = cbufs[i].key;
+diff --git a/src/nouveau/vulkan/nvk_query_pool.c b/src/nouveau/vulkan/nvk_query_pool.c
+index af6f89f..ceda24f 100644
+--- a/src/nouveau/vulkan/nvk_query_pool.c
++++ b/src/nouveau/vulkan/nvk_query_pool.c
+@@ -168,7 +168,8 @@ nvk_CreateQueryPool(VkDevice device,
+    if (mem_size > 0) {
+       result = nvkmd_dev_alloc_mapped_mem(dev->nvkmd, &dev->vk.base,
+                                           mem_size, 0 /* align_B */,
+-                                          NVKMD_MEM_GART,
++                                          NVKMD_MEM_GART |
++                                          NVKMD_MEM_GPU_UNCACHED,
+                                           NVKMD_MEM_MAP_RDWR,
+                                           &pool->mem);
+       if (result != VK_SUCCESS) {
+diff --git a/src/nouveau/vulkan/nvk_queue.c b/src/nouveau/vulkan/nvk_queue.c
+index 4cf42d2..2f5ef65 100644
+--- a/src/nouveau/vulkan/nvk_queue.c
++++ b/src/nouveau/vulkan/nvk_queue.c
+@@ -407,9 +407,6 @@ nvk_queue_submit_exec(struct nvk_queue *queue,
+    struct nvk_device *dev = nvk_queue_device(queue);
+    VkResult result;
+    if (submit->command_buffer_count > 0) {
+-      nvk_descriptor_table_flush_map(dev, &dev->images);
+-      nvk_descriptor_table_flush_map(dev, &dev->samplers);
+-      nvk_heap_flush_maps(dev, &dev->shader_heap);
+       assert(dev->event_heap.arena.mem_flags & NVKMD_MEM_COHERENT);
+ 
+       result = nvk_queue_state_update(queue, &queue->state);
+diff --git a/src/nouveau/vulkan/nvk_shader.c b/src/nouveau/vulkan/nvk_shader.c
+index 1d79b6c..1c35bce 100644
+--- a/src/nouveau/vulkan/nvk_shader.c
++++ b/src/nouveau/vulkan/nvk_shader.c
+@@ -2,6 +2,7 @@
+  * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+  * SPDX-License-Identifier: MIT
+  */
++#include <stdlib.h>   /* getenv, strtoul: NVK_SUBTILING_KNOB */
+ #include "nvk_shader.h"
+ 
+ #include "nvk_cmd_buffer.h"
+@@ -20,6 +21,8 @@
+ #include "vk_ycbcr_conversion.h"
+ 
+ #include "nak.h"
++#include "util/log.h"
++#include "util/u_debug.h"
+ #include "nir.h"
+ #include "nir_builder.h"
+ #include "compiler/spirv/nir_spirv.h"
+@@ -83,6 +86,10 @@ nvk_physical_device_compiler_flags(const struct nvk_physical_device *pdev)
+       | (use_edb_buffer_views ? 1 << 13 : 0)
+       | (instance->drirc.misc.ssbo_align_4b ? 1 << 14 : 0)
+       | (UINT64_C(8) << 16) /* Interlock compiler ABI revision. */
++      /* NFSMW: revision of our NAK fixes. It is hashed into the pipeline cache UUID and the disk cache
++       * keys, and on Horizon the build id is the package version, so without it the old (miscompiled) shaders
++       * would be reused. 1 = SM50 FADD32I dropped .SAT. Bump it with every NAK fix. */
++      | (UINT64_C(1) << 24)
+       | (nak_flags << 48);
+ }
+ 
+@@ -175,6 +182,70 @@ nvk_preprocess_nir(struct vk_physical_device *vk_pdev,
+    }
+ }
+ 
++/* Color attachments that really exist in the pipeline. Without state (shader objects or pipeline
++ * libraries) all of them are returned, which is the conservative choice.
++ */
++static uint32_t
++nvk_color_rt_mask(const struct vk_graphics_pipeline_state *state)
++{
++   if (state == NULL || state->rp == NULL)
++      return ~0u;
++
++   uint32_t mask = 0;
++   for (uint32_t i = 0; i < state->rp->color_attachment_count; i++) {
++      if (state->rp->color_attachment_formats[i] != VK_FORMAT_UNDEFINED)
++         mask |= BITFIELD_BIT(i);
++   }
++   return mask;
++}
++
++/* Writes to a nonexistent color attachment: Vulkan discards them, so they can be removed here,
++ * letting DCE remove everything that only fed that color. Whatever decides the alpha test
++ * (the alpha and its discard) does not depend on these writes and stays.
++ */
++static bool
++nvk_quitar_color_muerto_instr(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   const uint32_t rt_mask = *(const uint32_t *)data;
++
++   if (intr->intrinsic != nir_intrinsic_store_deref)
++      return false;
++
++   nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
++   if (deref == NULL)
++      return false;
++
++   nir_variable *var = nir_deref_instr_get_variable(deref);
++   if (var == NULL || var->data.mode != nir_var_shader_out)
++      return false;
++
++   /* Only SV_Target0..7 with index 0: gl_FragColor (which goes to all) and the second blend source stay. */
++   if (var->data.location < FRAG_RESULT_DATA0 || var->data.index != 0)
++      return false;
++
++   const unsigned rt = var->data.location - FRAG_RESULT_DATA0;
++   if (rt >= 32 || (rt_mask & BITFIELD_BIT(rt)))
++      return false;
++
++   nir_instr_remove(&intr->instr);
++   return true;
++}
++
++static void
++nvk_quitar_color_muerto(nir_shader *nir, uint32_t rt_mask)
++{
++   if (nir->info.stage != MESA_SHADER_FRAGMENT || rt_mask == ~0u)
++      return;
++
++   bool progress = false;
++   NIR_PASS(progress, nir, nir_shader_intrinsics_pass, nvk_quitar_color_muerto_instr,
++            nir_metadata_control_flow, &rt_mask);
++   if (progress) {
++      NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_shader_out, NULL);
++      NIR_PASS(_, nir, nir_opt_dce);
++   }
++}
++
+ static void
+ nvk_populate_fs_key(struct nak_fs_key *key,
+                     const struct vk_graphics_pipeline_state *state)
+@@ -236,6 +307,10 @@ nvk_hash_state(struct vk_physical_device *device,
+       nvk_populate_fs_key(&key, state);
+       _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
+ 
++      /* The binary depends on which color attachments exist (nvk_quitar_color_muerto). */
++      const uint32_t rt_mask = nvk_color_rt_mask(state);
++      _mesa_blake3_update(&blake3_ctx, &rt_mask, sizeof(rt_mask));
++
+       /* This doesn't impact the shader compile but it does go in the
+        * nvk_shader and gets [de]serialized along with the binary so we
+        * need to hash it.
+@@ -570,6 +645,22 @@ nvk_compile_nir(struct nvk_device *dev, nir_shader *nir,
+       return vk_errorf(pdev, VK_ERROR_UNKNOWN, "Internal compiler error in NAK");
+ 
+    shader->info = shader->nak->info;
++   /* Registers, spills and occupancy of each shader (NVK_SHADER_STATS=1). On GM20B occupancy is set
++    * by the registers, and a spill to local memory is very expensive with 21 GB/s shared.
++    */
++   {
++      static int nvk_shader_stats = -1;
++      if (nvk_shader_stats < 0)
++         nvk_shader_stats = debug_get_bool_option("NVK_SHADER_STATS", false);
++      if (nvk_shader_stats) {
++         mesa_logi("estadisticas de shader: etapa %u, %u registros, %u B de memoria local, "
++                   "%u warps por SM, %u B de codigo",
++                   (unsigned)nir->info.stage, (unsigned)shader->info.num_gprs,
++                   (unsigned)shader->info.slm_size,
++                   nak_max_warps_per_sm(shader->info.num_gprs, pdev->nak),
++                   (unsigned)shader->nak->code_size);
++      }
++   }
+    shader->asm_str = shader->nak->asm_str;
+    shader->code_ptr = shader->nak->code;
+    shader->code_size = shader->nak->code_size;
+@@ -940,22 +1031,26 @@ nvk_shader_fill_push(struct nvk_device *dev,
+    } else if (shader->info.stage == MESA_SHADER_FRAGMENT) {
+       max_dw_count += 13;
+ 
++      /* NVK_SUBTILING_KNOB allows sweeping this split without recompiling. Packed as in
++       * NXVK: bits 0-7 register file, 8-15 pixel output, 16-23 triangle RAM,
++       * 24-31 maximum quads. Known values (NXVK's switch/smoke/nvk_subtile.c):
++       * 0x087f6080  deko3d, fragment default on T210  <- ours
++       * 0x20806080  deko3d, with three or more color outputs
++       * 0x20164010  generic (discrete parts and nouveau nvc0)
++       */
++      const uint32_t knob_defecto =
++         native_t210_subtiling ? 0x087f6080u : 0x20164010u;
++      const char *knob_env = getenv("NVK_SUBTILING_KNOB");
++      const uint32_t knob =
++         knob_env != NULL ? (uint32_t)strtoul(knob_env, NULL, 0) : knob_defecto;
++
+       P_MTHD(p, NVC397, SET_SUBTILING_PERF_KNOB_A);
+-      if (native_t210_subtiling) {
+-         P_NV9097_SET_SUBTILING_PERF_KNOB_A(p, {
+-            .fraction_of_spm_register_file_per_subtile       = 0x80,
+-            .fraction_of_spm_pixel_output_buffer_per_subtile = 0x60,
+-            .fraction_of_spm_triangle_ram_per_subtile        = 0x7f,
+-            .fraction_of_max_quads_per_subtile               = 0x08,
+-         });
+-      } else {
+-         P_NV9097_SET_SUBTILING_PERF_KNOB_A(p, {
+-            .fraction_of_spm_register_file_per_subtile       = 0x10,
+-            .fraction_of_spm_pixel_output_buffer_per_subtile = 0x40,
+-            .fraction_of_spm_triangle_ram_per_subtile        = 0x16,
+-            .fraction_of_max_quads_per_subtile               = 0x20,
+-         });
+-      }
++      P_NV9097_SET_SUBTILING_PERF_KNOB_A(p, {
++         .fraction_of_spm_register_file_per_subtile       = knob & 0xff,
++         .fraction_of_spm_pixel_output_buffer_per_subtile = (knob >> 8) & 0xff,
++         .fraction_of_spm_triangle_ram_per_subtile        = (knob >> 16) & 0xff,
++         .fraction_of_max_quads_per_subtile               = (knob >> 24) & 0xff,
++      });
+       P_NV9097_SET_SUBTILING_PERF_KNOB_B(p, 0x20);
+ 
+       P_IMMD(p, NV9097, SET_API_MANDATED_EARLY_Z,
+@@ -1194,6 +1289,7 @@ nvk_compile_shader(struct nvk_device *dev,
+    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
+       nvk_populate_fs_key(&fs_key_tmp, state);
+       fs_key = &fs_key_tmp;
++      nvk_quitar_color_muerto(nir, nvk_color_rt_mask(state));  /* NFSMW */
+    }
+ 
+    result = nvk_compile_nir(dev, nir, info->flags, info->robustness,
+@@ -1630,6 +1726,11 @@ const struct vk_device_shader_ops nvk_device_shader_ops = {
+    .hash_state = nvk_hash_state,
+    .compile = nvk_compile_shaders,
+    .deserialize = nvk_deserialize_shader,
++#ifdef HAVE_SWITCH_PLATFORM
++   /* NFSMW: the same copy; 1 of every N is measured (nvk_cmd_draw.c) */
++   .cmd_set_dynamic_graphics_state = nvk_sw_cmd_set_dynamic_graphics_state,
++#else
+    .cmd_set_dynamic_graphics_state = vk_cmd_set_dynamic_graphics_state,
++#endif
+    .cmd_bind_shaders = nvk_cmd_bind_shaders,
+ };
+diff --git a/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_dev.c b/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_dev.c
+index ac47645..af49abf 100644
+--- a/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_dev.c
++++ b/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_dev.c
+@@ -31,6 +31,10 @@ struct nvkmd_switch_ctx {
+    struct nvkmd_ctx base;
+    enum nvkmd_engines engines;
+    struct nouveau_horizon_channel *channel;
++   /* ZCULL context switch buffer, one per channel. NULL if the channel has no 3D or if
++    * the kernel did not publish ZCULL geometry.
++    */
++   struct nvkmd_mem *zcull_mem;
+    struct nouveau_horizon_fence last_fence;
+    bool has_last_fence;
+    bool teardown_quarantined;
+@@ -261,6 +265,15 @@ nvkmd_switch_ctx_try_destroy(struct nvkmd_ctx *_ctx,
+       return false;
+    }
+ 
++   /* Only after channel_put() has reported COMPLETE, i.e. when the GPU can no longer
++    * reach this buffer. On the quarantine path above it is deliberately kept, as
++    * the Gallium teardown does (nouveau_switch_pushbuf.c:1985-1999 versus :2026).
++    */
++   if (ctx->zcull_mem != NULL) {
++      nvkmd_mem_unref(ctx->zcull_mem);
++      ctx->zcull_mem = NULL;
++   }
++
+    FREE(ctx);
+    return true;
+ }
+@@ -1033,6 +1046,50 @@ nvkmd_switch_dev_create_ctx(struct nvkmd_dev *_dev,
+                                             VK_ERROR_INITIALIZATION_FAILED,
+                                             "create channel");
+       }
++
++      /* Hierarchical depth culling needs this.
++       *
++       * ZCULL keeps its RAM in a per-channel buffer that must be bound before the first submit.
++       * Without it, the 3D engine receives SET_ZCULL_* commands with nowhere to store anything. The three
++       * reference implementations do the same in the same order: legacy libdrm-nouveau
++       * (pushbuf.c:475,489,518), our Gallium path (nouveau_switch_pushbuf.c:1815,1882,2026) and
++       * NXVK (nvkmd/nvgpu/nvkmd_nvgpu_ctx.c:326-338).
++       *
++       * The buffer arrives zeroed: nouveau_horizon_memory_create() does a memset and cleans the CPU
++       * cache on every allocation, new or recycled (nouveau_horizon_memory.c:612-625). This is mandatory:
++       * LOAD_ZCULL on garbage data kills the GPU context (nvk_cmd_buffer.c:1182-1186).
++       *
++       * The 0x20000 alignment comes from the upstream reference; it is not a number chosen here.
++       */
++      const uint32_t zcull_ctx_size_B =
++         ((engines & NVKMD_ENGINE_3D) && _dev->pdev->dev_info.has_zcull_info)
++            ? nvGpuGetZcullCtxSize()
++            : 0;
++
++      if (zcull_ctx_size_B > 0) {
++         VkResult result = nvkmd_dev_alloc_mem(_dev, log_obj, zcull_ctx_size_B,
++                                               0x20000, NVKMD_MEM_LOCAL,
++                                               &ctx->zcull_mem);
++         if (result != VK_SUCCESS) {
++            (void)nvkmd_switch_ctx_try_destroy(&ctx->base, log_obj);
++            return result;
++         }
++
++         const enum nouveau_horizon_status zcull_status =
++            nouveau_horizon_channel_bind_zcull(ctx->channel,
++                                               ctx->zcull_mem->va->addr);
++         if (zcull_status != NOUVEAU_HORIZON_SUCCESS) {
++            (void)nvkmd_switch_ctx_try_destroy(&ctx->base, log_obj);
++            return nvkmd_switch_status_result(log_obj, zcull_status,
++                                               VK_ERROR_INITIALIZATION_FAILED,
++                                               "bind the ZCULL context");
++         }
++
++         vk_logi(VK_LOG_OBJS(log_obj),
++                 "nvkmd-switch: contexto de ZCULL atado (%u B @ 0x%llx)",
++                 zcull_ctx_size_B,
++                 (unsigned long long)ctx->zcull_mem->va->addr);
++      }
+    }
+ 
+    *ctx_out = &ctx->base;
+diff --git a/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_pdev.c b/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_pdev.c
+index 63ea5fd..8deee32 100644
+--- a/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_pdev.c
++++ b/src/nouveau/vulkan/nvkmd/switch/nvkmd_switch_pdev.c
+@@ -459,11 +459,42 @@ nvkmd_switch_try_create_pdev(struct vk_object_base *log_obj,
+    pdev->base.ops = &nvkmd_switch_pdev_ops;
+    pdev->base.debug_flags = debug_flags;
+ 
+-   /* Use static GM20B properties without acquiring libnx services during
+-    * enumeration.
++   /* Use static GM20B properties; the only thing we must ask the kernel for is
++    * the ZCULL geometry, and we do that below behind a short-lived runtime
++    * reference.
+     */
+    nouveau_horizon_get_gm20b_info(&pdev->base.dev_info);
+ 
++   /* Without this, ZCULL is dead on the Vulkan path.
++    *
++    * Only the kernel knows the ZCULL geometry, and this is the last chance to publish it:
++    * nvk_create_physical_device_from_nvkmd() copies dev_info to nvk_physical_device::info right
++    * after we return (nvk_physical_device.c:1609, from nvk_instance.c:111), and that copy is
++    * what nvk_image.c (to assign the plane) and nvk_cmd_draw.c (to use it) read.
++    *
++    * The runtime reference is held only during the query: the data is copied by value, so
++    * nothing is left dangling when it is released. Failure is not fatal: the driver carries on
++    * without hierarchical depth culling.
++    */
++   struct nouveau_horizon_runtime *zcull_runtime = NULL;
++   if (nouveau_horizon_runtime_get(&zcull_runtime) == NOUVEAU_HORIZON_SUCCESS) {
++      nouveau_horizon_add_zcull_info(&pdev->base.dev_info);
++      nouveau_horizon_runtime_put(zcull_runtime);
++   }
++
++   if (pdev->base.dev_info.has_zcull_info) {
++      vk_logi(VK_LOG_OBJS(log_obj),
++              "nvkmd-switch: ZCULL activado (aliquots=%u subregiones=%u ctxsw=%u B align=%ux%u)",
++              pdev->base.dev_info.zcull_info.aliquot_total,
++              pdev->base.dev_info.zcull_info.subregion_count,
++              pdev->base.dev_info.zcull_info.ctxsw_size,
++              pdev->base.dev_info.zcull_info.subregion_width_align_pixels,
++              pdev->base.dev_info.zcull_info.subregion_height_align_pixels);
++   } else {
++      vk_logi(VK_LOG_OBJS(log_obj),
++              "nvkmd-switch: el kernel no da geometria de ZCULL; sin descarte jerarquico");
++   }
++
+    pdev->base.kmd_info = (struct nvkmd_info) {
+       .has_dma_buf = false,
+       /* nvMapCreate accepts a caller-supplied page-aligned pointer. */
+diff --git a/src/vulkan/runtime/vk_pipeline.c b/src/vulkan/runtime/vk_pipeline.c
+index 00523fb..cee351b 100644
+--- a/src/vulkan/runtime/vk_pipeline.c
++++ b/src/vulkan/runtime/vk_pipeline.c
+@@ -1145,6 +1145,53 @@ struct vk_graphics_pipeline {
+    struct vk_pipeline_stage stages[MESA_VK_MAX_GRAPHICS_PIPELINE_STAGES];
+ };
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: PRECARGA (ver vk_pipeline.h). */
++int32_t vk_switch_precarga = 0;
++
++static inline void
++vk_switch_precargar_bytes(const void *p, size_t bytes)
++{
++   const char *c = p;
++   if (bytes == 0)
++      return;
++   for (size_t i = 0; i < bytes; i += 64)
++      __builtin_prefetch(c + i, 0, 3);
++   __builtin_prefetch(c + bytes - 1, 0, 3);
++}
++
++/* What vk_graphics_pipeline_cmd_bind and vk_dynamic_graphics_state_copy read
++ * from the pipeline: the whole fixed state, from its vertex input the binding mask
++ * with the first bindings and the attribute mask with the first 8, and
++ * the first two stages.
++ */
++static void
++vk_switch_precargar_gfx(const struct vk_graphics_pipeline *gfx)
++{
++   const struct vk_vertex_input_state *vi = &gfx->linked._dynamic_vi;
++   vk_switch_precargar_bytes(&gfx->linked.dynamic, sizeof(gfx->linked.dynamic));
++   vk_switch_precargar_bytes(vi, 64);
++   vk_switch_precargar_bytes(&vi->attributes_valid,
++                             (const char *)&vi->attributes[8] -
++                             (const char *)&vi->attributes_valid);
++   vk_switch_precargar_bytes(&gfx->stage_count,
++                             (const char *)&gfx->stages[2] -
++                             (const char *)&gfx->stage_count);
++}
++
++void
++vk_switch_precargar_pipeline(VkPipeline _pipeline)
++{
++   VK_FROM_HANDLE(vk_pipeline, pipeline, _pipeline);
++   if (pipeline == NULL ||
++       pipeline->bind_point != VK_PIPELINE_BIND_POINT_GRAPHICS ||
++       (pipeline->flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR))
++      return;
++   vk_switch_precargar_gfx(
++      container_of(pipeline, struct vk_graphics_pipeline, base));
++}
++#endif
++
+ static void
+ vk_graphics_pipeline_destroy(struct vk_device *device,
+                              struct vk_pipeline *pipeline,
+@@ -1212,6 +1259,11 @@ vk_graphics_pipeline_cmd_bind(struct vk_command_buffer *cmd_buffer,
+       assert(pipeline->bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS);
+       assert(!(pipeline->flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR));
+       gfx_pipeline = container_of(pipeline, struct vk_graphics_pipeline, base);
++#ifdef HAVE_SWITCH_PLATFORM
++      /* NFSMW: the cache lines of the copy below, requested all at once */
++      if (vk_switch_precarga > 0)
++         vk_switch_precargar_gfx(gfx_pipeline);
++#endif
+ 
+       for (uint32_t i = 0; i < gfx_pipeline->stage_count; i++) {
+          struct vk_shader *shader = gfx_pipeline->stages[i].shader;
+diff --git a/src/vulkan/runtime/vk_pipeline.h b/src/vulkan/runtime/vk_pipeline.h
+index 3c7cafd..caa917d 100644
+--- a/src/vulkan/runtime/vk_pipeline.h
++++ b/src/vulkan/runtime/vk_pipeline.h
+@@ -198,6 +198,17 @@ struct vk_pipeline_ops {
+                                    mesa_shader_stage stage);
+ };
+ 
++#ifdef HAVE_SWITCH_PLATFORM
++/* NFSMW: pipeline prefetch (NVK's NVK_SW_M_PRECARGA).
++ * NVK sets vk_switch_precarga on every vkBeginCommandBuffer (1 = request the
++ * pipeline's cache lines when its bind starts). vk_switch_precargar_pipeline
++ * requests right away the lines vkCmdBindPipeline will read; the app calls it as soon
++ * as it knows which pipeline it is about to bind. PRFM only: it changes nothing.
++ */
++extern int32_t vk_switch_precarga;
++void vk_switch_precargar_pipeline(VkPipeline pipeline);
++#endif
++
+ void *vk_pipeline_zalloc(struct vk_device *device,
+                          const struct vk_pipeline_ops *ops,
+                          VkPipelineBindPoint bind_point,

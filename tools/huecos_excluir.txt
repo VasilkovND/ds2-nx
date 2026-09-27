@@ -1,0 +1,58 @@
+# Addresses that must not be declared as functions, even if they are gaps.
+# tools/huecos.py skips them when generating app/huecos.toml.
+#
+# "not in any code region" -> "has no blocks - generating stub"
+#   They are data blocks embedded in .text. Declaring them produces empty functions
+#   that, if something calls them, return silently instead of reporting it.
+0x8262E954
+0x82633AC4
+0x826B88E4
+0x826BBF94
+0x826BC2A8
+0x826BCB54
+0x826BCF14
+0x826BD184
+0x826BD2AC
+0x826BD4E4
+0x826BD874
+0x826BDCD8
+0x826BF368
+0x826BF95C
+0x826BFC7C
+0x826BFFBC
+0x826C02A4
+0x826C282C
+0x826C36F4
+0x826C4CC8
+0x826C6734
+0x826C68D4
+0x826C6CC4
+0x826CAC74
+0x826CB3A4
+0x826CC6B4
+0x826D2724
+0x826D28A4
+0x826D2C34
+0x826D2FC4
+0x826D390C
+0x826D416C
+0x826D92D4
+0x826D95E4
+0x826DA80C
+0x826F93C4
+0x82850024
+0x82850384
+0x828507C4
+0x8289E308
+0x828AB84C
+0x828B777C
+0x828BF59C
+0x828C09C8
+0x828C3694
+0x828C5C38
+0x828C6A98
+
+# "outranked by import" -> lld-link: undefined symbol: sub_XXXXXXXX
+#   It is an import thunk. The codegen registers it in the table but emits no
+#   body, and the link breaks.
+0x828A9BFC

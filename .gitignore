@@ -1,0 +1,39 @@
+# Nothing derived from the game is ever committed: its files, the code generated from default.xex, and the
+# binaries built from that code.
+
+# --- Game files ---------------------------------------------------------------
+assets/
+*.xex
+*.xexp
+*.iso
+*.bin
+*.big
+*.bun
+*.viv
+*.nfsp
+
+# --- Generated from the game --------------------------------------------------
+generated/
+app*/generated/
+app*/src/copias_literales/
+app*/src/nfsmw_nativo_resplandor_*_spirv.h
+app_*/
+
+# --- Build output -------------------------------------------------------------
+out/
+build/
+*.nro
+*.nacp
+*.elf
+*.o
+*.obj
+*.a
+*.log
+*.err
+shaders/wasm/out/
+
+# --- Tools --------------------------------------------------------------------
+__pycache__/
+*.pyc
+.vs/
+.vscode/

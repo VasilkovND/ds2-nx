@@ -1,0 +1,52 @@
+# ============================================================================
+#  NFSMW Recomp - executable configuration
+#
+#  The game reads this file at startup, from its own folder:
+#      <.exe folder>\nfsmw.toml
+#
+#  The name is not the executable's but the app's ("nfsmw"), so it works
+#  the same next to NFS_Most_Wanted.exe as next to nfsmw.exe.
+#
+#  Command-line arguments take precedence over what is here, so things
+#  can still be tried with PROBAR_RTV.bat without touching the file.
+# ============================================================================
+
+
+# ----------------------------------------------------------------------------
+#  EDRAM emulation path
+# ----------------------------------------------------------------------------
+#
+#  WHAT IT IS
+#  The Xbox 360 has no normal render targets: it has 10 MB of embedded
+#  memory (the EDRAM) where fixed-function hardware does blending and the
+#  depth test. There are two ways to emulate that:
+#
+#    "rtv"  host render targets, using the GPU normally. Fast.
+#    "rov"  the EDRAM is emulated by hand inside the pixel shader, with interlocks
+#           that force overlapping pixels to be processed in order. It is
+#           more accurate and much slower.
+#
+#  WHY IT IS SET EXPLICITLY
+#  Because the SDK did not choose by performance but by vendor
+#  (src/graphics/d3d12/render_target_cache.cpp):
+#
+#      path_ = vendor == kIntel ? kPixelShaderInterlock : kHostRenderTargets;
+#
+#  On Intel GPUs, ROV was forced. The reason is dated in the SDK's own
+#  comment: an Intel driver bug from April 2021 (a UHD 630) where the
+#  "always" stencil comparison did not work. And the comment next to it
+#  says "The ROV path is currently much slower generally".
+#
+#  MEASURED IN THIS PROJECT, on an Intel Iris 540, same spot, no vsync:
+#      rov (what the SDK forced)    ~10 fps
+#      rtv (this setting)           ~18 fps
+#
+#  With no visible glitches, so the 2021 bug is no longer in the driver.
+#
+#  On NVIDIA and AMD "rtv" was already the default, so setting it here
+#  changes nothing for them. All this line does is remove a decision
+#  made by graphics card brand.
+#
+#  If it ever looks wrong (ghosting, things that are not cleared, leftovers
+#  from the previous frame), try "rov" and compare.
+render_target_path_d3d12 = "rtv"

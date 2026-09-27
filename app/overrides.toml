@@ -1,0 +1,322 @@
+# ============================================================================
+#  NFSMW Recomp - manual declarations for the codegen
+#
+#  Included from nfsmw_manifest.toml via includes = ["overrides.toml"].
+#  Included files use the flat schema (sections at the root), not the one
+#  nested under [entrypoint] in the manifest.
+#
+#  Valid address range: 0x82000000 - 0x82CD0000
+#  (image base 0x82000000 + 13,434,880 bytes of image)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+#  FUNCTIONS DECLARED BY HAND
+#
+#  Key = start address (hex, in quotes).
+#  Fields, all optional:
+#    name             symbol name (default: sub_XXXXXXXX)
+#    size             size in bytes          \ mutually exclusive
+#    end              end address            /
+#    parent           address of the parent function (discontiguous fragment)
+#    share_registers  the fragment shares the parent's registers
+#
+#  Without size or end, the analyzer finds the bounds by itself from the
+#  address. That is what we want when all it needs to be told is "a
+#  function starts here".
+# ----------------------------------------------------------------------------
+# --- PERFORMANCE: root keys (tools/rendimiento.py) ---
+#
+# This goes up here on purpose. In TOML a loose key belongs to the
+# last table opened, and [functions] is opened further down. Written at the end
+# of the file, cr_as_local would land inside [functions], the codegen would not
+# read it and would not complain: an hour of compiling for zero changes.
+#
+# Written and removed by tools/rendimiento.py. Do not edit by hand.
+
+# Condition registers as local variables instead of context fields,
+# so the compiler keeps them in real registers.
+cr_as_local = true
+
+# r14-r31 as local variables. Stack sampling showed ~14 % of the game's main thread in
+# __restgprlr_N / __savegprlr_N, the routines that save and restore those registers in every
+# prologue and epilogue. With this the codegen does not emit those calls and the compiler keeps
+# them in real registers. It benefits every game thread. The hooks that read r14-r31 from the
+# caller are handled below with share_registers (see [functions]). Verified: without this line
+# the codegen reproduces the previous code byte for byte (269 files unchanged).
+# The game uses setjmp (Lua, sub_826BF370), but its longjmp (sub_826BCF20) already returns to
+# its caller instead of to the setjmp: that path did not work even before this option.
+non_volatile_as_local = true
+
+# The carry/overflow register (XER, 172,403 uses in the game code: every comparison reads it)
+# and the count register (CTR, 32,637) as local variables. Every function uses both only
+# internally: none receives them from its caller. None of our hooks read them (verified: 0 uses
+# of ctx.xer / ctx.ctr in app/src).
+# non_argument_as_local is not enabled: it would localize r12, and __savevmx_N receives it as a base.
+# skip_lr is not enabled: our hooks read ctx.lr 21 times.
+xer_as_local = true
+ctr_as_local = true
+
+# --- fin RENDIMIENTO raiz ---
+
+[functions]
+
+# Functions with a REX_HOOK_RAW hook that reads non-volatile registers of its caller. With
+# non_volatile_as_local those registers live in the caller's local variables; share_registers
+# makes the caller store them to ctx before the call and reload them afterwards. This is only
+# safe in functions that do not use __savegprlr / __restgprlr (otherwise the caller would reload
+# values that were never restored). Verified in the generated code: neither of the two uses them
+# or touches r14-r31.
+#   sub_828531E8: audio server wait (nfsmw_audio_servidor.cpp reads ctx.r31).
+#   sub_82589DF0: cutscenes (nfsmw_video_bridge.cpp reads r25, r27, r31; PC only).
+# sub_82593A10 (DrawVertices) is not marked: it uses savegpr/restgpr and would break the caller.
+# Its read of r31 in nfsmw_d3d_trace.cpp is inside NFSMW_NATIVE_SHADER_LIBRARY,
+# which is off on the Switch.
+"0x828531E8" = { share_registers = true }
+"0x82589DF0" = { share_registers = true }
+
+# Function chunks that read registers of their parent function. The analyzer splits some
+# game functions in two (the tail is declared in huecos.toml, or it finds it by itself);
+# the parent sets up r14-r31, cr, ctr or xer and jumps to the tail. With the registers as
+# local variables the tail received them as zero, and the game hung at the EA video
+# (sub_826E724C did bctrl with ctr = 0). share_registers on the tail plus the codegen patch
+# (emit_call_sharing_registers) make the function that jumps pass its registers through ctx.
+# List generated with tools/lee_antes.py (reads before writes in the generated code); the ones
+# in huecos.toml carry the mark on their own line.
+"0x82636A50" = { share_registers = true }
+"0x82636A60" = { share_registers = true }
+"0x82638AD0" = { share_registers = true }
+"0x82639120" = { share_registers = true }
+"0x8263CA88" = { share_registers = true }
+"0x8263FDF8" = { share_registers = true }
+"0x8263FEB0" = { share_registers = true }
+"0x82640680" = { share_registers = true }
+"0x8269D410" = { share_registers = true }
+"0x8269E700" = { share_registers = true }
+"0x8269E710" = { share_registers = true }
+"0x826BF370" = { share_registers = true }
+"0x82801B40" = { share_registers = true }
+"0x828B9950" = { share_registers = true }
+"0x828B9CF8" = { share_registers = true }
+"0x828B9FB8" = { share_registers = true }
+"0x828BA220" = { share_registers = true }
+"0x828BA388" = { share_registers = true }
+"0x828BC318" = { share_registers = true }
+
+# Two tail calls (b, unconditional branch) point here from 0x8286931C and
+# 0x82866664, but automatic discovery never created a function at this
+# address. Result: the Validate phase fails with
+#   UnresolvedCall: 0x8285CE80 - target not in any function
+# Declaring it as an entry point is enough; Discover works out the bounds.
+"0x8285CE80" = { }
+
+# 104-byte gap after the end of sub_824EDE88 (which ends at 0x824EDEA8)
+# and before the next function at 0x824EDF10. There is real code in there:
+# the Write phase warned about two unresolved conditional branches,
+#   0x824EDEB0 -> 0x824EDED4   and   0x824EDEC0 -> 0x824EDECC
+# because their source was in no man's land. With the start declared, Discover
+# claims the whole block and the branches become internal.
+"0x824EDEB0" = { share_registers = true }
+
+# The one that broke startup:
+#   [FATAL] Call to invalid or unregistered function at guest address 0x826BE258
+# sub_826BE1B0 is memcpy (byte-by-byte loop + fast word path) and
+# ends right at 0x826BE258. Between that end and the next function, at
+# 0x826BE260, there are 8 unclaimed bytes that something calls indirectly
+# (which is why the Validate phase did not complain: it only checks direct b/bl branches).
+"0x826BE258" = { }
+
+# Same pattern, next crash:
+#   [FATAL] Call to invalid or unregistered function at guest address 0x8215FEA8
+# 8-byte gap between the end of sub_8215FE90 and the function at 0x8215FEB0,
+# in an area full of 8- and 16-byte functions (a thunk table).
+"0x8215FEA8" = { }
+
+# The only address that showed up in the full survey (REXGLUE_SURVEY=1), with the
+# game already running its main loop and feeding audio. In other words: with this one,
+# no known unresolved indirect call remains.
+"0x8285CB90" = { }
+
+# It appeared once graphics were working, on the loading screen. The previous survey
+# missed it because, with the state corrupted by the missing functions, the game never
+# got this far. Every time the game reaches new code more can show up: they are
+# indirect call targets, invisible to static analysis.
+"0x8220C090" = { }
+
+# In the same neighborhood as 0x8285CE80, whose callers were at 0x8286931C
+# and 0x82866664. The whole 0x8285xxxx-0x8286xxxx area looks like a thunk table.
+"0x82869668" = { }
+
+# 0x8262E768 - removed. Do not declare it. The full explanation, because the
+# error will come back if someone tries the build with a different ISO:
+#
+#   [error] XThread::Execute - No function registered at 8262E768
+#
+# That message did not mean a function was missing. 0x8262E768 was the entry
+# point of the executable of a different version of the game than ours.
+# The runtime reads that address from the header of the XEX inside the
+# ISO, so each region has its own. In our XEX the entry point is at
+# 0x8262E960; in the one from the crash report, at 0x8262E768.
+#
+# Declaring it here did two kinds of damage:
+#   1. It turned a message that pointed at the real problem (wrong ISO) into
+#      a silent crash from reading address 0.
+#   2. It split in two the function 0x8262E708..0x8262E7B0, which is a
+#      healthy function of our build. That was the source of the codegen warning
+#      "Unresolved conditional branch to 0x8262E728 from 0x8262E7A4".
+#
+# How to recognize it again: if "No function registered at X" appears with X = the
+# start_address of the main thread, it is not a missing function. It means the ISO
+# is not the version the build was compiled for. Comparing that address with the
+# entry point of our XEX settles it in a minute.
+
+# Prologue in-game cutscene:
+#   [FATAL] Call to invalid or unregistered function at guest address 0x8212F670
+# Another indirect call target, invisible to static analysis. It only showed up
+# once the floating-point fix let the game get this far: each new stretch the
+# game reaches can uncover more.
+"0x8212F670" = { }
+
+# More keep appearing in the same prologue cutscene, one per run.
+# It is the usual pattern: indirect call targets invisible to static
+# analysis, which only show up when the game takes that path.
+# 0x824B1640 came up with the Release build, 0x823EB808 with the Debug one: they are
+# different paths through the same stretch, not a difference between builds.
+"0x824B1640" = { }
+"0x823EB808" = { }
+
+# ----------------------------------------------------------------------------
+#  JUMP TABLES
+#
+#    address   address of the bctr instruction that dispatches
+#    register  number of the GPR holding the index
+#    labels    targets in index order (labels[0] = index 0)
+#
+#  Getting the order wrong gives no compile error: it gives random crashes.
+# ----------------------------------------------------------------------------
+# [[switch_tables]]
+# address  = 0x82000000
+# register = 11
+# labels   = [0x82000000, 0x82000000]
+
+# ----------------------------------------------------------------------------
+#  DATA REGIONS IN .text
+#    data  32-bit pattern to mark as "not code"
+#    size  bytes of the region that starts at each occurrence of the pattern
+# ----------------------------------------------------------------------------
+# [[invalid_instructions]]
+# data = 0x00000000
+# size = 16
+
+# ----------------------------------------------------------------------------
+#  MID-ASM HOOKS
+#  Intercept a specific instruction without rewriting the function. This is the
+#  tool for patches (disc check, framerate, resolution) without touching the
+#  original binary.
+#
+#    address            PPC instruction to hook
+#    name               C++ function to call
+#    registers          list of registers passed as PPCRegister&
+#    after_instruction  false = before executing it; true = after
+#    return / jump_address                    unconditional control flow
+#    return_on_true / return_on_false         depending on what the hook returns
+#    jump_address_on_true / _on_false
+# ----------------------------------------------------------------------------
+# [[midasm_hook]]
+# address        = 0x82000000
+# name           = "MyHook"
+# registers      = ["r3"]
+# return_on_true = true
+
+# ----------------------------------------------------------------------------
+#  INDIRECT CALL HINTS
+#  Addresses known to be the target of an indirect call that the
+#  analysis did not find. (Not documented in the wiki.)
+# ----------------------------------------------------------------------------
+# indirect_calls = [0x82000000]
+
+# ----------------------------------------------------------------------------
+#  setjmp / longjmp
+#  Without this, non-local jumps corrupt the thread context and the crash
+#  shows up far away from the cause. To find them in the disassembly:
+#    setjmp  saves r14-r31 + LR + CR + SP to the buffer at r3 and returns 0
+#    longjmp restores that buffer and ends in mtctr/bctr
+# ----------------------------------------------------------------------------
+# setjmp_address  = 0x82000000
+# longjmp_address = 0x82000000
+
+# ----------------------------------------------------------------------------
+#  GENERATED CODE QUALITY
+#  All of them start as false. Enable them only once the game boots: they change
+#  the codegen and can mask real runtime bugs.
+#  Suggested order: cr_as_local (the biggest gain in branch-heavy code),
+#  then xer, ctr, non_volatile, skip_lr.
+# ----------------------------------------------------------------------------
+# skip_lr                      = false
+# skip_msr                     = false
+# ctr_as_local                 = false
+# xer_as_local                 = false
+# cr_as_local                  = false
+# reserved_as_local            = false
+# non_argument_as_local        = false
+# non_volatile_as_local        = false
+# generate_exception_handlers  = false   # note: the wiki calls it enable_*, it is generate_*
+
+# ----------------------------------------------------------------------------
+#  ANALYSIS TUNING
+# ----------------------------------------------------------------------------
+# [analysis]
+# max_jump_extension       = 65536
+# data_region_threshold    = 16       # lower to 8 if there are many false "invalid instruction"
+# large_function_threshold = 1048576
+# exception_handler_funcs  = []
+
+# ----------------------------------------------------------------------------
+#  ReXCRT - maps guest CRT functions to native implementations.
+#  Big gain: instead of running the recompiled memcpy instruction by
+#  instruction, the host's one is called. The heap group is all-or-nothing.
+# ----------------------------------------------------------------------------
+# FINDING: the game's memcpy identified at 0x826BE1B0 (reading the generated
+# C++: byte-by-byte loop, fast word path, handling of misaligned data,
+# r3 untouched as the return value). Mapping it here replaces the
+# recompiled loop with the host's memcpy: a big gain, because memcpy is
+# among the hottest code in any game.
+# Enable it only once the game boots; change one variable at a time.
+# [rexcrt]
+# memcpy = 0x826BE1B0
+#
+# [rexcrt]
+# RtlAllocateHeap   = 0x82000000
+# RtlFreeHeap       = 0x82000000
+# RtlSizeHeap       = 0x82000000
+# RtlReAllocateHeap = 0x82000000
+# memcpy            = 0x82000000
+# memset            = 0x82000000
+
+# --- PERFORMANCE: rexcrt (tools/rendimiento.py) ---
+#
+# The game's memcpy, replaced by the host's.
+# sub_826BE1B0 identified by reading the generated C++: it only copies
+# forwards, with no overlap detection, and leaves r3 untouched as the return value. It is
+# memcpy, not memmove, so std::memcpy is equivalent.
+#
+# Written and removed by tools/rendimiento.py. Do not edit by hand.
+
+[rexcrt]
+memcpy = 0x826BE1B0
+# The rest of the hot CRT, identified by reading the generated PowerPC.
+#   memset  0x826BE610: 1,109 call sites. Bytes until aligned, words with the byte replicated,
+#           bytes at the end; size 0 writes nothing and r3 is untouched = std::memset.
+#   memmove 0x826BDD90: this is the real memcpy of the CRT (950 call sites; 128-byte blocks with ld/std,
+#           forwards only, returns r3). It is hooked with memmove semantics on purpose: that is a
+#           superset (also correct if there were overlap) and the game's memmove (0x826B9BA0) jumps
+#           to it when dst < src. That way we do not depend on memcpy tolerating overlap.
+#   strncpy 0x826B9660: 57 call sites. Copies up to the terminating zero, pads with zeros up to n,
+#           returns dst.
+# Native implementations checked in sdk/src/kernel/crt (memory.cpp:77-78, string.cpp:242).
+# Rejected on risk/benefit: memmove_s (differs in error handling), strstr/strchr/strrchr/strncmp/_stricmp
+# (few uses).
+memset = 0x826BE610
+memmove = 0x826BDD90
+strncpy = 0x826B9660
+
+# --- fin RENDIMIENTO rexcrt ---
