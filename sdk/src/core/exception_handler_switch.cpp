@@ -18,7 +18,7 @@
  *
  * The decision order, and why
  *
- *  0. Uncommitted guest physical memory -> 1 MB is committed and the access retried.
+ *  0. Uncommitted guest physical memory -> 4 MB is committed and the access retried.
  *     Physical memory is no longer committed in full at startup: on Horizon those
  *     512 MB are counted once for each of the 360's five views and the kernel ends
  *     up refusing allocations (see xmemory.cpp).
@@ -658,9 +658,9 @@ void WriteBack(const Exception& ex, const HostThreadContext& tc, ThreadException
      * (3) Uncommitted physical memory: it is committed and mapped.
      *
      * Guest physical memory is no longer committed in full at startup (see xmemory.cpp): it is
-     * committed the first time it is touched. One 1 MB chunk per fault means at most 512 chunks, which
-     * with the 360's five views are about 2,500 mappings; with 64 KB pages it would be 40,000 and the
-     * kernel runs out of blocks. The same instruction is retried, without touching the PC.
+     * committed the first time it is touched. One 4 MB chunk per fault means at most 128 chunks, which
+     * with the 360's five views are about 640 mappings (1 MB chunks gave about 2,500); with 64 KB pages
+     * it would be 40,000 and the kernel runs out of blocks. The same instruction is retried, without touching the PC.
      */
     if (!hay_permiso) {
       constexpr size_t kFisicaIni = 0x100000000ull;

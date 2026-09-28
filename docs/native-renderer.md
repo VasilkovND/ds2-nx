@@ -1,196 +1,209 @@
-# The native renderer
+# How the port draws the game (the native renderer)
 
-ReXGlue runs recompiled Xbox 360 games with an emulated Xenos GPU: the game's Direct3D layer writes
-PM4 command packets into a ring buffer, and the runtime interprets them the way the real GPU would,
-EDRAM included, on top of Vulkan or Direct3D 12. On the Switch that path could not reach playable
-frame rates, so this port replaces it with a renderer written for this game. This page explains why,
-how it works, and what made it fast.
+## In short
 
-## Why the emulated GPU was replaced
+- [ReXGlue](glossary.md#rexglue) normally imitates the Xbox 360 GPU. On the Switch that was far too slow for this game:
+  a race ran at about 2 frames per second.
+- So this port draws the game its own way. The game still believes it is talking to an Xbox 360 GPU; the port reads
+  the game's GPU commands and draws the same frame with [Vulkan](glossary.md#vulkan).
+- This page explains why the imitation was replaced, how the new renderer works, and what made it fast.
+- The code is in `app/src/nfsmw_nativo_*` ("nativo" means native).
 
-Measured on the console in September 2026, with the first working build of the port:
+## Why the imitated GPU was replaced
 
-| Scene | Emulated Xenos | Without resolves | Without any GPU work |
+Measured on the console in September 2026, with the first build that worked:
+
+| Scene | Imitated Xbox 360 GPU | Without resolves | Without any GPU work |
 |---|---|---|---|
 | Title screen | 10 FPS | 26.7 FPS | 58.6 FPS |
 | Menu (about 800 draws) | 3.3 FPS | | 14 FPS |
 | Race | 2.0-2.2 FPS | | 2.1 FPS |
 
-- Removing **all** GPU work did not change the race frame rate. The cost was on the CPU: about 80 µs
-  per emulated draw in the command processor, the guest Direct3D driver itself, and the page fault
-  handling of the guest memory (see [platform-notes.md](platform-notes.md#exceptions)).
-- Each resolve (EDRAM to texture copy) cost 3-4 ms of GPU time.
-- Two days of cuts on the emulation side (disabling the game's tiled rendering, cutting passes in
-  races, updating shadows less often) brought the race to about 3.7 FPS.
+What the numbers say:
 
-The ceiling was far below 30 FPS, so the decision was to stop emulating the GPU and draw the game's
-frames with Vulkan directly.
+- Removing **all** the GPU work did not make the race faster. So the problem was the CPU: about 80 µs of CPU per draw
+  to imitate the GPU, plus the game's own [Direct3D](glossary.md#direct3d), plus handling the memory faults of the
+  game's memory (see [platform-notes.md](platform-notes.md#exceptions)).
+- Each [resolve](glossary.md#resolve) cost 3 to 4 ms of GPU time.
+- Two days of cuts on the imitation side (turning off the game's drawing in strips, removing passes in races, updating
+  the shadows less often) only reached about 3.7 FPS in a race.
 
-## Design
+The limit was far below 30 FPS, so the decision was to stop imitating the GPU and draw the game's frames with Vulkan
+directly.
 
-### Consume the ring, do not replace Direct3D
+## How it works
 
-The first idea was the model used by other recompilation ports (for example Sonic Unleashed and
-Marathon): place host objects in guest memory and hook the game's Direct3D creation and lock
-functions. It does not fit this game:
+### The idea: read the game's commands, keep its Direct3D
 
-- many textures are bound through Direct3D headers embedded in loaded game data, so `SetTexture`
-  receives objects that never went through `CreateTexture`;
-- `SetTexture` copies the header's fetch constant straight into the device;
-- the device keeps a mirror of the Xenos registers (constants, booleans and register blocks) that
-  the game's own setters update.
+Other recompiled ports, like Sonic Unleashed and Marathon, replace the game's Direct3D functions: they put their own
+objects in the game's memory and [hook](glossary.md#hook) the functions that create and lock resources. That does not
+fit this game:
 
-So the renderer keeps the game's Direct3D layer running unchanged and **consumes the PM4 ring**: the
-register writes, draws, copies and the Swap packet. It never touches EDRAM emulation. A small set of
-hooks on the game thread adds what the ring lacks:
+- many textures come with their Direct3D description already inside the game data, so they never go through
+  `CreateTexture`, the function you would hook;
+- `SetTexture` copies the texture's description (its "fetch constant") straight into the Direct3D device;
+- the device keeps its own copy of the GPU's settings, which the game updates itself.
 
-- **Shader identity.** Vertex shaders reach the ring already patched by Direct3D and cannot be matched
-  by microcode (see [shaders.md](shaders.md)). Hooks on the shader creation functions map each object
-  to its original container. Each Direct3D draw call pushes the bound vertex and pixel shader objects
-  into a queue that is paired with ring draws by primitive type and count, cross-checked with the last
-  shader load packet (`IM_LOAD`) of the ring. A composite quad that Direct3D emits outside its own
-  draw functions is identified from the ring alone.
-- **Synchronisation.** The ring sink writes `SCRATCH_REG` to `SCRATCH_ADDR` like the real GPU, or the
-  game stalls on `WAIT_REG_MEM` within a second.
+So the port lets the game's Direct3D run as it is, and reads what it writes: the list of GPU commands (the
+[PM4 ring](glossary.md#pm4-ring)), with its settings, draws, copies and the "frame finished" command (Swap). It never
+imitates the [EDRAM](glossary.md#edram).
 
-### Threads
+A few hooks on the game's thread add what the command list does not say:
 
-| Thread | Work |
+- **Which shader is which.** When vertex shaders reach the command list, Direct3D has already modified them, so they
+  cannot be recognized by their microcode (see [shaders.md](shaders.md)). Hooks on the functions that create shaders
+  note which original shader each one is. Each Direct3D draw call also notes which shaders it used, and the ring
+  thread pairs those notes with the draws it reads: by type and number of vertices, checked against the last shader
+  load in the list (`IM_LOAD`). One full-screen quad that Direct3D draws on its own is recognized from the command list
+  alone.
+- **Keeping the game in step.** The game waits (`WAIT_REG_MEM`) until the GPU writes a value (`SCRATCH_REG` to
+  `SCRATCH_ADDR`). The port writes it, as the real GPU would; otherwise the game would freeze within a second.
+
+### The threads
+
+| Thread | What it does |
 |---|---|
-| Game threads (guest) | run the game and its Direct3D layer, write the ring |
-| Ring thread | decodes PM4 packets, tracks register state, records Vulkan commands |
-| Vertex copy thread | copies and byte-swaps vertex data into the upload buffer |
-| Presentation | composes the output and presents |
+| Game threads ([guest](glossary.md#guest)) | Run the game and its Direct3D, which writes the command list |
+| [Ring thread](glossary.md#ring-thread) | Reads the commands, keeps track of the GPU settings and records the Vulkan commands |
+| Vertex copy thread | Copies vertex data into the upload buffer, turning the Xbox 360's byte order into the Switch's |
+| Presentation | Composes the final image and shows it |
 
-The ring thread is the heart of the renderer. For most of the project, the frame lasted exactly as
-long as one loop of that thread.
+The ring thread is the heart of the renderer. For most of the project, a frame took exactly as long as one loop of
+that thread.
 
-### Frame pipeline
+### One frame
 
-- **Work slots.** Each frame records into one of three slots. A slot owns its command buffers, fence,
-  a 64 MB upload buffer and its read-back buffers. The CPU records frame N+1 while the GPU executes
-  frame N; recording only waits if the slot it needs is still in flight. Read-back buffers must be per
-  slot, or two frames in flight race on the same mapped memory.
-- **Render targets instead of EDRAM.** The game's render targets become Vulkan images, and resolves
-  become copies into textures. Many copies are unnecessary: when the next operation clears the target
-  anyway, the renderer **swaps the images** instead of copying ("resolve without copy"). When the
-  swapped content is needed again later, it is restored with barriers.
-- **CPU read-backs.** The game measures scene brightness for its auto-exposure by reading a small
-  resolved texture on the CPU, so a few resolves must be written back to guest memory, tiled and
-  byte-swapped exactly as the Xbox 360 would. Only the 64x64 targets are needed for the exposure to
-  look right, which removed 98 % of the read-back cost.
-- **Presentation** goes through ReXGlue's presenter with IMMEDIATE mode (see
+- **Three work slots.** Each frame is recorded into one of three slots. Each slot has its own command buffers, its own
+  fence (a signal the GPU gives when it finishes), a 64 MB upload buffer and its own read-back buffers. So the CPU
+  records the next frame while the GPU draws the current one, and only waits if the slot it needs is still busy. The
+  read-back buffers must be per slot, or two frames would write over each other.
+- **Render targets instead of EDRAM.** The game's [render targets](glossary.md#render-target) become normal Vulkan
+  images, and resolves become copies into textures. Many of those copies are not needed: when the next thing the game
+  does is clear the target anyway, the port swaps the two images instead of copying ("resolve without copy"). If the
+  old content is needed later, it is brought back.
+- **Some images must go back to the game.** The game measures how bright the scene is (for its automatic exposure) by
+  reading a small image on the CPU. So a few resolved images are written back into the game's memory, in the exact
+  Xbox 360 format. Only the 64x64 ones are needed for the exposure to look right, which removed 98 % of this cost.
+- **Showing the frame** goes through ReXGlue's presenter in IMMEDIATE mode (see
   [platform-notes.md](platform-notes.md#presentation)).
 
-### Draw recording
+### Each draw
 
 For each draw, the ring thread:
 
-1. reads the render state from its register mirror and derives the pipeline key;
-2. resolves textures through a two-level cache (per texture register, then per full fetch constant);
-3. copies vertices (deduplicated) and indices into the upload buffer, byte-swapped;
-4. writes the shader constants that changed into a dynamic uniform buffer;
+1. reads the drawing settings from its copy of the GPU settings, and works out which [pipeline](glossary.md#pipeline)
+   it needs;
+2. finds the textures in a two-level cache;
+3. copies the vertices (without duplicates) and the indices into the upload buffer, turning their byte order;
+4. writes the shader constants that changed into a buffer the shaders read (a dynamic uniform buffer);
 5. binds what changed and records the draw.
 
-Rules that the implementation follows:
+Lessons that shaped the code (each one cost time to find):
 
-- **Hash raw guest bytes, untile only on change.** Textures are hashed from their tiled guest memory
-  (exact tiled extent), untiled only when the hash changes, and stable textures are rechecked with a
-  back-off from every frame to every 32 frames. On the PC this took texture preparation from 66 µs to
-  4.2 µs per draw in the menu.
-- **Structures that are hashed or compared byte by byte have no padding.** A pipeline key with four
-  uninitialised padding bytes created duplicate pipelines from stack garbage (125 to 203 depending on
-  the build). Every such structure has
-  `static_assert(std::has_unique_object_representations_v<T>)`.
-- **Keep hot loops free of aliasing.** A vertex copy loop that read the source, destination and count
-  from a structure passed by reference got 1.9 times slower, because writes through the `uint8_t*`
-  destination could modify the structure. Copy the fields into locals before the loop.
-- **Sample the stopwatches** (one in 64 to 128 packets, one in 8 draws). See
-  [measuring.md](measuring.md#counters-that-lie).
-- **Counters written by a single thread are not atomic read-modify-writes.** The Cortex-A57 is ARMv8.0,
-  without the ARMv8.1 atomics, so every `fetch_add` is an exclusive load/store loop that also steals
-  the cache line. About 83,000 packets per frame were counted that way: 1.1 ms per frame. Before
-  removing an atomic, list every caller: one of the counters turned out to be written from the vblank
-  thread.
+- **Check textures cheaply.** Each texture gets a fingerprint (a hash) of its raw bytes in the game's memory, and is
+  only put back in normal order ("untiled", see [tiling](glossary.md#tiling)) when the fingerprint changes. Textures
+  that do not change are checked less and less often, down to once every 32 frames. On the PC this took the texture
+  work from 66 µs to 4.2 µs per draw in the menu.
+- **Structures that are fingerprinted or compared byte by byte must have no gaps.** A pipeline key with four
+  uninitialized gap bytes ("padding") created duplicate pipelines from leftover memory: 125 to 203, depending on the
+  build. Every such structure has `static_assert(std::has_unique_object_representations_v<T>)`, which makes the
+  compiler refuse a structure with gaps.
+- **In busy loops, copy what you need into local variables first.** A vertex copy loop that read the source, the
+  destination and the count from a structure passed by reference got 1.9 times slower: the compiler could not be sure
+  that the writes did not change the structure, so it read it again every time.
+- **Do not time everything.** Timers are only read on a sample: one in 128 packets, and one in 8 or 64 draws depending
+  on the timer. See [measuring.md](measuring.md#counters-that-lie).
+- **Counters that only one thread uses must not be atomic.** The Switch's processor (Cortex-A57, ARMv8.0) has no fast
+  atomic instructions, so each atomic `fetch_add` is a slow loop that also disturbs the other cores. About 83,000
+  packets per frame were counted that way: 1.1 ms per frame. Before removing an atomic, check every place that writes
+  it: one of these counters turned out to be written by another thread too (the vblank thread).
 
 ### Pipelines
 
-- Pipelines are keyed by render state, shaders and specialization constants, and created through a
-  persistent `VkPipelineCache` saved on the SD card. On NVK a pipeline took about 59 ms to create
-  without it (82 ms for the ones created during the first race).
-- On top of the cache, the renderer records **the list of pipelines the game uses** and recreates
-  them on a background thread at start-up, so the first race does not stutter: 113 of 113 pipelines
-  prewarmed in 0.3 s, and no slow creation during the race. Both live in one file
-  (`cache/nfsmw_nativo_pipelines.bin`).
-- Dynamic state from `VK_EXT_extended_dynamic_state` 1, 2 and 3 was tried to reduce pipeline
-  switches and **lost** on NVK/Maxwell: binding a pipeline went from 2.95 to 4.36 µs per call for only
-  13 % fewer binds.
+- A [pipeline](glossary.md#pipeline) is found by its drawing settings, shaders and specialization constants, and
+  created through a Vulkan [pipeline cache](glossary.md#pipeline-cache) saved on the SD card. Without it, creating one
+  on NVK took about 59 ms (82 ms for the ones created during the first race).
+- On top of that, the port saves **the list of pipelines the game uses** and creates them again on a background thread
+  when the game starts, so the first race does not stutter: 113 of 113 pipelines ready in 0.3 s, and none created
+  slowly during the race. Both things live in one file, `cache/nfsmw_nativo_pipelines.bin`.
+- Tried and dropped: Vulkan's dynamic state extensions (`VK_EXT_extended_dynamic_state` 1, 2 and 3), to change
+  pipelines less often. On NVK with this GPU each change got slower (from 2.95 to 4.36 µs) for only 13 % fewer
+  changes: a loss.
 
 ### Textures and memory
 
-- The texture cache is limited (384 MB); above the limit, textures not used for at least 120 frames
-  are evicted until it is back under 75 %. Without a limit the cache grew by about 20 MB every 40 s of racing, because the
-  game streams new textures into new addresses as the car moves through the world.
-- Textures are sub-allocated from slabs (16 MB in the released configuration) instead of one dedicated allocation each
-  (see [platform-notes.md](platform-notes.md#nvk-on-horizon)).
-- Untiling works on 16-byte groups with NEON byte swapping; the first version, block by block with
-  variable-size `memcpy`, cost around 30 ms whenever a burst of new textures arrived.
+- The texture cache has a limit: 512 MB in the released version (setting `nfsmw_nativo_texturas_mb_max`). It was
+  384 MB until the resolution became automatic, because larger resolutions need more room. Above the limit, textures
+  not used for at least 120 frames are released until the cache is back under 75 %. Without a limit, the cache grew by
+  about 20 MB every 40 s of racing, because the game streams new textures into new addresses as the car drives through
+  the city.
+- Textures take their memory from big blocks (16 MB each in the released settings) instead of one allocation each,
+  because every allocation is slow on the Switch (see [platform-notes.md](platform-notes.md#nvk-on-horizon)).
+- Untiling works on groups of 16 bytes with NEON (the processor's instructions for several values at once). The first
+  version, block by block, cost around 30 ms each time a burst of new textures arrived.
 
 ### Game functions in native code
 
-Where the game thread itself was the bottleneck, some hot guest functions were rewritten in C++ and
-installed as hooks: the material setup, the effect setup, the per-draw matrices, the visibility
-query, the render entry of the scenery, the Direct3D register dump into the ring and the draw glue.
-Every one of them is protected by the same guard:
+Where the game's own thread was the slowest part, some of its busiest functions were rewritten in C++ and installed as
+[hooks](glossary.md#hook): the material setup, the effect setup, the matrices of each draw, the visibility check, the
+drawing of the scenery, the dump of Direct3D settings into the command list, and the code that issues each draw.
 
-- the first 50,000 to 200,000 calls, and then one in 4,096, run **both** the native and the original
-  code and compare every output;
+Every one is protected by the same [guard](glossary.md#guard):
+
+- for the first 50,000 to 200,000 calls, and then one in 4,096, the port runs both the native and the original
+  function and compares everything they produce;
 - the original's result is the one used;
-- any difference disables the native version for the rest of the session and logs `DIFERENCIA`.
+- any difference turns the native version off until the game is closed, and writes `DIFERENCIA` in the log.
 
-Bit-exact results need care: the game is compiled with FMA contraction, so the native code must write
-each expression in the same shape and operand order for GCC to fuse it the same way. Instrumentation
-placed between a multiply and an add splits the basic block and changes the fusion, which makes test
-harnesses report false differences. Only the registers that someone reads later need to be
-reproduced, which an interprocedural liveness analysis over the generated code determines. Inputs
-with NaNs are left to the original.
+Getting exactly the same results needs care:
 
-### Guards that verify themselves
+- The game was compiled with FMA (a multiply and an add in one instruction, which rounds slightly differently). The
+  native code must write each expression in the same shape and order, so that GCC fuses it the same way. Test code
+  placed between a multiply and an add changes that, and makes the test report false differences.
+- Only the registers that something reads later need to match. An analysis of the translated code finds which ones.
+- Inputs with NaNs (invalid numbers) are left to the original function.
 
-Changes that depend on recognising a draw, a shader or a pass by its signature ship in three phases,
-decided at runtime: observe without changing anything; apply only after the signature has been seen
-cleanly for N frames; and switch off for the rest of the session if the known symptom of failure
-appears. The worst case becomes "does nothing", and a visual regression is no longer a possible
-outcome. This was adopted after two builds broke the image by enabling a deferred sky pass blindly.
+### Guards that check themselves
+
+Some changes depend on recognizing a draw, a shader or a render pass by its signature. They switch on in three stages,
+decided while the game runs:
+
+1. watch, without changing anything;
+2. apply, but only after the signature has been seen cleanly for a number of frames;
+3. switch off until the game is closed if the known sign of failure ever appears.
+
+So the worst case is "it does nothing", never a broken image. This was adopted after two builds broke the image by
+moving the sky pass without checking first.
 
 ## What made it fast
 
-From the first native build on the console to the release, the work alternated between two
-bottlenecks: the GPU (fragment shading at 307.2 MHz) and the ring thread (CPU per draw). The
-chronology, with the measurements behind each step, is in
-[performance-history.md](performance-history.md). The main levers, grouped:
+From the first native build to the release, the work went back and forth between two limits: the GPU (shading pixels,
+at 307.2 MHz in handheld mode for most of the project) and the ring thread (CPU time per draw).
+[performance-history.md](performance-history.md) tells it step by step, with the measurements. The main changes:
 
 **GPU**
-- constants through a dynamic uniform buffer instead of global memory loads;
-- resolve without copy, and a shadow map resolve replaced by a minimum operation;
-- ZCULL enabled in the driver;
-- translator output: merged predicate blocks, no `max(a, a)` moves, no texture size queries;
-- only resetting query pools that the frame will use (2,144 query resets per frame were costing
-  1.2 ms of GPU idle time);
-- shadow map geometry: level of detail and distance limits for the four emitters of the shadow pass;
-- a shadow slope bias for the shadow pass (it fixed acne, which a cheaper PCF had made visible).
+
+- shader constants through one buffer (a dynamic uniform buffer) instead of reading them from memory one by one;
+- resolves without copies, and one shadow map copy replaced by taking the minimum of two shadow maps;
+- [ZCULL](glossary.md#zcull) turned on in the driver;
+- cleaner translated shaders: merged conditional blocks, no `max(a, a)` moves, no texture size queries;
+- resetting only the GPU query pools the frame will use (2,144 resets per frame were costing 1.2 ms of GPU idle time);
+- less geometry in the shadow map: level of detail and distance limits;
+- a slope bias for the shadows. It removed "shadow acne", a pattern of dots that a cheaper shadow filter had made
+  visible.
 
 **CPU**
-- no busy-waits in the game's Direct3D layer;
-- the ring thread at a priority that does not starve presentation;
-- deduplicated vertex uploads, a helper that copies when the copy thread falls behind, and texture
-  hashing on another thread;
-- caches for shader loads, texture fetch constants and pipelines;
-- native versions of the hottest game functions;
-- asynchronous logging (the periodic report used to be formatted and written by the ring thread);
-- a read cache for the game's streaming, which re-read the same zone packs from the SD card on every
-  lap.
+
+- no busy waits in the game's Direct3D;
+- the ring thread at a priority that does not starve the presentation;
+- vertex uploads without duplicates, a helper that copies when the copy thread falls behind, and texture fingerprints
+  made on another thread;
+- caches for shader loads, texture descriptions and pipelines;
+- native versions of the busiest game functions;
+- log lines written by another thread (the periodic report used to be formatted by the ring thread);
+- a read cache for the game's streaming, which read the same zone packs from the SD card again on every lap.
 
 **Build**
-- registers as C++ locals, direct calls, LTO, PGO and function ordering
-  (see [toolchain.md](toolchain.md)).
+
+- registers as C++ variables, direct calls, [LTO](glossary.md#lto), [PGO](glossary.md#pgo) and
+  [function ordering](glossary.md#function-ordering) (see [toolchain.md](toolchain.md)).

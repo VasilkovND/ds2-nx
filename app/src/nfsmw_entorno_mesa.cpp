@@ -6,7 +6,7 @@
 //                                    cache/nfsmw_nativo_pipelines.bin: it reads from the SD card on every miss and
 //                                    writes each new shader with up to 4 threads of its own with 8 MB stacks.
 //   NVK_SWITCH_PERF_LOG=1            counters and timers of the Horizon backend (diagnostics only)
-//   NVK_SWITCH_CMD_MEM_CPU_UNCACHED=0 and NVK_SWITCH_MEM_STREAM_CPU_UNCACHED=0
+//   NVK_SWITCH_CPU_WRITE_MEM_UNCACHED=0
 //                                    NVK commands and transient memory with CPU cache (by default they have none)
 //   NOUVEAU_HORIZON_BO_CACHE_MB=N    size of NVK's BO cache (128 by default)
 //

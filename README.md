@@ -174,21 +174,23 @@ For this port:
 
 ## How it works
 
-- **Recompilation.** [ReXGlue](https://github.com/rexglue/rexglue-sdk) translates every function of the executable
-  to C++ and provides the Xbox 360 kernel, file system, audio and input. This port adds a Horizon (Switch) layer to
-  it: memory mapping, threads, exceptions, clocks, audio output and presentation.
-- **Native renderer.** Instead of emulating the Xenos GPU, the renderer reads the game's PM4 command ring and records
-  Vulkan directly, with render targets, textures and shaders managed natively. Frequently called parts of the game's
-  Direct3D layer are replaced by native code, each with a guard that checks it against the original.
-- **Shaders.** The game's shader microcode is translated ahead of time with
-  [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) to HLSL, compiled to SPIR-V with DXC and packed into a
-  library. The installer page does this from your disc.
-- **Driver.** Vulkan runs on NVK (Mesa) through [mesa-switch](https://github.com/danfromtico/mesa-switch), with the
-  changes in `mesa/`: ZCULL, NAK compiler fixes and a cheaper draw path.
-- **Optimization.** The recompiled code is built with LTO, PGO and function ordering, the renderer's CPU cost per
-  draw is cut down, hot game functions run as native code, and the GPU time per frame is reduced. The few changes that
-  alter the image (a cheaper shadow filter, no radial blur on the final image, no vegetation in the shadow maps) are
-  settings in `nfsmw.toml`.
+- **The game's code is translated, not emulated.** [ReXGlue](https://github.com/rexglue/rexglue-sdk) translates every
+  function of the game's program (`default.xex`) to C++, which is then compiled for the Switch. ReXGlue also gives the
+  game what it expects from an Xbox 360: its system, files, audio and controllers. This port adds the Switch part:
+  memory, threads, crash handling, clocks, audio output and showing the frames on screen.
+- **Its own renderer.** Imitating the Xbox 360 GPU was far too slow on the Switch. Instead, the port reads the list of
+  commands the game sends to the GPU and draws the same frame with Vulkan. The busiest parts of the game's graphics
+  code run as native code, each one checked against the original.
+- **Shaders translated beforehand.** The game's GPU programs (shaders) are translated with
+  [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) and DXC into one library file. The installer page does this
+  from your disc.
+- **Its own graphics driver.** Vulkan runs on NVK, from the Mesa project, through
+  [mesa-switch](https://github.com/danfromtico/mesa-switch), with this port's changes in `mesa/`: skipping hidden
+  pixels (ZCULL), shader compiler fixes and cheaper draws.
+- **Optimization.** The code is built with LTO, PGO and function ordering, the CPU cost of each draw is cut down, the
+  busiest game functions run as native code, and the GPU time per frame is reduced. The few changes that alter the
+  image (a cheaper shadow filter, no radial blur on the final image, no vegetation in the shadow maps) are settings in
+  `nfsmw.toml`.
 
 > [!NOTE]
 > The PGO profile is not complete. It comes from a small test on the console, done only to check that PGO improves the
@@ -196,23 +198,26 @@ For this port:
 
 ## Documentation
 
-For anyone porting another Xbox 360 game, or curious about how this one was done:
+For anyone porting another Xbox 360 game, or curious about how this one was done. **Start with
+[docs/README.md](docs/README.md)**: it explains in six steps how the whole port fits together, and what to read for
+what you want to do. Every technical word is explained in the [glossary](docs/glossary.md).
 
 <div align="center">
 
-| Document | Contents |
+| Document | What it explains |
 | --- | --- |
-| [docs/building.md](docs/building.md) | Building the NRO, the driver and the shader library |
-| [docs/porting-another-game.md](docs/porting-another-game.md) | Where to start with another game |
-| [docs/native-renderer.md](docs/native-renderer.md) | The native renderer: from the PM4 ring to Vulkan |
-| [docs/performance-history.md](docs/performance-history.md) | How the frame rate went from a few FPS to 30, step by step |
-| [docs/measuring.md](docs/measuring.md) | Measuring on the console without fooling yourself |
-| [docs/toolchain.md](docs/toolchain.md) | Code generation, direct calls, LTO, PGO, function ordering |
-| [docs/shaders.md](docs/shaders.md) | Shader translation and the fixes it needed |
-| [docs/mesa.md](docs/mesa.md) | Mesa, NVK and NAK on Horizon |
-| [docs/platform-notes.md](docs/platform-notes.md) | Horizon: memory, threads, clocks, costs of the platform |
-| [docs/audio-and-video.md](docs/audio-and-video.md) | XMA audio and the WMV3 cutscenes |
-| [docs/editions.md](docs/editions.md) | Supporting every edition of the game |
+| [docs/glossary.md](docs/glossary.md) | Every technical word, in plain words |
+| [docs/building.md](docs/building.md) | How to build the NRO, the driver and the shader library, step by step |
+| [docs/porting-another-game.md](docs/porting-another-game.md) | What you can reuse for another game, and in which order to work |
+| [docs/native-renderer.md](docs/native-renderer.md) | How the port draws the game with Vulkan |
+| [docs/shaders.md](docs/shaders.md) | How the game's shaders are translated, and what had to be fixed |
+| [docs/toolchain.md](docs/toolchain.md) | How the game's code is translated and compiled, and the build options that make it faster |
+| [docs/mesa.md](docs/mesa.md) | The graphics driver and this port's changes to it |
+| [docs/platform-notes.md](docs/platform-notes.md) | Things about the Switch system that cost a lot of time to find out |
+| [docs/audio-and-video.md](docs/audio-and-video.md) | The game's audio and cutscenes on the Switch |
+| [docs/editions.md](docs/editions.md) | How every edition and language of the game is supported |
+| [docs/measuring.md](docs/measuring.md) | How to measure performance on the console without being misled |
+| [docs/performance-history.md](docs/performance-history.md) | How the frame rate went from a few FPS to about 30, step by step |
 
 </div>
 

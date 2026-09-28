@@ -1,87 +1,129 @@
 # Porting another Xbox 360 game to the Switch
 
-What in this repository carries over to another game, and the order in which the work went. Most of the hard
-problems of this port were not specific to Need for Speed: they come from the platform (Horizon, NVK on the Tegra X1)
-and from the recompiler, and they will show up again in the next port.
+## In short
 
-## 1. Get the recompilation running on the PC
+This guide tells you what you can reuse from this project for another game, and in which order to work. Most of the
+hard problems of this port had nothing to do with Need for Speed: they came from the Switch itself and from the
+recompiler, so your port will meet them too. Read it once from top to bottom before you start. If a word is new to
+you, it is in the [glossary](glossary.md).
 
-Start with [ReXGlue](https://github.com/rexglue/rexglue-sdk) on the PC: generate the code from the `default.xex`,
-fix what the analysis gets wrong (functions it misses, jump tables, function chunks) and get the game to boot and play
-with the SDK's own GPU backend. Every recompilation problem is easier to debug there than on the console. For this
-game, [NFSMW Recompiled](https://github.com/madelrandel-blip/NFSMW-Recompiled) had done this stage.
+The order that worked:
 
-Two things from this repository help at this stage:
+1. Get the game running on a PC with the recompiler.
+2. Move it to the Switch system.
+3. See the first frames, then write a faster renderer.
+4. Translate the shaders before playing.
+5. Measure on the console.
+6. Make it faster.
 
-- `tools/huecos.py` and `app/huecos.toml`: code the analysis did not reach, declared as functions.
-- `share_registers` in the code generator (`sdk/src/codegen/builders`): keeps guest registers in C++ locals shared
-  between the chunks of a function. It is what makes "registers as locals" safe, and it is a large CPU win on a slow
-  core. See [toolchain.md](toolchain.md).
+## 1. Get the game running on a PC first
 
-## 2. Bring the runtime to Horizon
+**Why:** every problem of the translation is much easier to find and fix on a PC than on the console.
 
-The Horizon layer in `sdk/` is not tied to this game and should work as is: guest memory with its mirror views, the
-exception handler, threads and their priorities, clocks, audio output and presentation. The traps it works around
-are in [platform-notes.md](platform-notes.md). The ones that cost the most time:
+1. Use [ReXGlue](glossary.md#rexglue) on the PC to translate the game's `default.xex` to C++.
+2. Fix what the translation gets wrong. It usually misses some functions, some jump tables (lists of addresses that the
+   code jumps through) and some function chunks (functions that the executable stores in several pieces).
+3. Get the game to start and play with ReXGlue's own graphics, which imitate the Xbox 360 GPU.
 
-- the kernel limit on memory mappings (error `2001-0103`) and how the mirror views of guest memory hit it;
-- libnx's exception stack is global, so two threads faulting at the same time corrupt each other;
-- `std::thread::detach()` on Horizon closes the game; threads are persistent instead;
-- threads of equal priority are not time sliced except at the default game priority (`0x3B`); a busy thread starves
-  the others;
-- the game gets three CPU cores, not four.
+For this game, the [NFSMW Recompiled](https://github.com/madelrandel-blip/NFSMW-Recompiled) project had already done
+this stage.
 
-## 3. First frames, then a native renderer
+Two things from this repository help here:
 
-The SDK's GPU backend emulates the Xenos: it translates the command stream, emulates the EDRAM and converts shaders at
-run time. It works on NVK, and it is the right way to see the first frames and check that the game logic runs. On the
-Switch it was far too slow for this game (a few frames per second), for reasons explained in
-[native-renderer.md](native-renderer.md).
+- **`tools/huecos.py` and `app/huecos.toml`** ("huecos" means gaps). They declare as functions the pieces of code that
+  the translation did not reach.
+- **`share_registers`**, an option of the code generator (in `sdk/src/codegen/builders`). The translated code keeps
+  the Xbox 360 processor's registers (its working slots) in normal C++ variables. This option lets the pieces of a
+  split function share those variables, which is what makes it safe, and it saves a lot of CPU on the Switch's slow
+  cores. [toolchain.md](toolchain.md) explains it.
 
-The replacement keeps the game's own Direct3D layer and consumes the PM4 ring it writes, recording Vulkan directly on
-a dedicated thread. What carries over from `app/src/nfsmw_nativo_*`:
+## 2. Move it to the Switch system
 
-- the ring decoder, the register state and the draw recording;
-- render targets as plain Vulkan images, with resolves that avoid copies;
-- the texture cache with untiling on upload, and the pipeline cache with prewarming;
-- the pattern of replacing hot game functions with native code behind self-checking guards.
+The Switch layer in `sdk/` is not tied to this game, and it should work for another game as it is. It gives the game
+its memory, catches its crashes (exceptions), runs its threads with their priorities, and provides clocks, audio output
+and the showing of frames on screen.
 
-What is specific to this game are the addresses of the hooks and the knowledge of its render passes (which pass is
-the shadow map, the reflections, the cubemap). Start with a tracing phase: wrap the game's Direct3D functions and log
-every call (`app/src/nfsmw_d3d_trace.cpp`) to confirm each address before replacing anything.
+The problems that cost the most time are explained in [platform-notes.md](platform-notes.md). The main ones, in short:
 
-## 4. Shaders ahead of time
+- **There is a limit on memory mappings.** [Horizon](glossary.md#horizon) limits how many pieces of memory a program
+  can map (error `2001-0103`). The game's memory is also visible at several addresses at once ("mirror views"), as on
+  the Xbox 360, and that uses up many of them.
+- **Two crashes at the same time break each other.** [libnx](glossary.md#libnx) has one exception stack for the whole
+  program, so if two threads crash at once, they overwrite each other's data.
+- **`std::thread::detach()` closes the game** on Horizon. The port creates its threads once and keeps them instead.
+- **Threads of the same priority do not share the processor**, except at the normal game priority (`0x3B`). A busy
+  thread can leave the others waiting forever.
+- **The game gets three processor cores, not four.**
 
-Translate the shader microcode before the game runs: XenosRecomp to HLSL, DXC to SPIR-V, and a library keyed by a
-hash of the microcode (`shaders/`, [shaders.md](shaders.md)). The translator needed several correctness fixes for
-this game, and some translation choices had a large effect on GPU time (constants through a uniform buffer,
-flattening predicated blocks). The installer page shows how to build the library in the browser from the user's disc,
-so no game data is ever distributed.
+## 3. First frames, then a faster renderer
+
+ReXGlue's graphics imitate the Xbox 360 GPU: they translate its commands, imitate its [EDRAM](glossary.md#edram) and
+convert shaders while playing. That works on the Switch, and it is the right way to see the first frames and check that
+the game logic runs. But on the Switch it was far too slow for this game, a few frames per second.
+[native-renderer.md](native-renderer.md) explains why.
+
+So the port has its own renderer. The game keeps using its own [Direct3D](glossary.md#direct3d), which writes its
+list of GPU commands (the [PM4 ring](glossary.md#pm4-ring)) as always. A thread of the port, the
+[ring thread](glossary.md#ring-thread), reads that list and draws the same thing directly with Vulkan.
+
+What you can reuse from `app/src/nfsmw_nativo_*` ("nativo" means native):
+
+- the reader of the command list, the tracking of the GPU settings, and the recording of each draw;
+- [render targets](glossary.md#render-target) as normal Vulkan images, and [resolves](glossary.md#resolve) that avoid
+  extra copies;
+- the texture cache, which puts textures back in normal order ("untiling") when it uploads them;
+- the [pipeline cache](glossary.md#pipeline-cache), which compiles the known pipelines at startup;
+- the pattern of replacing the busiest game functions with native code, each with a [guard](glossary.md#guard).
+
+What is specific to this game: the addresses of the [hooks](glossary.md#hook), and knowing its render passes (which
+pass draws the shadow map, the reflections, the cubemap). Start with a tracing phase: wrap the game's Direct3D
+functions and write every call to the log (`app/src/nfsmw_d3d_trace.cpp`). That confirms each address before you
+replace anything.
+
+## 4. Translate the shaders before playing
+
+**Why:** translating [shaders](glossary.md#shader) while playing causes stutters and costs CPU.
+
+1. Translate the shader [microcode](glossary.md#microcode) before the game runs:
+   [XenosRecomp](glossary.md#xenosrecomp) turns it into [HLSL](glossary.md#hlsl), and [DXC](glossary.md#dxc) turns
+   the HLSL into [SPIR-V](glossary.md#spir-v).
+2. Put everything in a [shader library](glossary.md#shader-library), where each shader is found by a fingerprint (a
+   hash) of its microcode. The tools are in `shaders/`, and [shaders.md](shaders.md) explains them.
+
+XenosRecomp needed several fixes for this game. Some translation choices also changed the GPU time a lot: passing
+the shader constants in one buffer, and turning conditional blocks into straight code. The installer page shows how to
+build the library in the browser from the user's own disc, so no game data is ever shared.
 
 ## 5. Measure on the console
 
-Read [measuring.md](measuring.md) before optimizing anything. In short: the PC tells you where the work is, never how
-much it costs on the Switch; compare A and B in the same session; convert NVK timestamps (x1.627); look at the CPU of
-each thread, not the total; sample stacks; and judge frame pacing by the distribution of frame times, not the
-average.
+Read [measuring.md](measuring.md) before you optimize anything. The key points:
 
-## 6. Optimizations that transfer
+- The PC tells you where the work is, but never how much it costs on the Switch.
+- Compare two versions (A and B) in the same session.
+- Multiply the GPU times that NVK reports by 1.627 to get real time.
+- Look at the CPU time of each thread, not the total.
+- Take samples of where each thread is (its "stack") to see what it is doing.
+- Judge smoothness by how the [frame times](glossary.md#frame-time) are spread, not by the average FPS.
+
+## 6. Optimizations you can reuse
 
 In the order they paid off here ([performance-history.md](performance-history.md) has the numbers):
 
-- The build: direct calls between recompiled functions, LTO, PGO and function ordering
-  ([toolchain.md](toolchain.md)).
-- The game's own busy waits: the Xbox 360 Direct3D spins on the GPU and on other threads. On three slow cores that
-  steals time from the threads that do the work.
-- CPU cost per draw in the renderer: caches instead of repeated work, no allocations or logging on the ring thread,
-  deduplicated uploads, and a cheaper path through NVK ([mesa.md](mesa.md)).
-- GPU time: fewer fragments shaded (ZCULL), cheaper shaders, and passes that the Xbox 360 needed but the Switch does
-  not (predicated tiling of the EDRAM).
-- Native versions of the hottest game functions, each with its guard.
+- **The build:** direct calls between translated functions, [LTO](glossary.md#lto), [PGO](glossary.md#pgo) and
+  [function ordering](glossary.md#function-ordering). See [toolchain.md](toolchain.md).
+- **The game's own busy waits.** The Xbox 360 Direct3D waits for the GPU and for other threads by spinning: checking
+  again and again without resting. On three slow cores, that steals time from the threads that do real work.
+- **CPU cost of each draw in the renderer:** caches instead of repeating work, no memory allocations and no log lines
+  on the ring thread, no duplicate uploads, and a cheaper path through the driver (see [mesa.md](mesa.md)).
+- **GPU time:** fewer pixels shaded ([ZCULL](glossary.md#zcull)), cheaper shaders, and skipping work the Xbox 360
+  needed but the Switch does not, like drawing in strips for the EDRAM.
+- **Native replacements** of the busiest game functions, each with its guard.
 
-## 7. Doors that stayed closed
+## 7. What did not work
 
-- Lowering the internal resolution did not help: the frame was not limited by resolution and it cost time.
-- FP16 at double rate and variable rate shading: not available with NAK on Maxwell ([mesa.md](mesa.md)).
-- Extended dynamic state in NVK to bind fewer pipelines: each bind got slower, a net loss.
-- Overclocking hides problems instead of solving them; this port was measured and tuned at stock clocks.
+- Lowering the internal resolution did not help: the frame was not limited by resolution, and it cost time.
+- Half-precision math at double speed (FP16) and variable rate shading: the shader compiler, NAK, does not support them
+  on this GPU (see [mesa.md](mesa.md)).
+- Extended dynamic state in NVK, to change pipelines less often: each change got slower, so it was a loss.
+- Overclocking hides problems instead of solving them. This port was measured and tuned at the console's normal
+  clocks.
