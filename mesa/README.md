@@ -7,8 +7,18 @@ nouveau and NVK) plus the changes in `mesa-switch-nfsmw.patch`.
 - Base commit: `1a8c1a66d6f` of danfromtico/mesa-switch.
 - `mesa-switch-nfsmw.patch` applied on that commit gives exactly the tree the released NROs were built with
   (35 files).
-- Everything added for this port is under `HAVE_SWITCH_PLATFORM` or in Switch-only files, and most of it can be
-  switched off at run time (environment variables below, set by the app through its cvars).
+- The Switch-only parts are in the Horizon backend (`src/nouveau/horizon/` and `src/nouveau/vulkan/nvkmd/switch/`,
+  where ZCULL lives) or inside `#ifdef HAVE_SWITCH_PLATFORM` blocks: the draw path, the set 4 deltas and the
+  structure shared with the app for measurement, in `nvk_cmd_buffer.c/h`, `nvk_cmd_draw.c` and `vk_pipeline.c/h`.
+- `HAVE_SWITCH_PLATFORM` is not written in the patch or in any header: mesa-switch's `meson.build` generates it.
+  It passes `-DHAVE_<PLATFORM>_PLATFORM` for every platform of the build
+  ([lines 620-622](https://github.com/danfromtico/mesa-switch/blob/1a8c1a66d6f/meson.build#L620-L622), the same
+  mechanism as upstream's `HAVE_X11_PLATFORM`), and a build for Horizon has the platform `switch`
+  ([lines 478-479](https://github.com/danfromtico/mesa-switch/blob/1a8c1a66d6f/meson.build#L478-L479)), so every
+  file of a Switch build is compiled with `-DHAVE_SWITCH_PLATFORM`.
+- The NAK compiler changes, the fixes taken from later mesa-switch commits and the build changes are not guarded:
+  they apply wherever this tree is built. Some changes can also be switched off at run time with the environment
+  variables listed below, which the app sets through its cvars.
 
 ```sh
 git clone https://github.com/danfromtico/mesa-switch.git
