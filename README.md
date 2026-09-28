@@ -150,7 +150,7 @@ The port is made to run at the console's stock clocks **with no overclock**. The
 
 </div>
 
-**[GAMEPLAY WITH DEFAULT CLOCKS](https://youtu.be/xtk1l8mpr4o?si=a5XEbRV5VwV_Ym1O)**
+**[GAMEPLAY USING THE DEFAULT CLOCKS](https://youtu.be/xtk1l8mpr4o?si=a5XEbRV5VwV_Ym1O)**
 
 The CPU is what limits it most (the game runs
 on three cores at 1020 MHz) and in handheld mode the GPU as well.
