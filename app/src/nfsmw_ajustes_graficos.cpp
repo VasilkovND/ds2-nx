@@ -153,6 +153,14 @@ REXCVAR_DEFINE_STRING(nfsmw_resplandor_cielo, "natural", "Graficos",
                       "menos. Sin coste")
     .allowed({"original", "natural", "suave"});
 
+// The game's color filter, applied live: its "visual treatment" (the yellow tint, the desaturation and the
+// vignette of the final composite). Some players find the tint too strong in some areas of the city.
+REXCVAR_DEFINE_STRING(nfsmw_tratamiento_visual, "original", "Graficos",
+                      "Filtro de color del juego (el tono amarillo, la desaturacion y la vineta). original (por "
+                      "defecto): como la Xbox 360. suave: a mitad de fuerza. apagado: sin filtro; el resplandor y los "
+                      "fundidos siguen igual. Sin coste")
+    .allowed({"original", "suave", "apagado"});
+
 // Optional post-processing, applied live (visible when changed with the menu open). Option lists for the
 // gamepad. The presets use the values from GoldenEye-Recomp (ge_postfx.cpp, public domain).
 REXCVAR_DEFINE_STRING(nfsmw_posproceso, "apagado", "Graficos/Posproceso",
@@ -191,6 +199,7 @@ namespace {
 std::atomic<uint64_t> g_version_posproceso{1};
 std::atomic<bool> g_fxaa{false};
 std::atomic<int> g_resplandor_cielo{0};  // 0 original, 1 natural, 2 soft
+std::atomic<int> g_tratamiento_visual{0};  // 0 original, 1 soft, 2 off
 
 constexpr const char* kCvarsPosproceso[] = {
     "nfsmw_posproceso",           "nfsmw_posproceso_brillo",      "nfsmw_posproceso_contraste",
@@ -201,6 +210,11 @@ constexpr const char* kCvarsPosproceso[] = {
 // nfsmw_resplandor_cielo: 0 original, 1 natural, 2 suave.
 int ModoResplandor(std::string_view valor) {
   return valor == "natural" ? 1 : valor == "suave" ? 2 : 0;
+}
+
+// nfsmw_tratamiento_visual: 0 original, 1 suave, 2 apagado.
+int ModoTratamiento(std::string_view valor) {
+  return valor == "suave" ? 1 : valor == "apagado" ? 2 : 0;
 }
 
 float Numero(const char* nombre, float por_defecto) {
@@ -369,6 +383,10 @@ int ResplandorCielo() {
   return g_resplandor_cielo.load(std::memory_order_relaxed);
 }
 
+int TratamientoVisual() {
+  return g_tratamiento_visual.load(std::memory_order_relaxed);
+}
+
 void VigilarAjustesEnVivo() {
   // The notification arrives with the registry lock held (SetFlagFromSource): only atomics are touched.
   for (const char* nombre : kCvarsPosproceso) {
@@ -384,6 +402,11 @@ void VigilarAjustesEnVivo() {
                           std::memory_order_relaxed);
   rex::cvar::RegisterChangeCallback("nfsmw_resplandor_cielo", [](std::string_view, std::string_view valor) {
     g_resplandor_cielo.store(ModoResplandor(valor), std::memory_order_relaxed);
+  });
+  g_tratamiento_visual.store(ModoTratamiento(rex::cvar::GetFlagByName("nfsmw_tratamiento_visual")),
+                             std::memory_order_relaxed);
+  rex::cvar::RegisterChangeCallback("nfsmw_tratamiento_visual", [](std::string_view, std::string_view valor) {
+    g_tratamiento_visual.store(ModoTratamiento(valor), std::memory_order_relaxed);
   });
 }
 

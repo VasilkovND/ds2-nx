@@ -21,7 +21,8 @@ The settings named on this page go in `nfsmw.toml`, next to the NRO (see [nfsmw.
 - The "robotic" sound was the game's audio server thread arriving late. It took three fixes: a higher priority for
   that thread, native versions of the hottest audio functions, and XMA decoding moved off the game's thread.
 - An intermittent hang of the audio server was fixed with a timeout that also retries.
-- Cutscenes are decoded with FFmpeg instead of the game's own WMV3 decoder, which was far too slow.
+- Cutscenes are decoded with FFmpeg instead of the game's own WMV3 decoder, which was far too slow. This includes
+  videos re-encoded by fan translations, which the game's decoder cannot play.
 - FFmpeg no longer rebuilds the same math tables for every new sound.
 
 ## Output driver
@@ -144,6 +145,20 @@ and the setting `nfsmw_video_wmv3_nativo` turns it on (on by default).
 - **Checking.** A shadow mode (setting `nfsmw_video_wmv3_sombra`, off by default) decodes with both decoders and
   compares them. The videos were identical bit for bit, except for three short sections of one video with a mean
   difference of 0.02.
+- **Re-encoded videos (fan translations).** The game's own videos only have I frames (complete pictures) and P frames
+  (the changes from the previous picture), and they do not use the loop filter (a smoothing filter that WMV3 can
+  apply to each picture). A Brazilian Portuguese fan translation re-encoded its dubbed videos with B frames (built
+  from the pictures before and after them) and with the loop filter. The game's recompiled decoder cannot decode
+  them: it leaves the picture empty, which shows as green, and it takes up to 330 ms per frame even on a PC. So the
+  port decodes these videos with FFmpeg too:
+  - the game decodes B frames with a third function (the one at `[ctx+3016]`), which the port replaces as well;
+  - FFmpeg returns each frame from the same call that decodes it (`AV_CODEC_FLAG_LOW_DELAY`, and `has_b_frames`
+    set to 0 after opening the decoder: without that, FFmpeg holds back the first frame);
+  - if FFmpeg fails on one of these videos, the last good picture is shown again until the next I frame, because
+    the game's decoder cannot be used as a fallback with them.
+
+  The setting `nfsmw_video_wmv3_b_diag` (off by default) logs which picture planes and which fields of the decoder
+  context each frame changes. It was used to find where the game leaves each type of frame.
 - **Frame counters read 30.** During videos the game presents 30 frames per second, so frame counters read 30, not 60.
 
 ## Codec reinitialisation cost

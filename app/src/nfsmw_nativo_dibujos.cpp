@@ -1179,6 +1179,24 @@ constexpr uint32_t kSpecZTemprana = uint32_t(1) << 20;
 // minimum of the shadow map and its pair, which goes in the 3D index word of that register.
 constexpr uint32_t kSpecSombraMinimo = uint32_t(1) << 23;
 constexpr uint64_t kHuellaComposicion = 0x19C0C358044A29BFull;  // p_000139, the race VisualTreatment
+// nfsmw_tratamiento_visual. The final composite (kHuellaComposicion, p_000139) tints each channel with a polynomial
+// curve (Coeffs0..3 = c6..c9, evaluated at MISCMAP1.w), mixes in a desaturated part with its x component and adds a
+// vignette (VisualEffectVignette.x = c1). With a neutral curve (Coeffs0 = (0, 1, 1, 1) and Coeffs1..3 = 0) and the
+// vignette at 0 the picture has no filter; the glow (g_fBloomScale, c4) and the brightness of the fades
+// (CombinedBrightness, c10) stay the same. suave: halfway between the game's values and the neutral ones (the curve is
+// linear in its coefficients). The registers are those of the microcode, the same in every edition.
+constexpr uint32_t kBytesTratamiento = 11 * 16;  // c0 to c10
+void AplicarTratamientoVisual(float* c, int modo) {
+  static constexpr float kNeutro[4][4] = {{0, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
+  const float f = modo == 2 ? 1.0f : 0.5f;
+  for (int k = 0; k < 4; ++k) {
+    for (int i = 0; i < 4; ++i) {
+      float& v = c[(6 + k) * 4 + i];
+      v += (kNeutro[k][i] - v) * f;
+    }
+  }
+  c[1 * 4 + 0] *= 1.0f - f;
+}
 
 /*
  * The render target height comes from the pitch, not from what the game uses.
@@ -3031,6 +3049,7 @@ class DibujosVulkanImpl final : public DibujosVulkan {
       constantes_ps_epoca_ = epoca_subida_;
       constantes_ps_bytes_ = bytes_ps;
     }
+    CopiaComposicionTratada(ps, r, bytes_ps);  // nfsmw_tratamiento_visual (see the function)
 
     Etapa(4, marca);
     // --- Viewport, tijera y constantes compartidas ---------------------------------------
@@ -7442,6 +7461,40 @@ class DibujosVulkanImpl final : public DibujosVulkan {
         return;  // stop, nothing pending
       }
     }
+  }
+
+  // nfsmw_tratamiento_visual. If the draw is the final composite and the filter is not the original one, uploads its
+  // own copy of the constants with the color curve changed, and leaves the cache empty so the next draw uploads the
+  // game's. If there is no room in the upload buffer (Dibujar does not count this copy), the frame keeps the original
+  // filter.
+  // It is out of line and Dibujar always calls it: that way Dibujar gains no branch and its control flow is still the
+  // one in the PGO profile. With a branch inside, GCC would drop the whole profile of the ring's hottest function.
+  [[gnu::noinline]] void CopiaComposicionTratada(const EntradaShader* ps, const uint32_t* r,
+                                                 uint32_t bytes_ps) noexcept {
+    if (!ps || !ps->shader || ps->shader->huella != kHuellaComposicion) {
+      return;
+    }
+    const int modo = nfsmw::ajustes::TratamientoVisual();
+    // One line per mode change, on the first draw of the composite: the values the game sets.
+    static std::atomic<int> modo_anotado{-1};
+    if (modo_anotado.exchange(modo, std::memory_order_relaxed) != modo) {
+      const float* k = reinterpret_cast<const float*>(r + kRegConstantesPs);
+      REXLOG_INFO("[nativo] filtro de color {}: composicion con {} bytes de constantes. El juego pone Coeffs0 ({:.3f}, "
+                  "{:.3f}, {:.3f}, {:.3f}), Coeffs1 ({:.3f}, {:.3f}, {:.3f}, {:.3f}), Desaturation {:.3f} y vineta {:.3f}",
+                  modo, bytes_ps, k[24], k[25], k[26], k[27], k[28], k[29], k[30], k[31], k[8], k[4]);
+    }
+    if (bytes_ps < kBytesTratamiento) {
+      return;
+    }
+    VkDeviceSize offset = 0;
+    if (modo == 0 || !Reservar(usar_ubo_ ? std::max<VkDeviceSize>(bytes_ps, kUboBytesPs) : bytes_ps,
+                               usar_ubo_ ? alineacion_ubo_ : 16, offset)) {
+      return;
+    }
+    std::memcpy(subida_datos_ + offset, r + kRegConstantesPs, bytes_ps);
+    AplicarTratamientoVisual(reinterpret_cast<float*>(subida_datos_ + offset), modo);
+    constantes_ps_offset_ = offset;
+    constantes_ps_generacion_ = UINT64_MAX;
   }
 
   bool Reservar(VkDeviceSize bytes, VkDeviceSize alineacion, VkDeviceSize& offset) {

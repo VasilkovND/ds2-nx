@@ -7,20 +7,27 @@
 //  - sub_827312C0 (DecodeData, from sub_82734040) requests the compressed frame in chunks through
 //    sub_82749C10, which jumps to that function with r4 = offset, r5 = &pointer to the data, r6 = bytes
 //    requested, r7 = &bytes returned and r8 = &data remaining. It reads the picture header, swaps the
-//    buffers and decodes according to the type ([ctx+280]): I with [ctx+15708] = sub_828C35D8 and P
-//    with [ctx+15712] = sub_8278A518. Those two, with what they call, take almost all of the video
-//    thread's time.
+//    buffers and decodes according to the type ([ctx+280]): I with [ctx+15708] = sub_828C35D8, P with
+//    [ctx+15712] = sub_8278A518 and B with [ctx+3016] = sub_828C58C8. Those, with what they call, take
+//    almost all of the video thread's time.
 //  - The new picture goes into planes [ctx+3672] (Y), [ctx+3676] (U) and [ctx+3680] (V), with the
 //    origin at +[ctx+216] and +[ctx+220] (32- and 16-pixel borders: strides of 1344 and 672 for
-//    1280x720).
-//  - Without postprocessing ([ctx+3844] = 0) both only end up writing context fields: I sets
-//    [ctx+15516] = 0; P also sets [ctx+15488] = 1 and [ctx+15512] = ([ctx+14776] != 0 or
-//    [ctx+15148] != -1).
+//    1280x720). DecodeData rotates three buffers; [ctx+3684/3688/3692] is the reference.
+//  - [ctx+3844] is the loop filter of the sequence (LOOPFILTER). With 1, the three functions also run a
+//    filter over the picture (FFmpeg's WMV3 decoder applies it too). When they finish, I sets
+//    [ctx+15516] = 0; P also sets [ctx+15488] = 1 and [ctx+15512] = ([ctx+3844], [ctx+14776] != 0 or
+//    [ctx+15148] != -1); B sets [ctx+15516] = 0 and [ctx+15512] = [ctx+15488] = [ctx+436] = 1.
+//  - The game's videos are I and P frames without the loop filter. The dubbed videos of a Brazilian
+//    Portuguese fan translation use the loop filter, extended motion vectors and one B frame between
+//    anchors. With them the game's recompiled decoder leaves the picture at zero (it shows green) and takes
+//    up to 330 ms per frame even on the PC; FFmpeg decodes them correctly.
 //
 // Cvars:
-//  - nfsmw_video_wmv3_nativo: sub_828C35D8 and sub_8278A518 do not decode. FFmpeg decodes the same
-//    bytes the game requested and its planes are copied into the game's buffers. If a frame cannot be
-//    replaced the game decodes it, and the next native one waits for an I frame.
+//  - nfsmw_video_wmv3_nativo: sub_828C35D8, sub_8278A518 and sub_828C58C8 do not decode. FFmpeg decodes
+//    the same bytes the game requested, without reordering (each frame comes out of its own call), and its
+//    planes are copied into the game's buffers. If a frame cannot be replaced: in the game's videos the game
+//    decodes it, and the next native one waits for an I frame; in the others the last good picture (or
+//    black) is repeated until the next I frame, because the game's decoder does not work with them.
 //  - nfsmw_video_wmv3_sombra (diagnostic): the game decodes and its planes are compared with FFmpeg's;
 //    the luma of frame 30 of each movie is saved as PGM in the working folder.
 //  - nfsmw_video_wmv3_datos_diag (diagnostic): logs the calls to the data function, the arguments of
@@ -62,11 +69,19 @@ REXCVAR_DEFINE_BOOL(nfsmw_video_wmv3_sombra, false, "NFSMW",
 REXCVAR_DEFINE_BOOL(nfsmw_video_wmv3_datos_diag, false, "NFSMW",
                     "Diagnostico: anota las llamadas a la funcion de datos del descodificador WMV3 y los campos "
                     "del contexto de cada pelicula");
+// The dubbed videos of a fan translation have B frames (the game's do not). The game decodes them with
+// [ctx+3016] = sub_828C58C8. This diagnostic logs, for the first frames of each movie, the type ([ctx+280]:
+// 0 I, 1 P, 2 B), which planes each decode changes and which context fields it writes, to know where the game
+// leaves the picture of a B frame and what has to be imitated.
+REXCVAR_DEFINE_BOOL(nfsmw_video_wmv3_b_diag, false, "NFSMW",
+                    "Diagnostico: en los primeros fotogramas de cada pelicula anota el tipo, los planos que cambia "
+                    "cada descodificacion (I, P y B) y los campos del contexto que escribe");
 
 REX_EXTERN(__imp__sub_82749C10);
 REX_EXTERN(__imp__sub_827312C0);
 REX_EXTERN(__imp__sub_8278A518);
 REX_EXTERN(__imp__sub_828C35D8);
+REX_EXTERN(__imp__sub_828C58C8);
 REX_EXTERN(__imp__sub_8272FD30);
 
 namespace nfsmw::video_nativo {
@@ -88,6 +103,12 @@ using video_wmv3::InfoWmv;
 constexpr size_t kMaxFotograma = 8 * 1024 * 1024;
 constexpr uint32_t kDescodificarI = 0x828C35D8;
 constexpr uint32_t kDescodificarP = 0x8278A518;
+constexpr uint32_t kDescodificarB = 0x828C58C8;  // [ctx+3016], in the B branch of DecodeData
+// Type of frame that goes through the hooks
+enum Tipo : int { kI = 0, kP = 1, kB = 2 };
+const char* NombreTipo(int tipo) {
+  return tipo == kI ? "I" : tipo == kP ? "P" : "B";
+}
 
 uint32_t Leer32(const uint8_t* base, uint32_t direccion) {
   uint32_t v = 0;
@@ -107,7 +128,7 @@ int64_t AhoraUs() {
 
 bool Activo() {
   return REXCVAR_GET(nfsmw_video_wmv3_nativo) || REXCVAR_GET(nfsmw_video_wmv3_sombra) ||
-         REXCVAR_GET(nfsmw_video_wmv3_datos_diag);
+         REXCVAR_GET(nfsmw_video_wmv3_datos_diag) || REXCVAR_GET(nfsmw_video_wmv3_b_diag);
 }
 
 // --- Compressed frame the game requests ------------------------------------------------------------------
@@ -195,7 +216,9 @@ struct Planos {
   int paso_c = 0;
 };
 
-bool PlanosDelJuego(uint8_t* base, uint32_t obj, int ancho, Planos& p) {
+// campo: 3672 is the set of planes of the new picture ([ctx+3672/3676/3680]); 3684, the other set of planes
+// ([ctx+3684/3688/3692]), which the B branch of DecodeData copies over the first one in some cases.
+bool PlanosDelJuego(uint8_t* base, uint32_t obj, int ancho, Planos& p, uint32_t campo = 3672) {
   const uint32_t off_y = Leer32(base, obj + 216);
   const uint32_t off_c = Leer32(base, obj + 220);
   if (off_y < 32 || off_c < 16 || (off_y - 32) % 32 != 0 || (off_c - 16) % 16 != 0) {
@@ -206,10 +229,74 @@ bool PlanosDelJuego(uint8_t* base, uint32_t obj, int ancho, Planos& p) {
   if (p.paso_y < ancho || p.paso_c < (ancho + 1) / 2) {
     return false;
   }
-  p.y = base + Leer32(base, obj + 3672) + off_y;
-  p.u = base + Leer32(base, obj + 3676) + off_c;
-  p.v = base + Leer32(base, obj + 3680) + off_c;
+  p.y = base + Leer32(base, obj + campo) + off_y;
+  p.u = base + Leer32(base, obj + campo + 4) + off_c;
+  p.v = base + Leer32(base, obj + campo + 8) + off_c;
   return true;
+}
+
+// --- B frame diagnostic -------------------------------------------------------------------------------------
+
+constexpr uint32_t kBytesContexto = 20480;  // the context fields in use go up to +19972
+constexpr uint64_t kFotogramasDiagB = 48;
+
+// FNV-1a of the visible luma, one row in four: enough to see which plane a decode changes.
+uint64_t HuellaLuma(uint8_t* base, uint32_t obj, uint32_t campo, int ancho, int alto) {
+  Planos p;
+  if (!PlanosDelJuego(base, obj, ancho, p, campo)) {
+    return 0;
+  }
+  uint64_t h = 1469598103934665603ull;
+  for (int y = 0; y < alto; y += 4) {
+    const uint8_t* fila = p.y + int64_t(y) * p.paso_y;
+    for (int x = 0; x < ancho; ++x) {
+      h = (h ^ fila[x]) * 1099511628211ull;
+    }
+  }
+  return h;
+}
+
+struct FotoContexto {
+  std::vector<uint8_t> ctx;
+  uint32_t planos[6] = {};   // [ctx+3672 .. 3692]
+  uint64_t luma[2] = {0, 0};  // plane sets 3672 and 3684
+};
+
+void Fotografiar(uint8_t* base, uint32_t obj, int ancho, int alto, FotoContexto& f) {
+  f.ctx.assign(base + obj, base + obj + kBytesContexto);
+  for (int i = 0; i < 6; ++i) {
+    f.planos[i] = Leer32(base, obj + 3672 + 4 * uint32_t(i));
+  }
+  f.luma[0] = HuellaLuma(base, obj, 3672, ancho, alto);
+  f.luma[1] = HuellaLuma(base, obj, 3684, ancho, alto);
+}
+
+void AnotarCambios(uint8_t* base, uint32_t obj, int ancho, int alto, uint64_t n, int tipo, uint32_t resultado,
+                   const FotoContexto& antes) {
+  FotoContexto despues;
+  Fotografiar(base, obj, ancho, alto, despues);
+  std::string campos;
+  int anotados = 0;
+  int cambiados = 0;
+  for (uint32_t off = 0; off + 4 <= kBytesContexto; off += 4) {
+    uint32_t a = 0;
+    uint32_t d = 0;
+    std::memcpy(&a, antes.ctx.data() + off, 4);
+    std::memcpy(&d, despues.ctx.data() + off, 4);
+    if (a == d) {
+      continue;
+    }
+    ++cambiados;
+    if (anotados++ < 40) {
+      campos += fmt::format(" +{}:{:X}>{:X}", off, __builtin_bswap32(a), __builtin_bswap32(d));
+    }
+  }
+  REXLOG_INFO("[video] B diag #{} {} (tipo {} en +280) -> {:08X} | luma 3672 {} | luma 3684 {} | planos "
+              "{:08X}/{:08X} -> {:08X}/{:08X} | {} campos cambiados:{}",
+              n, NombreTipo(tipo), Leer32(base, obj + 280), resultado,
+              antes.luma[0] == despues.luma[0] ? "igual" : "CAMBIA",
+              antes.luma[1] == despues.luma[1] ? "igual" : "CAMBIA",
+              antes.planos[0], antes.planos[3], despues.planos[0], despues.planos[3], cambiados, campos);
 }
 
 void CopiarPlanos(const Fotograma& f, const Planos& g) {
@@ -278,9 +365,18 @@ struct Pelicula {
   DescodificadorWmv3 dec;
   bool preparada = false;      // FFmpeg open and the game's configuration known
   bool desincronizado = true;  // FFmpeg is waiting for an I frame
-  uint64_t fotogramas = 0;     // I and P frames that went through the hooks
+  // The game's videos are I and P frames without the loop filter, and its decoder works as a fallback. In the
+  // others (B frames or the loop filter, like the dubbed videos of a translation) the game's recompiled decoder
+  // leaves the picture at zero (it shows green): if FFmpeg fails, the last good picture is repeated.
+  bool con_b = false;
+  bool juego_fiable = true;
+  std::vector<uint8_t> ultima;  // last good picture: Y, U and V one after another
+  int ultima_ancho = 0;
+  int ultima_alto = 0;
+  uint64_t fotogramas = 0;     // I, P and B frames that went through the hooks
   uint64_t nativos = 0;
   uint64_t rechazados = 0;
+  uint64_t repetidos = 0;
   uint64_t avisos = 0;
   int peor_max_y = 0;
   double peor_media_y = 0.0;
@@ -314,9 +410,9 @@ void Resumen(Pelicula& p, int64_t ahora) {
 }
 
 void ResumenFinal(const Pelicula& p) {
-  REXLOG_INFO("[video] WMV3 fin de '{}' (contexto {:08X}): {} fotogramas, {} con FFmpeg, {} rechazados; sombra: "
-              "peor Y max {} media {:.3f}",
-              p.ruta, p.obj, p.fotogramas, p.nativos, p.rechazados, p.peor_max_y, p.peor_media_y);
+  REXLOG_INFO("[video] WMV3 fin de '{}' (contexto {:08X}): {} fotogramas, {} con FFmpeg, {} rechazados ({} con la "
+              "ultima imagen repetida); sombra: peor Y max {} media {:.3f}",
+              p.ruta, p.obj, p.fotogramas, p.nativos, p.rechazados, p.repetidos, p.peor_max_y, p.peor_media_y);
 }
 
 // Con g_peli_m tomado.
@@ -333,71 +429,163 @@ Pelicula& PeliculaDe(const uint8_t* base, uint32_t obj) {
   p.ruta = rex::kernel::xboxkrnl::NfsmwUltimoWmvLeido();
   InfoWmv info;
   const bool info_ok = !p.ruta.empty() && video_wmv3::LeerInfoWmv(p.ruta, info);
-  const bool config_ok = Leer32(base, obj + 3844) == 0 && Leer32(base, obj + 15424) == 6 &&
-                         Leer32(base, obj + 15708) == kDescodificarI && Leer32(base, obj + 15712) == kDescodificarP;
-  p.preparada = info_ok && config_ok && p.dec.Abrir(info);
+  // [ctx+3844] is the loop filter of the sequence (LOOPFILTER): with 1, sub_828C35D8, sub_8278A518 and
+  // sub_828C58C8 also run a filter over the picture, which FFmpeg's WMV3 decoder applies too. B frames: the 3
+  // MAXBFRAMES bits of the sequence (STRUCT_C), which the game decodes with [ctx+3016].
+  const uint32_t filtro = Leer32(base, obj + 3844);
+  p.con_b = info_ok && info.secuencia.size() >= 4 && ((info.secuencia[3] >> 4) & 7) != 0;
+  p.juego_fiable = filtro == 0 && !p.con_b;
+  const bool config_ok = filtro <= 1 && Leer32(base, obj + 15424) == 6 &&
+                         Leer32(base, obj + 15708) == kDescodificarI && Leer32(base, obj + 15712) == kDescodificarP &&
+                         (!p.con_b || Leer32(base, obj + 3016) == kDescodificarB);
+  // With the diagnostics, FFmpeg is opened even if the configuration is different: the shadow compares anyway.
+  const bool comparar = REXCVAR_GET(nfsmw_video_wmv3_sombra) || REXCVAR_GET(nfsmw_video_wmv3_b_diag);
+  p.preparada = info_ok && (config_ok || comparar) && p.dec.Abrir(info) && config_ok;
   const auto& s = info.secuencia;
-  REXLOG_INFO("[video] WMV3: contexto {:08X} -> '{}' {}x{} secuencia {:02X}{:02X}{:02X}{:02X}; configuracion {}; "
-              "FFmpeg {}",
+  REXLOG_INFO("[video] WMV3: contexto {:08X} -> '{}' {}x{} secuencia {:02X}{:02X}{:02X}{:02X}; filtro de bloques {}, "
+              "fotogramas B {}; configuracion {}; FFmpeg {}",
               obj, p.ruta, info.ancho, info.alto, s.size() > 0 ? s[0] : 0, s.size() > 1 ? s[1] : 0,
-              s.size() > 2 ? s[2] : 0, s.size() > 3 ? s[3] : 0, config_ok ? "conocida" : "distinta",
-              p.preparada ? "listo" : "no disponible");
-  if (REXCVAR_GET(nfsmw_video_wmv3_datos_diag)) {
-    REXLOG_INFO("[video] contexto {:08X}: +3300={:08X} +15708={:08X} +15712={:08X} +15424={} +3844={} +132={} "
-                "+136={} +200={} +204={} +216={:X} +220={:X}",
+              s.size() > 2 ? s[2] : 0, s.size() > 3 ? s[3] : 0, filtro, p.con_b ? "si" : "no",
+              config_ok ? "conocida" : "distinta", p.preparada ? "listo" : "no disponible");
+  if (REXCVAR_GET(nfsmw_video_wmv3_datos_diag) || REXCVAR_GET(nfsmw_video_wmv3_b_diag)) {
+    REXLOG_INFO("[video] contexto {:08X}: +3300={:08X} +15708={:08X} +15712={:08X} +3016={:08X} +15424={} "
+                "+3844={} +132={} +136={} +200={} +204={} +208={} +216={:X} +220={:X} +14740={} +18384={} +3872={}",
                 obj, Leer32(base, obj + 3300), Leer32(base, obj + 15708), Leer32(base, obj + 15712),
-                Leer32(base, obj + 15424), Leer32(base, obj + 3844), Leer32(base, obj + 132),
-                Leer32(base, obj + 136), Leer32(base, obj + 200), Leer32(base, obj + 204),
-                Leer32(base, obj + 216), Leer32(base, obj + 220));
+                Leer32(base, obj + 3016), Leer32(base, obj + 15424), Leer32(base, obj + 3844),
+                Leer32(base, obj + 132), Leer32(base, obj + 136), Leer32(base, obj + 200), Leer32(base, obj + 204),
+                Leer32(base, obj + 208), Leer32(base, obj + 216), Leer32(base, obj + 220), Leer32(base, obj + 14740),
+                Leer32(base, obj + 18384), Leer32(base, obj + 3872));
   }
   return p;
 }
 
-bool Rechazar(Pelicula& p, bool intra, const char* motivo) {
+// The context as the game's functions leave it when they finish: sub_828C35D8 (I), sub_8278A518 (P) and
+// sub_828C58C8 (B). The B branch of DecodeData then sets [ctx+15512] and [ctx+15488] to its own value.
+void DejarContexto(uint8_t* base, uint32_t obj, int tipo) {
+  if (tipo == kP) {
+    const bool marca = Leer32(base, obj + 3844) != 0 || Leer32(base, obj + 14776) != 0 ||
+                       Leer32(base, obj + 15148) != 0xFFFFFFFFu;
+    Escribir32(base, obj + 15512, marca ? 1 : 0);
+    Escribir32(base, obj + 15488, 1);
+  } else if (tipo == kB) {
+    Escribir32(base, obj + 15512, 1);
+    Escribir32(base, obj + 15488, 1);
+    Escribir32(base, obj + 436, 1);
+  }
+  Escribir32(base, obj + 15516, 0);
+}
+
+void GuardarUltima(Pelicula& p, const Fotograma& f) {
+  const int ancho_c = (f.ancho + 1) / 2;
+  const int alto_c = (f.alto + 1) / 2;
+  p.ultima.resize(size_t(f.ancho) * size_t(f.alto) + 2 * size_t(ancho_c) * size_t(alto_c));
+  uint8_t* d = p.ultima.data();
+  for (int y = 0; y < f.alto; ++y, d += f.ancho) {
+    std::memcpy(d, f.planos[0] + int64_t(y) * f.pasos[0], size_t(f.ancho));
+  }
+  for (int k = 1; k < 3; ++k) {
+    for (int y = 0; y < alto_c; ++y, d += ancho_c) {
+      std::memcpy(d, f.planos[k] + int64_t(y) * f.pasos[k], size_t(ancho_c));
+    }
+  }
+  p.ultima_ancho = f.ancho;
+  p.ultima_alto = f.alto;
+}
+
+// Without a good picture yet, black: the game's planes at zero show green.
+void RepetirUltima(uint8_t* base, const Pelicula& p) {
+  Planos g;
+  if (p.ultima.empty()) {
+    const int ancho = p.dec.ancho();
+    const int alto = p.dec.alto();
+    if (ancho <= 0 || alto <= 0 || !PlanosDelJuego(base, p.obj, ancho, g)) {
+      return;
+    }
+    for (int y = 0; y < alto; ++y) {
+      std::memset(g.y + int64_t(y) * g.paso_y, 16, size_t(ancho));
+    }
+    for (int y = 0; y < (alto + 1) / 2; ++y) {
+      std::memset(g.u + int64_t(y) * g.paso_c, 128, size_t((ancho + 1) / 2));
+      std::memset(g.v + int64_t(y) * g.paso_c, 128, size_t((ancho + 1) / 2));
+    }
+    return;
+  }
+  if (!PlanosDelJuego(base, p.obj, p.ultima_ancho, g)) {
+    return;
+  }
+  const int ancho_c = (p.ultima_ancho + 1) / 2;
+  const int alto_c = (p.ultima_alto + 1) / 2;
+  Fotograma f;
+  f.ancho = p.ultima_ancho;
+  f.alto = p.ultima_alto;
+  f.planos[0] = p.ultima.data();
+  f.pasos[0] = f.ancho;
+  f.planos[1] = f.planos[0] + size_t(f.ancho) * size_t(f.alto);
+  f.pasos[1] = ancho_c;
+  f.planos[2] = f.planos[1] + size_t(ancho_c) * size_t(alto_c);
+  f.pasos[2] = ancho_c;
+  CopiarPlanos(f, g);
+}
+
+// A frame that FFmpeg does not replace. In the game's videos the game decodes it (false). In the others its
+// decoder does not work: the last good picture is repeated and the frame is done (true, r3 = 0).
+bool Rechazar(PPCContext& ctx, uint8_t* base, Pelicula& p, int tipo, const char* motivo) {
   ++p.rechazados;
   p.desincronizado = true;
+  const bool repetir = !p.juego_fiable;
   if (p.avisos++ < 10) {
-    REXLOG_WARN("[video] WMV3 nativo: el fotograma {} ({}) de '{}' lo descodifica el juego: {}", p.fotogramas,
-                intra ? "I" : "P", p.ruta, motivo);
+    REXLOG_WARN("[video] WMV3 nativo: el fotograma {} ({}) de '{}' {}: {}", p.fotogramas, NombreTipo(tipo), p.ruta,
+                repetir ? "repite la ultima imagen" : "lo descodifica el juego", motivo);
   }
-  return false;
+  if (!repetir) {
+    return false;
+  }
+  RepetirUltima(base, p);
+  DejarContexto(base, p.obj, tipo);
+  ctx.r3.u64 = 0;
+  ++p.fotogramas;
+  ++p.repetidos;
+  return true;
 }
 
 // Replaces the decoding of one frame. true if r3 already holds the result.
-bool SustituirFotograma(PPCContext& ctx, uint8_t* base, Pelicula& p, Captura& c, bool intra) {
+bool SustituirFotograma(PPCContext& ctx, uint8_t* base, Pelicula& p, Captura& c, int tipo) {
+  const bool intra = tipo == kI;
   const uint32_t obj = p.obj;
   if (p.desincronizado && !intra) {
-    ++p.rechazados;  // the game decodes until the next I frame
-    return false;
+    // Until the next I frame: in the game's videos the game decodes, and in the others the last picture is
+    // repeated (FFmpeg does not have the references of this frame).
+    if (p.juego_fiable) {
+      ++p.rechazados;
+      return false;
+    }
+    return Rechazar(ctx, base, p, tipo, "esperando al siguiente fotograma I");
   }
-  if (Leer32(base, obj + 3844) != 0 || Leer32(base, obj + 15424) != 6) {
+  if (Leer32(base, obj + 15424) != 6) {
     p.preparada = false;
-    return Rechazar(p, intra, "posproceso o perfil distinto");
+    return Rechazar(ctx, base, p, tipo, "perfil distinto");
   }
   if (c.quedan || Leer32(base, Leer32(base, obj + 76) + 24) != 0) {
     CompletarFotograma(ctx, base, obj);
   }
   if (c.quedan || c.error || c.datos.empty()) {
-    return Rechazar(p, intra, "fotograma comprimido incompleto");
+    return Rechazar(ctx, base, p, tipo, "fotograma comprimido incompleto");
   }
   const int64_t antes = AhoraUs();
   Fotograma f;
   if (!p.dec.Descodificar(c.datos.data(), c.datos.size(), intra, f)) {
-    return Rechazar(p, intra, "FFmpeg no lo descodifica");
+    return Rechazar(ctx, base, p, tipo, "FFmpeg no lo descodifica");
   }
   Planos g;
   if (f.ancho != p.dec.ancho() || f.alto != p.dec.alto() || !PlanosDelJuego(base, obj, f.ancho, g)) {
     p.preparada = false;
-    return Rechazar(p, intra, "los planos del juego no cuadran con el video");
+    return Rechazar(ctx, base, p, tipo, "los planos del juego no cuadran con el video");
   }
   CopiarPlanos(f, g);
-  // Context as sub_828C35D8 and sub_8278A518 leave it without postprocessing.
-  if (!intra) {
-    const bool marca = Leer32(base, obj + 14776) != 0 || Leer32(base, obj + 15148) != 0xFFFFFFFFu;
-    Escribir32(base, obj + 15512, marca ? 1 : 0);
-    Escribir32(base, obj + 15488, 1);
+  if (!p.juego_fiable) {
+    GuardarUltima(p, f);
   }
-  Escribir32(base, obj + 15516, 0);
+  DejarContexto(base, obj, tipo);
   ctx.r3.u64 = 0;
   const int64_t despues = AhoraUs();
   p.desincronizado = false;
@@ -411,7 +599,8 @@ bool SustituirFotograma(PPCContext& ctx, uint8_t* base, Pelicula& p, Captura& c,
 }
 
 // After the game decodes: FFmpeg decodes the same bytes and the planes are compared.
-void Sombra(uint8_t* base, Pelicula& p, const Captura& c, bool intra) {
+void Sombra(uint8_t* base, Pelicula& p, const Captura& c, int tipo) {
+  const bool intra = tipo == kI;
   const uint64_t n = p.fotogramas - 1;
   if (c.quedan || c.error || c.datos.empty()) {
     if (p.avisos++ < 10) {
@@ -448,8 +637,18 @@ void Sombra(uint8_t* base, Pelicula& p, const Captura& c, bool intra) {
   if (n < 4 || n % 90 == 0 || (raro && p.avisos++ < 20)) {
     REXLOG_INFO("[video] sombra #{} {} {} bytes en {} secciones: Y max {} media {:.3f} >3 {} | U max {} media "
                 "{:.3f} | V max {} media {:.3f} | FFmpeg {:.2f} ms",
-                n, intra ? "I" : "P", c.datos.size(), c.secciones, dy.max, dy.media, dy.malos, du.max, du.media,
+                n, NombreTipo(tipo), c.datos.size(), c.secciones, dy.max, dy.media, dy.malos, du.max, du.media,
                 dv.max, dv.media, double(despues - antes) / 1000.0);
+  }
+  // B frames: FFmpeg also against the other set of planes, to know in which one the game leaves each type.
+  if (REXCVAR_GET(nfsmw_video_wmv3_b_diag) && n < kFotogramasDiagB) {
+    Planos g2;
+    if (PlanosDelJuego(base, p.obj, f.ancho, g2, 3684)) {
+      const Diferencia d2 = CompararPlano(g2.y, g2.paso_y, f.planos[0], f.pasos[0], f.ancho, f.alto);
+      REXLOG_INFO("[video] B sombra #{} {}: FFmpeg contra planos 3672 Y max {} media {:.3f} | contra planos 3684 "
+                  "Y max {} media {:.3f}",
+                  n, NombreTipo(tipo), dy.max, dy.media, d2.max, d2.media);
+    }
   }
   if (n == 30) {
     const std::string prefijo = fmt::format("wmv3_{:08X}_030", p.obj);
@@ -457,18 +656,33 @@ void Sombra(uint8_t* base, Pelicula& p, const Captura& c, bool intra) {
     GuardarPgm(prefijo + "_nativo.pgm", f.planos[0], f.pasos[0], f.ancho, f.alto, 1);
     GuardarPgm(prefijo + "_diferencia.pgm", g.y, g.paso_y, f.ancho, f.alto, 16, f.planos[0], f.pasos[0]);
   }
+  // B frames: the luma and the U chroma of the game and of FFmpeg in a few frames, to see which one is right.
+  if (REXCVAR_GET(nfsmw_video_wmv3_b_diag) && (n == 140 || n == 141 || n == 200 || n == 361 || n == 362 || n == 420)) {
+    const std::string prefijo = fmt::format("wmv3b_{:08X}_{:03}_{}", p.obj, n, NombreTipo(tipo));
+    GuardarPgm(prefijo + "_juego_y.pgm", g.y, g.paso_y, f.ancho, f.alto, 1);
+    GuardarPgm(prefijo + "_juego_u.pgm", g.u, g.paso_c, ancho_c, alto_c, 1);
+    GuardarPgm(prefijo + "_ffmpeg_y.pgm", f.planos[0], f.pasos[0], f.ancho, f.alto, 1);
+    GuardarPgm(prefijo + "_ffmpeg_u.pgm", f.planos[1], f.pasos[1], ancho_c, alto_c, 1);
+  }
 }
 
-void Descodificar(PPCContext& ctx, uint8_t* base, bool intra) {
+void LlamarAlJuego(PPCContext& ctx, uint8_t* base, int tipo) {
+  if (tipo == kI) {
+    __imp__sub_828C35D8(ctx, base);
+  } else if (tipo == kP) {
+    __imp__sub_8278A518(ctx, base);
+  } else {
+    __imp__sub_828C58C8(ctx, base);
+  }
+}
+
+void Descodificar(PPCContext& ctx, uint8_t* base, int tipo) {
   const bool nativo = REXCVAR_GET(nfsmw_video_wmv3_nativo);
   const bool sombra = REXCVAR_GET(nfsmw_video_wmv3_sombra);
   const bool diag = REXCVAR_GET(nfsmw_video_wmv3_datos_diag);
-  if (!nativo && !sombra && !diag) {
-    if (intra) {
-      __imp__sub_828C35D8(ctx, base);
-    } else {
-      __imp__sub_8278A518(ctx, base);
-    }
+  const bool b_diag = REXCVAR_GET(nfsmw_video_wmv3_b_diag);
+  if (!nativo && !sombra && !diag && !b_diag) {
+    LlamarAlJuego(ctx, base, tipo);
     return;
   }
   const uint32_t obj = ctx.r3.u32;
@@ -476,31 +690,35 @@ void Descodificar(PPCContext& ctx, uint8_t* base, bool intra) {
   Pelicula& p = PeliculaDe(base, obj);
   Captura* c = t_captura && t_captura->ctx == obj ? t_captura : nullptr;
   if (nativo && p.preparada) {
-    if (c && SustituirFotograma(ctx, base, p, *c, intra)) {
+    if (c && SustituirFotograma(ctx, base, p, *c, tipo)) {
       return;
     }
-    if (!c) {
-      Rechazar(p, intra, "llamada fuera de DecodeData");
+    if (!c && Rechazar(ctx, base, p, tipo, "llamada fuera de DecodeData")) {
+      return;
     }
   }
-  const int64_t antes = AhoraUs();
-  if (intra) {
-    __imp__sub_828C35D8(ctx, base);
-  } else {
-    __imp__sub_8278A518(ctx, base);
+  FotoContexto foto;
+  const bool anotar = b_diag && p.fotogramas < kFotogramasDiagB && p.dec.ancho() > 0;
+  if (anotar) {
+    Fotografiar(base, obj, p.dec.ancho(), p.dec.alto(), foto);
   }
+  const int64_t antes = AhoraUs();
+  LlamarAlJuego(ctx, base, tipo);
   const int64_t despues = AhoraUs();
   ++p.fotogramas;
   ++p.n_juego;
   p.us_juego += despues - antes;
+  if (anotar) {
+    AnotarCambios(base, obj, p.dec.ancho(), p.dec.alto(), p.fotogramas - 1, tipo, ctx.r3.u32, foto);
+  }
   if (diag && p.fotogramas <= 12 && c) {
     REXLOG_INFO("[video] fotograma #{} {}: {} bytes en {} secciones, quedan {}, error {}, resultado {:08X}, "
                 "juego {:.2f} ms",
-                p.fotogramas - 1, intra ? "I" : "P", c->datos.size(), c->secciones, c->quedan, c->error,
+                p.fotogramas - 1, NombreTipo(tipo), c->datos.size(), c->secciones, c->quedan, c->error,
                 ctx.r3.u32, double(despues - antes) / 1000.0);
   }
-  if (sombra && !nativo && p.preparada && c && ctx.r3.u32 == 0) {
-    Sombra(base, p, *c, intra);
+  if (sombra && !nativo && p.dec.ancho() > 0 && c && ctx.r3.u32 == 0) {
+    Sombra(base, p, *c, tipo);
   }
   Resumen(p, despues);
 }
@@ -551,12 +769,17 @@ REX_HOOK_RAW(sub_827312C0) {
 
 // Decoding of an I frame ([ctx+15708]).
 REX_HOOK_RAW(sub_828C35D8) {
-  nfsmw::video_nativo::Descodificar(ctx, base, true);
+  nfsmw::video_nativo::Descodificar(ctx, base, nfsmw::video_nativo::kI);
 }
 
 // Decoding of a P frame ([ctx+15712]).
 REX_HOOK_RAW(sub_8278A518) {
-  nfsmw::video_nativo::Descodificar(ctx, base, false);
+  nfsmw::video_nativo::Descodificar(ctx, base, nfsmw::video_nativo::kP);
+}
+
+// Decoding of a B frame ([ctx+3016]).
+REX_HOOK_RAW(sub_828C58C8) {
+  nfsmw::video_nativo::Descodificar(ctx, base, nfsmw::video_nativo::kB);
 }
 
 // Preparation of a movie's context: if the context is reused, FFmpeg starts from scratch.

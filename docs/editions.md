@@ -23,7 +23,7 @@ table:
 
 | Edition | Relation to the reference (PAL Spanish) |
 |---|---|
-| PAL Spanish | The reference edition. Every address in the sources refers to it. |
+| PAL Spanish | The reference edition. Every address in the sources refers to it. A community Brazilian Portuguese translation uses it too: it changes some data files and the videos, but not the shaders. |
 | PAL German, PAL Italian | The same compilation of the game ("NfsMWEurope...Release"). Only five instructions that load the language constant and some strings in `.rdata` differ. Same addresses, same profile, only five generated files differ. |
 | PAL English | A different compilation, close to the US one. A community Russian translation uses it too, and only replaces `NFS/ZZDATA0.BIN`. |
 | USA | A different compilation: `.text`, `.rdata` and the `.embsec_` sections (data embedded in the executable) move. |

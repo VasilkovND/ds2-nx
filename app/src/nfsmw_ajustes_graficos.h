@@ -53,8 +53,11 @@ bool AntialiasingFxaa();
 // nfsmw_resplandor_cielo: 0 original, 1 natural, 2 suave (lock-free: it can be checked on every draw).
 int ResplandorCielo();
 
-// Registers the change notifications for the live Graphics settings (post-processing, antialiasing and
-// sky glow), once at startup.
+// nfsmw_tratamiento_visual: 0 original, 1 suave, 2 apagado (lock-free: it can be checked on every draw).
+int TratamientoVisual();
+
+// Registers the change notifications for the live Graphics settings (post-processing, antialiasing, sky glow
+// and the color filter), once at startup.
 void VigilarAjustesEnVivo();
 
 // Passes nfsmw_resolucion_interna and nfsmw_limite_fps to the video mode (video_mode_width/height,

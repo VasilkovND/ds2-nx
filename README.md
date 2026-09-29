@@ -13,7 +13,19 @@ Vulkan renderer running on NVK (Mesa). It targets **30 FPS at the console's stoc
 
 > [!NOTE]
 > You need your own copy of the Xbox 360 game: a disc image (`.iso`) or the extracted disc with its `default.xex`.
-> Supported editions: PAL (Spanish, English, German and Italian), NTSC-U and NTSC-J.
+
+## Supported editions
+
+One NRO per edition of the game (the installer page picks the right one automatically):
+
+| File | Edition |
+|---|---|
+| `nfsmw-nx-pal-es.nro` | PAL - Spanish & Brazilian Portuguese (Fan Version) |
+| `nfsmw-nx-pal-en.nro` | PAL - English & Russian (Fan Version) |
+| `nfsmw-nx-pal-de.nro` | PAL - German |
+| `nfsmw-nx-pal-it.nro` | PAL - Italian |
+| `nfsmw-nx-usa.nro` | NTSC-U |
+| `nfsmw-nx-jpn.nro` | NTSC-J |
 
 ## How to install
 
@@ -79,6 +91,18 @@ To use the face buttons by position instead, as on an Xbox pad (B acts as A, A a
 `nfsmw.toml`, next to the NRO, holds the settings and each one is described in the file. Several of them can also be
 changed while playing from the Debug Menu (L + R + Right).
 
+### Color filter (the "piss filter")
+
+The game's "visual treatment", which players call the "piss filter", gives the city its yellow tint, with some
+desaturation and a dark vignette. To make it softer or turn it off, change `nfsmw_tratamiento_visual` in
+`nfsmw.toml`, or in the Debug Menu (L + R + Right, category **Graficos**) while playing:
+
+- `original` (default): as on the Xbox 360;
+- `suave`: half as strong;
+- `apagado`: no filter. The glow and the fades to black stay the same.
+
+It costs nothing.
+
 ## Debug Menu
 
 **It's only available in Spanish for now.** Press **L + R + Right** (D-pad) while playing to open it and again to close it.
@@ -96,7 +120,8 @@ While it is open, the controls go to the menu and not to the game.
 The categories:
 
 - **Graficos**: internal resolution, frame rate limit (60 or 30), the GPU clock requested in handheld mode, FXAA
-  antialiasing, the sky glow, and the options for the console overlays (SaltyNX) and ReverseNX-RT.
+  antialiasing, the sky glow, the game's color filter, and the options for the console overlays (SaltyNX) and
+  ReverseNX-RT.
 - **Graficos > Posproceso**: color filters for the final image, as presets (`cine`, `sepia`, `noir`, `frio`,
   `calido`, `vivo`, `matrix`, `crt`) or `personalizado` with your own brightness, contrast, saturation, vibrance,
   temperature, gamma, vignette and scanlines.

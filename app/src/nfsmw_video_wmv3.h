@@ -2,8 +2,10 @@
 //
 // The game's videos (Movies/*.wmv) are WMV3 main profile, 1280x720 at 30 fps and without B frames. On
 // the Switch the XDK's recompiled decoder runs at ~98 % of a core and produces ~22 frames per second:
-// the picture falls behind and the audio ends first.
-//  - DescodificadorWmv3: decodes with FFmpeg's WMV3 the compressed frames as stored in the container.
+// the picture falls behind and the audio ends first. Videos re-encoded by a translation can have B frames and
+// the loop filter.
+//  - DescodificadorWmv3: decodes with FFmpeg's WMV3 the compressed frames as stored in the container, without
+//    reordering: each frame comes out of the call that decodes it, also with B frames.
 //    nfsmw_video_nativo.cpp passes it the same bytes the game hands to its own decoder.
 //  - LeerInfoWmv: reads the size and the 4 WMV3 sequence bytes from the movie's ASF header.
 //  - PeliculaWmv: full ASF reader (diagnostic: decodes the file on its own).

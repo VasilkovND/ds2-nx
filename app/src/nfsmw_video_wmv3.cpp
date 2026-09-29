@@ -201,6 +201,10 @@ bool DescodificadorWmv3::Abrir(const InfoWmv& info) {
   e_->codec->width = e_->codec->coded_width = info.ancho;
   e_->codec->height = e_->codec->coded_height = info.alto;
   e_->codec->thread_count = 1;
+  // Each frame comes out of the call that decodes it, without reordering. With B frames FFmpeg would otherwise
+  // return the previous anchor (one frame late), and the game expects the picture of what it just asked for.
+  // Without B frames nothing changes: FFmpeg's VC-1 decoder already has no delay (vc1dec.c, low_delay).
+  e_->codec->flags |= AV_CODEC_FLAG_LOW_DELAY;
   if (!info.secuencia.empty()) {
     e_->codec->extradata =
         static_cast<uint8_t*>(av_mallocz(info.secuencia.size() + AV_INPUT_BUFFER_PADDING_SIZE));
@@ -212,6 +216,10 @@ bool DescodificadorWmv3::Abrir(const InfoWmv& info) {
     e_ = std::make_unique<Estado>();
     return false;
   }
+  // With B frames, vc1dec.c computes low_delay again at the first frame from has_b_frames (1 when the sequence
+  // allows B frames), and the first I frame did not come out (EAGAIN): the video had no picture until the next I
+  // frame, 4 s later. With has_b_frames at 0, low_delay stays at 1 from the first frame.
+  e_->codec->has_b_frames = 0;
   e_->pkt = av_packet_alloc();
   e_->frame = av_frame_alloc();
   ancho_ = info.ancho;
