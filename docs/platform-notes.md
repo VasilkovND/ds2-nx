@@ -12,7 +12,9 @@ drawn through [Mesa](glossary.md#mesa) on the Switch.
 - Plan for the normal clocks, without overclocking. A game gets three CPU cores at 1020 MHz and a GPU at 768 MHz
   docked. In handheld mode a program starts with the GPU at only 307.2 MHz; it can ask the system for 460.8 MHz with
   an official performance mode, and this port does.
-- Memory is nearly full: this port uses 3185 of its 3189 MB.
+- Do not read free memory from `svcGetInfo(InfoType_UsedMemorySize)`: in a homebrew program it counts the whole heap
+  from the start (this port reads 3185 of its 3189 MB before loading anything). In a race the GPU uses about 500 MB
+  of a 1.4-1.5 GB budget, so there is room left.
 - Horizon limits how much memory a process may map, and libnx has one exception stack for the whole process. Both
   needed changes in the runtime (see [Guest memory](#guest-memory) and [Exceptions](#exceptions)).
 - Only thread priority 0x3B takes turns on a core. At any other priority, a busy thread does not let threads of the
@@ -52,9 +54,15 @@ measure and optimise against them:
   first one) and Mariko (the later one). Both run at the same stock clocks, but Erista heats up sooner in long
   sessions. So if a frame is only a little under its time budget on a Mariko console, that margin may not hold on an
   Erista one.
-- **There is almost no free memory.** An application gets about 3.2 GB. This port runs at 3185 of 3189 MB, so there
-  is no room for fixes that need "one more buffer". For example, each extra work slot of the renderer (the buffers of
-  one more frame in flight, see [native-renderer.md](native-renderer.md)) costs 64 MB.
+- **Free memory has to be measured inside the heap.** An application gets about 3.2 GB. When hbloader (the Homebrew
+  Menu, or a forwarder) starts a homebrew program, it turns all of that memory except about 2 MB into the program's
+  heap, and libnx takes that heap as it is (`__nx_heap_size` is ignored). So `svcGetInfo(InfoType_UsedMemorySize)`
+  reads almost the total from the first moment: 3185 of 3189 MB here, before the game loads anything. It does not
+  show what is free. Everything the port uses comes out of that heap: the guest memory (about 506 MB), the thread
+  stacks and Mesa, GPU memory included. The GPU part can be read from Vulkan's memory budget
+  (`VK_EXT_memory_budget`): in a race, about 480-515 MB used of 1.4-1.5 GB budgeted. So there is room for more
+  buffers: each work slot of the renderer (the buffers of one more frame in flight, see
+  [native-renderer.md](native-renderer.md)) costs 64 MB, and the renderer uses three.
 
 ## Guest memory
 
@@ -70,7 +78,8 @@ runtime recreates inside the Switch process. The Switch version of that code is 
 - **The Xbox 360 sees the same memory at several addresses.** There are up to five views: 0x7F000000, 0xA0000000,
   0xC0000000, 0xE0000000 and the raw physical window. At first, every committed chunk was mapped into every view.
   That turned 472 MB of real memory into 1782 MB of mapped memory, and the game went black after the first logo.
-  Changing the heap size did not move the point where it failed.
+  Changing the heap size (`__nx_heap_size`) did not move the point where it failed: under hbloader that value is not
+  used at all (see [Hardware at stock clocks](#hardware-at-stock-clocks)).
 - **What works:** commit physical memory only when it is needed, in 4 MB chunks, and map a chunk into a view only
   the first time that view touches it. The exception handler does this: touching such memory raises an exception,
   the handler commits or maps the chunk, and the access is retried.

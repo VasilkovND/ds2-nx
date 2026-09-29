@@ -72,27 +72,25 @@ extern "C" {
 u32 __nx_applet_type = AppletType_Application;
 
 /*
- * With 0, libnx gives the newlib heap all available memory, and in this
- * project that is a mistake: the guest memory model remaps chunks of this heap
- * into the guest window and the 360 mirrors, and each of those mappings needs
- * the kernel to reserve memory of its own for the page tables. If the heap takes
- * everything, that memory does not exist.
+ * The heap size libnx asks for when nothing hands the program a heap. Started
+ * by hbloader (the Homebrew Menu or a forwarder), which is how this port runs,
+ * libnx takes the heap hbloader already set up, all the memory but about 2 MB,
+ * and ignores this value.
  *
- * Measured on the console: with an uncapped heap, the game died with "no se pudo
- * confirmar 0x1000 bytes" (kernel 2001-0103, out of memory) at ~1.8 GB mapped,
- * and even a 4 KB request and thread creation failed.
+ * That is why the profiler reads 3,185 of 3,189 MB: InfoType_UsedMemorySize
+ * counts that whole heap from the start. It was the same with 1,536 as with
+ * 1,024 MB here, and already before anything was loaded, so it does not show
+ * how much is free.
  *
- * It was lowered from 1,536 to 1,024 MB in case the NVIDIA driver was short of
- * room. That was not it: the 3,185 of 3,189 MB in the profiler is
- * InfoType_UsedMemorySize, which does not move on Horizon (it is the same with
- * 1,536 as with 1,024, and already before anything is loaded), so it does not
- * measure what it seemed to. It stays at 1,024 because that is enough, not
- * because it fixed anything.
+ * Measured on the console: the game died with "no se pudo confirmar 0x1000
+ * bytes" (kernel 2001-0103) at ~1.8 GB mapped, and even a 4 KB request and
+ * thread creation failed. Changing this value did not move that point; what
+ * fixed it was mapping each guest chunk into a view only when that view touches
+ * it (guest_memory_switch.cpp).
  *
- * 1,024 MB leave plenty of room for what lives in the heap (the guest backing,
- * measured at 506 MB, the host thread stacks at 16 MB each, and whatever Mesa
- * asks for) and leave the rest free for the mappings. What the GPU uses
- * (textures, buffers and compiled shaders) does not come from here.
+ * Everything the port uses comes out of that heap: the guest backing (measured
+ * at 506 MB), the host thread stacks (16 MB each) and Mesa, GPU memory included.
+ * How much of it the GPU uses shows in Vulkan's memory budget.
  */
 size_t __nx_heap_size = 1024ull * 1024 * 1024;  /* see below */
 
