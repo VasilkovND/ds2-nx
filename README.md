@@ -22,6 +22,7 @@ One NRO per edition of the game (the installer page picks the right one automati
 |---|---|
 | `nfsmw-nx-pal-es.nro` | PAL - Spanish & Brazilian Portuguese (Fan Version) |
 | `nfsmw-nx-pal-en.nro` | PAL - English & Russian (Fan Version) |
+| `nfsmw-nx-pal-fr.nro` | PAL - French |
 | `nfsmw-nx-pal-de.nro` | PAL - German |
 | `nfsmw-nx-pal-it.nro` | PAL - Italian |
 | `nfsmw-nx-usa.nro` | NTSC-U |
