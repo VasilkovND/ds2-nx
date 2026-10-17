@@ -68,3 +68,11 @@ labels = [0x822363F0, 0x822363F8, 0x82236408, 0x82236414]
 [[midasm_hook]]
 address = 0x821A85C4
 name = "Halo3WorkerPollYield"
+
+# Diagnostic while the object crash of boots 8-11 is chased (src/halo3_hooks.cpp): logs object lookups in
+# sub_8231D8D0 whose address is not readable. Remove once it is understood.
+[[midasm_hook]]
+address = 0x8231D910
+name = "Halo3ObjectLookupCheck"
+registers = ["r14", "r10", "r29"]
+after_instruction = true
