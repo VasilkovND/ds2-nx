@@ -12,28 +12,28 @@ game_root = "assets/game_root"
 file_path = "assets/game_root/default.xex"
 out_directory_path = "generated/default"
 # overrides.toml  written by hand: specific findings, each with its explanation
-includes = ["xenonanalyse_functions.toml", "overrides.toml"]
+includes = ["xenonanalyse_functions.toml", "xenonanalyse_switch_tables.toml", "overrides.toml"]
 
 [[modules]]
 guest_path = "waveshell-xbox.dll"
 file_path = "assets/game_root/WaveShell-Xbox.dll"
 out_directory_path = "generated/waveshell-xbox"
-includes = ["xenonanalyse_functions_waveshell-xbox.toml"]
+includes = ["xenonanalyse_functions_waveshell-xbox.toml", "xenonanalyse_switch_tables_waveshell-xbox.toml"]
 
 [[modules]]
 guest_path = "waveslibdll.dll"
 file_path = "assets/game_root/WavesLibDLL.dll"
 out_directory_path = "generated/waveslibdll"
-includes = ["xenonanalyse_functions_waveslibdll.toml"]
+includes = ["xenonanalyse_functions_waveslibdll.toml", "xenonanalyse_switch_tables_waveslibdll.toml"]
 
 [[modules]]
 guest_path = "waves/l360.dll"
 file_path = "assets/game_root/waves/L360.dll"
 out_directory_path = "generated/l360"
-includes = ["xenonanalyse_functions_l360.toml"]
+includes = ["xenonanalyse_functions_l360.toml", "xenonanalyse_switch_tables_l360.toml"]
 
 [[modules]]
 guest_path = "waves/q10.dll"
 file_path = "assets/game_root/waves/Q10.dll"
 out_directory_path = "generated/q10"
-includes = ["xenonanalyse_functions_q10.toml"]
+includes = ["xenonanalyse_functions_q10.toml", "xenonanalyse_switch_tables_q10.toml"]

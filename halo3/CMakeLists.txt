@@ -14,6 +14,7 @@ include(generated/rexglue.cmake)
 set(HALO3_SOURCES
     src/main.cpp
     src/halo3_gpu.cpp
+    src/halo3_hooks.cpp
 )
 
 if(WIN32)

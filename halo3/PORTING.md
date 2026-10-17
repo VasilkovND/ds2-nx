@@ -15,6 +15,10 @@ the concrete record of one port.
 | 2 | Same error at `0x88065DB8`, in WaveShell-Xbox.dll | The same, in DLL code | Same list per DLL |
 | 3 | No crash; stuck before its first frame | No graphics system: the render thread waited for a GPU that never read its commands | [Graphics system](#5-a-graphics-system) |
 | 4 | Write to guest address 0 in `sub_822AF7D8` (a decompressor) | XAPI fibers: `SwitchToFiber` cannot be translated as plain code | [Fibers](#6-fibers) |
+| 5 | No crash: about 24 frames/s with 4 draws each, black screen, audio static | Nothing is drawn yet; the static is underrun: the game fills only ~310 of ~1,880 audio requests per 10 s, with its three cores at 298 % | Stack samples (`logs/rex/perfil_pilas.flag`), see boot 7 |
+| 6 | Closed after ~15 s, same as 5 | Too short for the profiler, which writes every 10 s | Run a full minute when measuring |
+| 7 | CPU exception (`brk`) in `sub_8213FB68`: "Switch case out of range" | A jump table ReXGlue sized at one entry; the index has no bounds check before the jump | [Jump tables](#7-jump-tables) |
+| 7 | (same run, stack samples) one game thread at 98 % in one loop | A worker polling its queue without resting, built for the 360's six hardware threads | [Busy waits](#8-busy-waits) |
 
 ## 1. The game folder
 
@@ -103,11 +107,35 @@ non-volatile register into the fiber). The others sit next to it and read the sa
 current fiber); `ConvertThreadToFiber` fails with error 1280, `ConvertFiberToThread` with 1281, `CreateFiber` rounds
 its stack up to 16 KiB.
 
+## 7. Jump tables
+
+ReXGlue sizes a jump table from the bounds check (`cmplwi`) before the `bctr`. Where the index range is guaranteed
+elsewhere there is no check, and it guessed one entry: the generated `switch` traps (`__builtin_trap(); // Switch case
+out of range`) on every other index.
+
+- The earlier port's tables (XenonAnalyse, corrected by its `tools/h3analysis.py`) are converted to
+  `[[switch_tables]]` in `xenonanalyse_switch_tables.toml` and `xenonanalyse_switch_tables_<dll>.toml`, included
+  like the function lists. `address` is the `bctr` (XenonRecomp's `base`), `register` its `r`.
+- Five more tables that XenonAnalyse missed as well are in `overrides.toml`. Their size comes from the image: a table
+  starts right after its `bctr` and ends where the code resumes, at its lowest target.
+- Check: count the generated `switch` statements with a single `case`. It should be 0, or each one explained.
+
+## 8. Busy waits
+
+Stack samples (create `logs/rex/perfil_pilas.flag` next to the logs; `rex_perfil.log` then lists, per thread, where
+it spends its time) showed a worker thread at 98 % in `sub_821A8500`: it polls a slot of its queue and the kernel's
+millisecond counter for up to 66 ms without resting. With three cores that starves everything else, and the audio
+underran (static). A `[[midasm_hook]]` at the loop's repeat (`0x821A85C4`) calls `Halo3WorkerPollYield` in
+`src/halo3_hooks.cpp`, which sleeps 100 us. Expect more of these: the 360 had six hardware threads, the Switch gives
+the game three cores.
+
 ## How each crash was read
 
 - **Logs on the console**: `<NRO folder>/logs/` (one `halo3_NNN.log` per run) and `<NRO folder>/logs/rex/`
   (`rex_crash.log`, appended on every crash: read the last `====` block; `rex_perfil.log`, CPU per thread every 10 s).
   Fetch them over FTP.
+- **Where a thread spends its time**: `logs/rex/perfil_pilas.flag` turns on stack samples in `rex_perfil.log`.
+  Offsets are symbolized the same way as crashes.
 - **Which function crashed**: the crash log gives `imagen+0x...` offsets. The ELF links at 0, so they are ELF
   addresses: look them up in `aarch64-none-elf-nm -n out/sw/halo3`, and disassemble around them with
   `aarch64-none-elf-objdump -d --start-address=...` to see which guest register held the bad address (the context
