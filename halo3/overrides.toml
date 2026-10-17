@@ -14,3 +14,7 @@
 # ============================================================================
 
 [functions]
+# Reached only by a tail call (a plain `b`), which the analysis does not follow into a new function.
+# Both are function starts in XenonAnalyse's map of the same default.xex (0x826CC8A0: 8 bytes, 0x826C5118: 40).
+"0x826CC8A0" = {}   # from b at 0x826CEF7C
+"0x826C5118" = {}   # from b at 0x826C49F4
