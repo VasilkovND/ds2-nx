@@ -5,7 +5,14 @@
 #include "{{ project }}_init.h"
 #include <rex/system/function_dispatcher.h>
 
-{% if is_dll %}
+{% for imp in module_imports %}{% if loop.is_first %}// Imports from other guest DLLs: no kernel export resolves them, and the loader does not patch
+// their thunks. Each resolves the export once and enters it like any indirect call.
+{% endif %}DEFINE_REX_FUNC({{ imp.name }}) {
+  static uint32_t target = rex::runtime::ResolveModuleImport("{{ imp.library }}", {{ imp.ordinal }});
+  REX_CALL_INDIRECT_FUNC(target);
+}
+
+{% endfor %}{% if is_dll %}
 #ifdef _WIN32
 #define REX_MODULE_EXPORT __declspec(dllexport)
 #else

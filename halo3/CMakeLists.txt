@@ -28,7 +28,10 @@ rexglue_setup_target(halo3)
 # Built with -DREXGLUE_SWITCH_DEKO3D=ON: no Xenos emulation plugin. Until the deko3d renderer is in, the game
 # runs without graphics (GPU work is dropped) and its progress is in the log.
 if(REXGLUE_PLATFORM_SWITCH)
-    set(HALO3_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../tools/switch/icono/halo3_icono.jpg")
+    # Homebrew menu icon: the game's own title image as a 256x256 JPEG, made from your disc (assets/ is ignored):
+    #   rexglue init --project-name x --xex-path X --project-root <tmp> achievements X assets   (writes assets/icons/title.png)
+    # then scale icons/title.png to assets/icon.jpg. Without it the NRO gets libnx's default icon.
+    set(HALO3_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
     set(HALO3_ICON_ARG)
     if(EXISTS "${HALO3_ICON}")
         set(HALO3_ICON_ARG ICON "${HALO3_ICON}")

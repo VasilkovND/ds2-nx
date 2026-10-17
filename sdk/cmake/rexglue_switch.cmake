@@ -69,12 +69,15 @@ endif()
 if(NOT TARGET rexglue_switch_startup)
     if(REXGLUE_SWITCH_DEKO3D)
         set(_switch_elf_stubs)  # only Mesa needs them
+        # posix_memalign for FFmpeg: the Mesa SDK brings one in the NVK build.
+        set(_switch_dk_libc "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_dk_libc.cpp")
     else()
         set(_switch_elf_stubs "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_elf_stubs.c")
     endif()
     add_library(rexglue_switch_startup OBJECT
         "${CMAKE_CURRENT_LIST_DIR}/../src/ui/runtime_switch.cpp"
         ${_switch_elf_stubs}
+        ${_switch_dk_libc}
         "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_crash_hooks.c"
         "${CMAKE_CURRENT_LIST_DIR}/../src/ui/switch_perf.cpp"
         # FPS and resolution for the console overlays (SaltyNX) and Reverse-NX reading.
@@ -148,7 +151,10 @@ endfunction()
 # here, REXGLUE_MODULE_LIBRARY_TYPE) is linked into the title, the way the GPU
 # plugin is (gpu_plugin_loader.cpp), except that every module exports the same
 # two names:
-#   1. ld -r merges the module's objects into one relocatable object;
+#   1. ld -r merges the module's objects into one relocatable object, with
+#      --force-group-allocation: COMDAT groups (inline functions) become plain
+#      sections resolved inside the module, or the final link could keep the
+#      title's copy of a group whose symbols step 2 made local (from fc3-nx);
 #   2. objcopy makes its hidden symbols local (modules build with hidden
 #      visibility, as on the PC), so modules and title cannot clash on sub_* or
 #      helper names, and renames the two entry points after the module;
@@ -173,7 +179,8 @@ function(rexglue_switch_link_module target_name)
     file(MAKE_DIRECTORY "${_dir}")
 
     add_custom_command(OUTPUT "${_object}"
-        COMMAND "${REXGLUE_SWITCH_LD}" -r --whole-archive "$<TARGET_FILE:${target_name}>" -o "${_merged}"
+        COMMAND "${REXGLUE_SWITCH_LD}" -r --force-group-allocation
+            --whole-archive "$<TARGET_FILE:${target_name}>" --no-whole-archive -o "${_merged}"
         COMMAND "${REXGLUE_SWITCH_OBJCOPY}" --localize-hidden
             --redefine-sym "ReXModule_Register=ReXModule_Register_${_id}"
             --redefine-sym "ReXModule_GetImageInfo=ReXModule_GetImageInfo_${_id}"

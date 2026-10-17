@@ -145,9 +145,8 @@ if(REXGLUE_SWITCH_DEKO3D)
         src/nfsmw_dk_destinos.cpp
         src/nfsmw_dk_dibujos.cpp
         src/nfsmw_dk_texturas.cpp
-        src/nfsmw_dk_geometria.cpp
-        # posix_memalign for FFmpeg: the Mesa SDK brought it in the NVK build.
-        src/nfsmw_dk_libc.cpp)
+        # posix_memalign for FFmpeg is in the SDK now (src/ui/switch_dk_libc.cpp): every deko3d title needs it.
+        src/nfsmw_dk_geometria.cpp)
 endif()
 
 if(WIN32)

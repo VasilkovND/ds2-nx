@@ -31,6 +31,10 @@ using PPCFunc = void(PPCContext& ctx, uint8_t* base);
 
 namespace rex::runtime {
 PPCFunc* ResolveIndirectFunction(uint32_t guest_address);
+// The guest address of export `ordinal` of the loaded user module `library` (a guest DLL, matched
+// with or without ".dll"), or 0 with an error logged. Generated import thunks for imports between
+// guest DLLs, which no kernel export resolves, call it once and cache the result.
+uint32_t ResolveModuleImport(const char* library, uint16_t ordinal);
 }  // namespace rex::runtime
 
 //=============================================================================

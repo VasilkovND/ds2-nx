@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -71,6 +72,11 @@ struct AnalysisState {
   std::unordered_set<uint32_t> knownIndirectCalls;             ///< bctr addresses
   std::vector<uint32_t> exceptionHandlerFuncs;                 ///< Handler addresses
   std::vector<uint32_t> ehDiscoveredFuncs;                     ///< EH-discovered function addresses
+
+  /// Imports no kernel export resolves, which are imports from another guest DLL:
+  /// thunk address -> (library, ordinal). Their thunks get a body that resolves the
+  /// export at run time (rex::runtime::ResolveModuleImport).
+  std::map<uint32_t, std::pair<std::string, uint16_t>> moduleImports;
 };
 
 /**

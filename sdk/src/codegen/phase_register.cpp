@@ -487,8 +487,11 @@ VoidResult registerEntryPoints(CodegenContext& ctx) {
       }
 
       if (resolvedName.empty()) {
-        REXCODEGEN_ERROR("Cannot resolve ordinal {} from {}", ordinal, lib_name);
+        // No kernel export: an import from another guest DLL (WavesLibDLL for Halo 3's
+        // L360 and Q10). Its thunk resolves the export when the game runs.
+        REXCODEGEN_DEBUG("Import {}@{} resolved at run time", lib_name, ordinal);
         resolvedName = fmt::format("sub_{:X}", sym.address);
+        state.moduleImports[static_cast<uint32_t>(sym.address)] = {lib_name, ordinal};
         unresolvedCount++;
       }
 

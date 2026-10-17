@@ -379,3 +379,28 @@ void UserModule::Dump() {
 }
 
 }  // namespace rex::system
+
+namespace rex::runtime {
+
+uint32_t ResolveModuleImport(const char* library, uint16_t ordinal) {
+  auto* kernel = rex::system::kernel_state();
+  if (!kernel) {
+    REXSYS_ERROR("ResolveModuleImport({}@{}): no kernel", library, ordinal);
+    return 0;
+  }
+  auto module = kernel->GetModule(library, true);
+  if (!module) {
+    module = kernel->GetModule(std::string(library) + ".dll", true);
+  }
+  if (!module) {
+    REXSYS_ERROR("ResolveModuleImport({}@{}): module not loaded", library, ordinal);
+    return 0;
+  }
+  uint32_t address = module->GetProcAddressByOrdinal(ordinal);
+  if (!address) {
+    REXSYS_ERROR("ResolveModuleImport({}@{}): no such export", library, ordinal);
+  }
+  return address;
+}
+
+}  // namespace rex::runtime

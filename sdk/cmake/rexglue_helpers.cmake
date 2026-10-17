@@ -71,6 +71,16 @@ function(rexglue_apply_target_settings target_name)
             target_compile_options(${target_name} PRIVATE -msse4.1)
         endif()
     endif()
+
+    # The PPC's floating point and memory rules, for the title's targets too: the add_compile_options in
+    # sdk/CMakeLists.txt only reach the SDK's own targets, so the generated game code and the guest DLLs were built
+    # without them. Without -ffp-contract=off GCC fuses separate PPC multiplies and adds into FMA and results drift
+    # from the Xbox 360; strict aliasing is unsafe for recompiled code. (fc3-nx found this, 2026-10-06.)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target_name} PRIVATE
+            -fno-strict-aliasing
+            $<IF:$<CXX_COMPILER_ID:GNU>,-ffp-contract=off,-ffp-model=strict>)
+    endif()
 endfunction()
 
 #==========================================================
