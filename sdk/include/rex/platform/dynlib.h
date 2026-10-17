@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 
@@ -44,6 +45,18 @@ class DynamicLibrary {
  private:
   void* handle_ = nullptr;
 };
+
+#if REX_PLATFORM_SWITCH
+// A library linked into the NRO in place of a shared library (a recompiled guest DLL, see
+// rexglue_switch_link_module in rexglue_switch.cmake). Once registered, DynamicLibrary::Load
+// finds it by name and GetRawSymbol returns the addresses given here. Registration runs from
+// static constructors, before main.
+struct StaticLibrarySymbol {
+  const char* name;
+  void* address;
+};
+void RegisterStaticLibrary(const char* name, const StaticLibrarySymbol* symbols, size_t count);
+#endif
 
 namespace lib_names {
 

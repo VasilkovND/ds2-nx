@@ -8,6 +8,17 @@
 #==========================================================
 include_guard(GLOBAL)
 
+# Library type of the guest DLL module targets (generated dll_targets.cmake). An NRO
+# cannot load shared libraries: on Switch each module is linked into the title instead
+# (rexglue_switch_link_module).
+if(NOT DEFINED REXGLUE_MODULE_LIBRARY_TYPE)
+    if(REXGLUE_PLATFORM_SWITCH)
+        set(REXGLUE_MODULE_LIBRARY_TYPE STATIC)
+    else()
+        set(REXGLUE_MODULE_LIBRARY_TYPE SHARED)
+    endif()
+endif()
+
 function(_rexglue_stage_macos_vulkan_runtime target_name)
     if(TARGET Vulkan::Loader AND TARGET MoltenVK::MoltenVK)
         set(_rexglue_vulkan_loader Vulkan::Loader)
@@ -188,6 +199,13 @@ endfunction()
 #==========================================================
 function(rexglue_configure_module_target target_name)
     cmake_parse_arguments(ARG "" "HOST" "" ${ARGN})
+
+    if(REXGLUE_PLATFORM_SWITCH)
+        # Linked into the NRO: see cmake/rexglue_switch.cmake.
+        rexglue_switch_link_module(${target_name} HOST ${ARG_HOST})
+        rexglue_apply_target_settings(${target_name})
+        return()
+    endif()
 
     if(ARG_HOST)
         set_target_properties(${target_name} PROPERTIES
