@@ -13,6 +13,8 @@
 #include <rex/filesystem.h>
 #include <rex/rex_app.h>
 
+#include "halo3_gpu.h"
+
 class Halo3App : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
@@ -21,6 +23,14 @@ class Halo3App : public rex::ReXApp {
       rex::ui::WindowedAppContext& ctx) {
     return std::unique_ptr<Halo3App>(new Halo3App(ctx, "halo3",
         PPCImageConfig));
+  }
+
+  // The graphics system is the game's own (halo3_gpu.cpp): the deko3d build has no Xenos emulation plugin,
+  // and without a graphics system the game stops at its first frame, waiting for the GPU.
+  void OnPreSetup(rex::RuntimeConfig& config) override {
+    if (!config.graphics) {
+      config.graphics = halo3::gpu::CreateGraphicsSystem();
+    }
   }
 
   // The game's files, when --game_data_root is not given. Searched next to the
