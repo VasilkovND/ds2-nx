@@ -29,9 +29,9 @@ add_subdirectory("${NFSMW_TERCEROS}/SPIRV-Cross" spirv-cross EXCLUDE_FROM_ALL)
 
 add_executable(nfsmw_dksh
   nfsmw_dksh.cpp
-  "${NFSMW_RAIZ}/nfsmw/src/nfsmw_dk_glsl.cpp"
-  "${NFSMW_RAIZ}/nfsmw/src/nfsmw_dk_cache_dksh.cpp"
-  "${NFSMW_RAIZ}/nfsmw/src/nfsmw_shader_library.cpp")
-target_include_directories(nfsmw_dksh PRIVATE "${NFSMW_RAIZ}/nfsmw/src" "${NFSMW_TERCEROS}/xxHash")
+  "${NFSMW_RAIZ}/nfsmw_pal/src/nfsmw_dk_glsl.cpp"
+  "${NFSMW_RAIZ}/nfsmw_pal/src/nfsmw_dk_cache_dksh.cpp"
+  "${NFSMW_RAIZ}/nfsmw_pal/src/nfsmw_shader_library.cpp")
+target_include_directories(nfsmw_dksh PRIVATE "${NFSMW_RAIZ}/nfsmw_pal/src" "${NFSMW_TERCEROS}/xxHash")
 target_link_libraries(nfsmw_dksh PRIVATE uamlib spirv-cross-glsl spirv-cross-core)
 set_target_properties(nfsmw_dksh PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

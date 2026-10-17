@@ -61,7 +61,7 @@ Done on the PC with the real shader library of the PAL Spanish disc. Details and
   no descriptor heaps, no push constants, no 64-bit integers, and no `-fvk-invert-y` (deko3d's clip-space y points
   up, as Direct3D's does). Without the define the Vulkan library is byte-identical to the released one.
 - `nfsmw_regenerar_biblioteca_pcf.sh` with `DEKO3D=1` makes `nfsmw_shaders_dk.nfsp`: 207 containers, 152 shaders.
-- `nfsmw/src/nfsmw_dk_glsl.*` turns SPIR-V into GLSL for uam; `nfsmw_dk_cache_dksh.*` is the DKSH cache file (format 2);
+- `nfsmw_pal/src/nfsmw_dk_glsl.*` turns SPIR-V into GLSL for uam; `nfsmw_dk_cache_dksh.*` is the DKSH cache file (format 2);
   `shaders/dksh/` is the PC tool that fills it.
 - Found on the way:
   - The shared constants block is declared as 23 float4, but the 1/size pairs reach byte 488. NVK reads past the end;
@@ -76,7 +76,7 @@ Done on the PC with the real shader library of the PAL Spanish disc. Details and
 
 ## 2026-10-08: the test NRO on the console (P0.4, P0.5, P1 core)
 
-`tools/switch/dk_prueba/` exercises the core (`nfsmw/src/nfsmw_dk_nucleo.*`) without the game. Log: `out/consola/p1/dk_prueba.log`.
+`tools/switch/dk_prueba/` exercises the core (`nfsmw_pal/src/nfsmw_dk_nucleo.*`) without the game. Log: `out/consola/p1/dk_prueba.log`.
 
 - uam on the console: all 702 variants compile and are byte-identical to the PC's; mean 58 ms per variant, 40.8 s for
   all of them.
@@ -127,7 +127,7 @@ variant, the framing). The recording part is designed for deko3d:
 About half of the 19,000 Vulkan backend lines are NVK workarounds and measurements with no place here.
 
 The Xenos helpers both backends need (tiling, formats, fetch constants) moved verbatim from `nfsmw_nativo_dibujos.cpp`
-into `nfsmw/src/nfsmw_nativo_xenos.h`. The NVK configuration still compiles.
+into `nfsmw_pal/src/nfsmw_nativo_xenos.h`. The NVK configuration still compiles.
 
 ## 2026-10-09: P2a, the first frames
 
@@ -210,7 +210,7 @@ Cause: the game measures the scene's brightness for its automatic exposure by re
 on the CPU (`08B46000` and `08B4A000` in this run). The Vulkan path copies every resolve of up to 4,096 texels back
 into guest memory (`LeerResuelta`, `EscribirLecturas`). The deko3d backend did not yet, so the game read stale memory,
 took the scene for very dark, and opened the exposure all the way. The project had already written down this exact
-symptom for the emulated renderer (`nfsmw/src/nfsmw_app.h`, `readback_resolve`; `docs/native-renderer.md`).
+symptom for the emulated renderer (`nfsmw_pal/src/nfsmw_app.h`, `readback_resolve`; `docs/native-renderer.md`).
 
 Fix (2026-10-09), [HowToDeko3d.md](HowToDeko3d.md) section 5.7:
 
@@ -353,7 +353,7 @@ draw of a frame when the GPU is behind: 400 µs "per draw" in a menu with 5 draw
 - **The glow variants** (`nfsmw_resplandor_cielo`: natural by default, suave). The formulas were read from the
   release NRO's SPIR-V (the two DXC modules in it); `tools/switch/dk_resplandor.py` applies them to the deko3d
   library's own HLSL of `p_000094`, compiles them with the library's DXC (v1.8.2502, which reproduces the library's
-  SPIR-V byte for byte) and writes `nfsmw/src/nfsmw_dk_resplandor_spirv.h`. That header is derived from the game and
+  SPIR-V byte for byte) and writes `nfsmw_pal/src/nfsmw_dk_resplandor_spirv.h`. That header is derived from the game and
   gitignored, as NVK's; without it the setting keeps the game's shader.
 - Pixel shader variants are part of the DKSH cache key (the field the vertex shaders use for their interpolators).
 

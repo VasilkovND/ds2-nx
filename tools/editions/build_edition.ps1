@@ -4,7 +4,7 @@
 #
 # GCC includes the path of the source file in the profile hash of functions with internal linkage, so the profile
 # only matches fully when an edition is compiled from the same paths as the PAL build. While the build runs,
-# nfsmw_<edition> is renamed to nfsmw (and nfsmw to nfsmw_es_aparte); whatever happens, both are renamed back at the end.
+# nfsmw_<edition> is renamed to nfsmw_pal (and nfsmw_pal to nfsmw_es_aparte); whatever happens, both are renamed back at the end.
 # The default tree must have been configured and built once (tools\build.ps1): its build folder is copied the first
 # time, so the SDK is not compiled again.
 param(
@@ -14,7 +14,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$app = Join-Path $root 'nfsmw'
+$app = Join-Path $root 'nfsmw_pal'
 $aside = Join-Path $root 'nfsmw_es_aparte'
 $tree = Join-Path $root "nfsmw_$Edition"
 $log = Join-Path $root "build_${Edition}.log"
@@ -56,7 +56,7 @@ function Rename-Retry([string]$path, [string]$name) {
 $start = Get-Date
 Rename-Retry $app 'nfsmw_es_aparte'
 try {
-    Rename-Retry $tree 'nfsmw'
+    Rename-Retry $tree 'nfsmw_pal'
     try {
         # Start-Process instead of "& cmake *> log": in Windows PowerShell 5.1 each stderr line becomes an error.
         foreach ($step in @(@('configure', @('-S', "`"$app`"", '-B', "`"$app\out\sw8`"")),
@@ -72,7 +72,7 @@ try {
     }
 }
 finally {
-    Rename-Retry $aside 'nfsmw'
+    Rename-Retry $aside 'nfsmw_pal'
     Stop-Job $watchdog; Remove-Job $watchdog
     "END $(Get-Date) ($([int]((Get-Date) - $start).TotalMinutes) min)" | Out-File -Append -Encoding utf8 $log
 }

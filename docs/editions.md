@@ -43,7 +43,7 @@ different name in each edition. So the renderer and the installer find it by its
 ## Porting the hooks to another edition
 
 Every [hook](glossary.md#hook), every override (the functions declared by hand for the code generator, in
-`nfsmw/overrides.toml`) and every function boundary (where a function starts and ends) is written with the addresses
+`nfsmw_pal/overrides.toml`) and every function boundary (where a function starts and ends) is written with the addresses
 of the reference executable. In other editions the same functions are often at other addresses. The tools in
 [`tools/editions/`](../tools/editions) translate them, in this order:
 
@@ -59,7 +59,7 @@ of the reference executable. In other editions the same functions are often at o
    the code generator has run on the reference tree, so run it first:
 
    ```bash
-   python tools/editions/direcciones.py nfsmw > addresses.txt
+   python tools/editions/direcciones.py nfsmw_pal > addresses.txt
    python tools/editions/emparejar.py <PAL image> <other image> todas.tsv < addresses.txt
    ```
 
@@ -98,7 +98,7 @@ of the reference executable. In other editions the same functions are often at o
 7. **Build from the reference paths.** In a GCC profile, the identifier of a local function (one that only exists
    inside one file) includes the path of its source file. So the edition tree must be built from the same paths as
    the reference. The build script, `tools/editions/build_edition.ps1`, swaps the edition tree into the place of
-   `nfsmw/` for the duration of the build, and swaps it back at the end:
+   `nfsmw_pal/` for the duration of the build, and swaps it back at the end:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File tools\editions\build_edition.ps1 -Edition usa

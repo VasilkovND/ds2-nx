@@ -1,5 +1,5 @@
 # Addresses that must not be declared as functions, even if they are gaps.
-# tools/huecos.py skips them when generating nfsmw/huecos.toml.
+# tools/huecos.py skips them when generating nfsmw_pal/huecos.toml.
 #
 # "not in any code region" -> "has no blocks - generating stub"
 #   They are data blocks embedded in .text. Declaring them produces empty functions

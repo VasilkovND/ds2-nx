@@ -50,7 +50,7 @@ non_volatile_as_local = true
 # The carry/overflow register (XER, 172,403 uses in the game code: every comparison reads it)
 # and the count register (CTR, 32,637) as local variables. Every function uses both only
 # internally: none receives them from its caller. None of our hooks read them (verified: 0 uses
-# of ctx.xer / ctx.ctr in nfsmw/src).
+# of ctx.xer / ctx.ctr in nfsmw_pal/src).
 # non_argument_as_local is not enabled: it would localize r12, and __savevmx_N receives it as a base.
 # skip_lr is not enabled: our hooks read ctx.lr 21 times.
 xer_as_local = true

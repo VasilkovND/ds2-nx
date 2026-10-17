@@ -99,7 +99,7 @@ There are two ways:
 1. Rebuild and install it with `build_mesa_msys2.sh`, from an MSYS2 MINGW64 window.
 2. Copy `libvulkan.a` (the shader compiler, NAK, is inside it), `libnvk.a` and `libnak_rs.a` to the SDK folder the app
    uses.
-3. Delete `nfsmw/out/sw8/nfsmw` and `nfsmw/out/sw8/nfsmw.nro` before building the app. Otherwise the build does not notice
+3. Delete `nfsmw_pal/out/sw8/nfsmw` and `nfsmw_pal/out/sw8/nfsmw.nro` before building the app. Otherwise the build does not notice
    that the driver changed, and the NRO keeps the old one.
 4. If you changed the shader compiler (NAK), raise the revision number in `nvk_shader.c`. On the Switch that number is
    what tells old compiled shaders from new ones: without it, the game would keep using shaders compiled with the old

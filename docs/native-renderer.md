@@ -7,7 +7,7 @@
 - So this port draws the game its own way. The game still believes it is talking to an Xbox 360 GPU; the port reads
   the game's GPU commands and draws the same frame with [Vulkan](glossary.md#vulkan).
 - This page explains why the imitation was replaced, how the new renderer works, and what made it fast.
-- The code is in `nfsmw/src/nfsmw_nativo_*` ("nativo" means native).
+- The code is in `nfsmw_pal/src/nfsmw_nativo_*` ("nativo" means native).
 
 ## Why the imitated GPU was replaced
 

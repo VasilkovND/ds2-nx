@@ -2,7 +2,7 @@
 # Runs the code generator on one game folder (or edition tree) and the steps the build depends on.
 #
 #   REXGLUE=sdk/out/linux-arm64/rexglue tools/codegen.sh halo3
-#   REXGLUE=out/host/rexglue tools/codegen.sh nfsmw
+#   REXGLUE=out/host/rexglue tools/codegen.sh nfsmw_pal
 #   REXGLUE=out/host/rexglue tools/codegen.sh nfsmw_usa nfsmw_usa/enganchadas.txt nfsmw_usa/tabla.tsv
 #
 # The second and third arguments are for the trees made by tools/editions/crear_arbol.py: the list of hooked

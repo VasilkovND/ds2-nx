@@ -21,7 +21,7 @@ import re
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GEN = os.path.join(RAIZ, 'nfsmw', 'generated', 'default')
+GEN = os.path.join(RAIZ, 'nfsmw_pal', 'generated', 'default')
 
 
 def fuentes(juego):

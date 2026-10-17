@@ -30,7 +30,7 @@ class Halo3App : public rex::ReXApp {
   //   2. a game_root/ folder with the extracted disc
   //   3. an .iso, the first in alphabetical order
   // Left empty if none is found: the SDK then says what is missing. Runs before
-  // the config file is read, as in nfsmw (see nfsmw/src/nfsmw_app.h).
+  // the config file is read, as in nfsmw (see nfsmw_pal/src/nfsmw_app.h).
   void OnConfigurePaths(rex::PathConfig& paths) override {
     if (!paths.game_data_root.empty()) {
       return;

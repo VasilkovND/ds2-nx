@@ -11,7 +11,7 @@ frames are drawn by a native renderer.
 
 | Game | Folder | Status |
 | --- | --- | --- |
-| Need for Speed: Most Wanted (2005) | [`nfsmw/`](nfsmw) | Playable, about 30 FPS ([details](README.nfsmw.md)) |
+| Need for Speed: Most Wanted (2005) | [`nfsmw_pal/`](nfsmw_pal) | Playable, about 30 FPS ([details](README.nfsmw.md)). PAL Spanish; other editions (`nfsmw_usa/`, ...) are generated from it ([editions](docs/editions.md)) |
 | Halo 3 | [`halo3/`](halo3) | In progress, not playable yet |
 
 Every game is its own folder with its own NRO, and they all build on one shared SDK. A fix in `sdk/` reaches every

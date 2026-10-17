@@ -90,7 +90,7 @@ REX_EXTERN(__imp__sub_82448E80);  // la original
 REX_EXTERN(sub_8259BDC0);         // SetPixelShader through its hook (nfsmw_d3d_trace.cpp), like the original
 // Releasing the shader (8259_B9B8) and setting it (8259_C150): the originals, called directly, as the
 // generated code calls them. The name is assembled from parts on purpose: tools/llamadas_directas.py treats
-// any address that appears whole in nfsmw/src as hooked, and its calls from the rest of the game must remain
+// any address that appears whole in nfsmw_pal/src as hooked, and its calls from the rest of the game must remain
 // direct (__imp__, inlinable).
 #define NFSMW_PASADA_UNIR_(a, b) a##b
 #define NFSMW_PASADA_LIBERAR NFSMW_PASADA_UNIR_(__imp__sub_8259, B9B8)

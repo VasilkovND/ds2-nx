@@ -64,7 +64,7 @@ of them, `__restgprlr_29` and `__savegprlr_29`.
 
 1. **Hooks that read their caller's registers from `ctx`.** A hook at the start of a game function that reads, for
    example, `ctx.r31` of the function that called it, now reads an old value. Mark those functions with
-   `share_registers` in `nfsmw/overrides.toml`: then their callers write the variables back into `ctx` before calling
+   `share_registers` in `nfsmw_pal/overrides.toml`: then their callers write the variables back into `ctx` before calling
    them.
 2. **Functions split in pieces.** The translator splits some game functions into pieces, and the main piece jumps into
    another one (with `b`, `bctr` or a jump table) with r14-r31, `cr`, `ctr` or `xer` already set. With variables, the
@@ -153,7 +153,7 @@ programs. The other edition is then built from the same folder paths as the main
 
 ## Function ordering
 
-`nfsmw/orden_funciones.ld` ("function order") lists the functions that run most, taken from profiles of the game. It is
+`nfsmw_pal/orden_funciones.ld` ("function order") lists the functions that run most, taken from profiles of the game. It is
 passed to the linker, which puts them at the start of the program's code (`.text`), close together.
 
 **The trap:** the linker places what this file lists **before** everything in its own script, including the start-up

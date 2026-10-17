@@ -13,8 +13,8 @@ In the order of [docs/building.md](../docs/building.md):
 |---|---|
 | `fetch_thirdparty.py` | Fetches the third-party sources of the SDK into `sdk/thirdparty`. The repository only keeps the files this port changed. |
 | `fase1_extraer.py` ("phase 1: extract") | Extracts the Xbox 360 ISO into `assets/game_root` and prints the [XEX](../docs/glossary.md#xex) information. |
-| `codegen.sh` | Runs the code generator (`rexglue codegen`, which translates the game to C++) on an edition tree (`nfsmw/`, or the `nfsmw_<edition>` copy of another [edition](../docs/glossary.md#edition)), then `llamadas_directas.py` and `copia_literal.py`. |
-| `build.ps1` | Configures and builds the [NRO](../docs/glossary.md#nro) of the default tree (`nfsmw/`). |
+| `codegen.sh` | Runs the code generator (`rexglue codegen`, which translates the game to C++) on an edition tree (`nfsmw_pal/`, or the `nfsmw_<edition>` copy of another [edition](../docs/glossary.md#edition)), then `llamadas_directas.py` and `copia_literal.py`. |
+| `build.ps1` | Configures and builds the [NRO](../docs/glossary.md#nro) of the default tree (`nfsmw_pal/`). |
 
 ## After every code generation
 
@@ -30,9 +30,9 @@ code generator another way, run them afterwards, in this order.
 
 | File | What it does |
 |---|---|
-| `huecos.py`, `huecos_excluir.txt` ("gaps", "gaps to exclude") | Finds code the code generator's analysis left without a function and writes it to `nfsmw/huecos.toml`. `huecos_excluir.txt` lists the gaps to leave out. |
+| `huecos.py`, `huecos_excluir.txt` ("gaps", "gaps to exclude") | Finds code the code generator's analysis left without a function and writes it to `nfsmw_pal/huecos.toml`. `huecos_excluir.txt` lists the gaps to leave out. |
 | `lee_antes.py` ("read before") | Lists, per recompiled function, the non-volatile registers (the ones a function must keep unchanged for its caller) it reads before writing them. See [docs/toolchain.md](../docs/toolchain.md#registers-as-c-locals) for why this matters. |
-| `calientes.py` ("hot ones") | Resolves the samples of the console profiler (`rex_perfil.log`) to functions, hottest first. Its output is the input for `nfsmw/orden_funciones.ld`, the list of functions placed first in the program ([function ordering](../docs/glossary.md#function-ordering)). |
+| `calientes.py` ("hot ones") | Resolves the samples of the console profiler (`rex_perfil.log`) to functions, hottest first. Its output is the input for `nfsmw_pal/orden_funciones.ld`, the list of functions placed first in the program ([function ordering](../docs/glossary.md#function-ordering)). |
 | `comprobar_clave_textura.py` ("check texture key") | Checks in the built ELF (the program before it is packed as an NRO) that the texture key is written before it is hashed. It catches an LTO/PGO aliasing pitfall (see [docs/toolchain.md](../docs/toolchain.md#an-lto-and-pgo-pitfall-strict-aliasing-in-xxhash)). |
 
 ## Folders

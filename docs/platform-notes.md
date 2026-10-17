@@ -145,7 +145,7 @@ mapped (see above). The code is in `sdk/src/core/exception_handler_switch.cpp`.
   100 % while doing nothing. The fix was to [hook](glossary.md#hook) the polling functions: the hook sleeps for a
   limited time, or until another thread wakes it up, and then calls the original function so the game's own checks
   still run. On the PC that brought the two threads down to 25 % and 17 %. The hooks are in
-  `nfsmw/src/nfsmw_espera_anillo.cpp` and `nfsmw/src/nfsmw_espera_fotograma.cpp`.
+  `nfsmw_pal/src/nfsmw_espera_anillo.cpp` and `nfsmw_pal/src/nfsmw_espera_fotograma.cpp`.
 - **When a hook reads guest memory, apply the same address offset as the recompiled code.** On the PC build,
   addresses at or above 0xE0000000 are shifted by 0x1000.
 
@@ -193,7 +193,7 @@ how that driver behaves on the console:
   to images with `SAMPLED | TRANSFER_DST` usage (read by shaders and filled by copies), like this game's textures. So
   the renderer takes its textures from large shared blocks instead (*sub-allocation*). With 32 MB blocks the cost
   fell to 0.75 ms per texture, and a burst of 15 new textures in one frame went from 28.5 to 11.3 ms. The code is in
-  `nfsmw/src/nfsmw_nativo_texturas_pool.cpp`. Two facts help: `requiresDedicatedAllocation` is never true on this
+  `nfsmw_pal/src/nfsmw_nativo_texturas_pool.cpp`. Two facts help: `requiresDedicatedAllocation` is never true on this
   driver, and image sizes are already rounded to 64 KiB for sub-allocators.
 - **The number of GPU allocations is limited, not their size.** libnx gives nvdrv (the system's GPU driver service)
   8 MB of transfer memory (`__nx_nv_transfermem_size`) to keep track of allocations. That is enough for roughly

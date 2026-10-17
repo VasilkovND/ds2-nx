@@ -1,11 +1,11 @@
-# Builds the NRO of the default tree (nfsmw/, PAL Spanish) for the Switch: nfsmw/out/sw8/nfsmw.nro.
+# Builds the NRO of the default tree (nfsmw_pal/, PAL Spanish) for the Switch: nfsmw_pal/out/sw8/nfsmw.nro.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\build.ps1 -MesaSdk C:\mesa-sdk\opt\devkitpro\portlibs\switch
 #
 # Needs devkitPro, CMake 3.25+, Ninja, the generated code (tools/codegen.sh) and the Mesa SDK (mesa/README.md).
-# The first run configures nfsmw/out/sw8; later runs only build. CMake runs through Start-Process: in Windows
+# The first run configures nfsmw_pal/out/sw8; later runs only build. CMake runs through Start-Process: in Windows
 # PowerShell 5.1 every line a native program writes to stderr (a plain CMake warning) becomes an error that stops the
-# script. The output goes to nfsmw/out/sw8/configure.log, build.log and their .err files.
+# script. The output goes to nfsmw_pal/out/sw8/configure.log, build.log and their .err files.
 param(
     [Parameter(Mandatory = $true)][string]$MesaSdk,
     [ValidateSet('usar', 'generar', '')][string]$Pgo = 'usar',
@@ -14,7 +14,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = (Split-Path -Parent $PSScriptRoot).Replace('\', '/')
-$app = "$root/nfsmw"
+$app = "$root/nfsmw_pal"
 $out = "$app/out/sw8"
 $MesaSdk = $MesaSdk.Replace('\', '/')
 

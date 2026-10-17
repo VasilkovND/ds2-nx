@@ -3,7 +3,7 @@
 #
 #  Included from halo3_manifest.toml via includes = ["overrides.toml"].
 #  Included files use the flat schema (sections at the root). See
-#  nfsmw/overrides.toml for every field, explained.
+#  nfsmw_pal/overrides.toml for every field, explained.
 #
 #  Loose keys (cr_as_local and the like) must go above the first [table]:
 #  in TOML a loose key belongs to the last table opened.

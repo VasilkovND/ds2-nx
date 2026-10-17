@@ -268,7 +268,7 @@ the game for the code generator. The whole process is in [docs/building.md](docs
 
 | Folder | Contents |
 | --- | --- |
-| `nfsmw/` | The game: hooks, native renderer, audio, video, configuration, CMake project |
+| `nfsmw_pal/` | The game: hooks, native renderer, audio, video, configuration, CMake project |
 | `sdk/` | ReXGlue SDK with the Horizon layer and the code generator changes |
 | `shaders/` | XenosRecomp with this port's changes, the library tools and their WebAssembly builds |
 | `mesa/` | The patch for mesa-switch |

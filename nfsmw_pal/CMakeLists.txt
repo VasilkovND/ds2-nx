@@ -373,7 +373,7 @@ endif()
 #  there (it contains the executable with the game code) keeps it out of git
 #  automatically. To put it somewhere else:  -D NFSMW_DIST_DIR=...
 #
-#  Do not confuse it with nfsmw/out/build/win-amd64-release, which is where
+#  Do not confuse it with nfsmw_pal/out/build/win-amd64-release, which is where
 #  CMake builds. This one is the assembled folder, ready to be copied.
 #
 #  What it does not do, and this matters:

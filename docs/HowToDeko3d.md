@@ -43,15 +43,15 @@ console run and each bug found are in [deko3d-devlog.md](deko3d-devlog.md). The 
 |---|---|---|
 | deko3d mode of the translator and the HLSL helpers (3.1) | `shaders/XenosRecomp/shader_recompiler.cpp` (`printDeko3dConstants`), `shaders/shader_common.h` (`NFSMW_DEKO3D`) | Done. The same HLSL gives both libraries: DXC with `-DNFSMW_DEKO3D` and without `-fvk-invert-y` for deko3d. Without the define the Vulkan library is **byte-identical** to the released one (SHA-256 `a27aea23…`, checked with the installer's own WASM DXC and packer) |
 | deko3d library | `shaders/nfsmw_regenerar_biblioteca_pcf.sh` with `DEKO3D=1` → `nfsmw_shaders_dk.nfsp` | Done: 207 containers, 152 shaders, all compile. Only the `Shader` and `ImageQuery` capabilities are left (no Int64, no buffer addresses, no descriptor indexing) |
-| SPIR-V → GLSL for uam | `nfsmw/src/nfsmw_dk_glsl.*` | Done, for the PC and the Switch |
-| DKSH cache file | `nfsmw/src/nfsmw_dk_cache_dksh.*` | Done (format version 2) |
+| SPIR-V → GLSL for uam | `nfsmw_pal/src/nfsmw_dk_glsl.*` | Done, for the PC and the Switch |
+| DKSH cache file | `nfsmw_pal/src/nfsmw_dk_cache_dksh.*` | Done (format version 2) |
 | PC tool | `shaders/dksh/` (`nfsmw_dksh`) | Done: library (+ an optional pipeline list from the console) → DKSH cache and report |
 | uam and SPIRV-Cross | `python tools/fetch_thirdparty.py --deko3d` → `sdk/thirdparty/uam` (SwitchWakerHD's copy at `2d147aa`, the 7 patches), `sdk/thirdparty/SPIRV-Cross` (`vulkan-sdk-1.4.363.0`) | Fetched, not committed, like the rest of `sdk/thirdparty` |
-| Core: device, queue, work slots, upload ring, command memory, image heap with the tile fix, DKSH loading, descriptors, swapchain | `nfsmw/src/nfsmw_dk_nucleo.*` | Runs on the console (test NRO and the game) |
+| Core: device, queue, work slots, upload ring, command memory, image heap with the tile fix, DKSH loading, descriptors, swapchain | `nfsmw_pal/src/nfsmw_dk_nucleo.*` | Runs on the console (test NRO and the game) |
 | Test NRO | `tools/switch/dk_prueba/` (`build.sh`, `DEPURAR=ON` for libdeko3dd) | Runs on the console (results below) |
 | SDK and toolchain without Vulkan or Mesa | `-DREXGLUE_SWITCH_DEKO3D=ON`: `sdk/CMakeLists.txt`, `sdk/cmake/rexglue_switch.cmake` (`rex::switch_gpu` = deko3d), `tools/switch/cmake/switch-devkitA64.cmake` | Done |
-| The game on deko3d, P1: provider, presenter (guest output mailbox, swapchain on the window's NWindow, letterboxed bilinear copy), ImGui drawer (Debug Menu, F3), compile worker (uam, 8 MB stack, 0x3B) | `nfsmw/src/nfsmw_dk_presentador.*`, `nfsmw_dk_compilador.*`; `nfsmw_nativo_sistema.cpp` under `NFSMW_DEKO3D`; `tools/switch/build_deko3d.sh` | Runs on the console: the game boots, the Debug Menu and sound work. The NVK configuration still compiles every app file |
-| The renderer backend (`DestinosNativos`) on deko3d, P2 | `nfsmw/src/nfsmw_dk_render.h`, `nfsmw_dk_destinos.cpp`, `nfsmw_dk_dibujos.cpp`, `nfsmw_dk_texturas.cpp`; shared Xenos helpers in `nfsmw_nativo_xenos.h` | Draws videos, menus, title and races (0 rejected draws), with the NVK path's race features: cubemaps from resolved faces (car reflections, rear-view mirror), the shadow minimum, the deferred sky, early depth, resolves without copies, exposure read-back. Not done: occlusion queries, `nfsmw_tratamiento_visual` other than `original` |
+| The game on deko3d, P1: provider, presenter (guest output mailbox, swapchain on the window's NWindow, letterboxed bilinear copy), ImGui drawer (Debug Menu, F3), compile worker (uam, 8 MB stack, 0x3B) | `nfsmw_pal/src/nfsmw_dk_presentador.*`, `nfsmw_dk_compilador.*`; `nfsmw_nativo_sistema.cpp` under `NFSMW_DEKO3D`; `tools/switch/build_deko3d.sh` | Runs on the console: the game boots, the Debug Menu and sound work. The NVK configuration still compiles every app file |
+| The renderer backend (`DestinosNativos`) on deko3d, P2 | `nfsmw_pal/src/nfsmw_dk_render.h`, `nfsmw_dk_destinos.cpp`, `nfsmw_dk_dibujos.cpp`, `nfsmw_dk_texturas.cpp`; shared Xenos helpers in `nfsmw_nativo_xenos.h` | Draws videos, menus, title and races (0 rejected draws), with the NVK path's race features: cubemaps from resolved faces (car reflections, rear-view mirror), the shadow minimum, the deferred sky, early depth, resolves without copies, exposure read-back. Not done: occlusion queries, `nfsmw_tratamiento_visual` other than `original` |
 | P4 (performance) | `nfsmw_dk_geometria.*` and the files above | Under way, one batch per console run (devlog): copies on the 3D engine, depth compression, useful-area and deferred clears, constants by differences, vertices and indices kept across frames, sampled texture checks, a per-draw GPU profile |
 
 P0 results on the PC (`nfsmw_dksh`, default variants: all 8 alpha-test functions, cheap PCF, shadow minimum, no blur
@@ -130,9 +130,9 @@ P0.4).
 
 ## 2. Vulkan concepts and their deko3d replacements
 
-The Vulkan calls live in `nfsmw/src/nfsmw_nativo_dibujos.cpp` (133 call sites), `nfsmw/src/nfsmw_nativo_destinos.cpp`
-(118), `nfsmw/src/nfsmw_nativo_sistema.cpp` (19: device and presenter), `nfsmw/src/nfsmw_nativo_texturas_pool.cpp`,
-`nfsmw/src/nfsmw_shader_vulkan.cpp`, `nfsmw/src/nfsmw_video_vulkan.cpp`/`nfsmw_video_present.cpp`, and the SDK's
+The Vulkan calls live in `nfsmw_pal/src/nfsmw_nativo_dibujos.cpp` (133 call sites), `nfsmw_pal/src/nfsmw_nativo_destinos.cpp`
+(118), `nfsmw_pal/src/nfsmw_nativo_sistema.cpp` (19: device and presenter), `nfsmw_pal/src/nfsmw_nativo_texturas_pool.cpp`,
+`nfsmw_pal/src/nfsmw_shader_vulkan.cpp`, `nfsmw_pal/src/nfsmw_video_vulkan.cpp`/`nfsmw_video_present.cpp`, and the SDK's
 `sdk/src/ui/vulkan/` (provider, presenter, immediate drawer, which draws the Debug Menu).
 
 | Vulkan (as used here) | deko3d |
@@ -193,7 +193,7 @@ The HLSL needs these changes, behind the define, so that the Vulkan library stay
    `-fvk-invert-y` (`shaders/XenosRecomp/dxc_compiler.cpp:47`), or keep it and use a `NegativeY` viewport swizzle.
    Check it with a test pattern in P1.
 6. **Use UBO layouts that std140 accepts.** `-fvk-use-dx-layout` with `float4` arrays already fits. The video
-   shaders ask for `scalarBlockLayout` (`nfsmw/src/nfsmw_video_present.cpp:26`): check what they read.
+   shaders ask for `scalarBlockLayout` (`nfsmw_pal/src/nfsmw_video_present.cpp:26`): check what they read.
 
 ### 3.2 uam: reuse WWHD's vendored copy
 

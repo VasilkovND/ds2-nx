@@ -7,7 +7,7 @@ repository derived from it.
 
 | Project | Used for | License |
 |---|---|---|
-| [NFSMW Recompiled](https://github.com/madelrandel-blip/NFSMW-Recompiled) by madelrandel-blip | The recompilation project this port started from: `nfsmw/` (hooks, configuration, codegen setup) and tools | GPL-3.0 |
+| [NFSMW Recompiled](https://github.com/madelrandel-blip/NFSMW-Recompiled) by madelrandel-blip | The recompilation project this port started from: `nfsmw_pal/` (hooks, configuration, codegen setup) and tools | GPL-3.0 |
 | [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) by Tom Clay, with portions from [Xenia](https://xenia.jp) (Ben Vanik and the Xenia contributors) | `sdk/`: code generator, Xbox 360 kernel and runtime, GPU command processing | BSD-3-Clause (`sdk/LICENSE`) |
 | [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) by hedge-dev and contributors | `shaders/XenosRecomp`: Xenos microcode to HLSL translator | MIT (`shaders/LICENSE.md`) |
 | [mesa-switch](https://github.com/danfromtico/mesa-switch) by danfromtico, on top of [Mesa](https://mesa3d.org) | The Vulkan driver (NVK) and shader compiler (NAK) for Horizon, linked into the NRO; `mesa/` holds the changes | MIT (Mesa's licenses per file) |
