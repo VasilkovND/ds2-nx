@@ -1,13 +1,13 @@
-// nfsmw - deko3d renderer: SPIR-V of the deko3d library to GLSL for uam. See nfsmw_dk_glsl.h.
+// rex::deko3d (from nfsmw-nx): SPIR-V of the deko3d library to GLSL for uam. See rex/ui/deko3d/glsl.h.
 
-#include "nfsmw_dk_glsl.h"
+#include <rex/ui/deko3d/glsl.h>
 
 #include <spirv_glsl.hpp>
 
 #include <cctype>
 #include <exception>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 namespace {
 
 // What the deko3d SPIR-V must not ask for: uam's front end (Mesa 19's GLSL) has none of it. Each would mean that
@@ -292,4 +292,4 @@ GlslDeko SpirvAGlsl(std::span<const uint32_t> espirv, uint32_t especializacion, 
   return r;
 }
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d

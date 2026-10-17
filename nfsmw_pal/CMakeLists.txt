@@ -137,11 +137,8 @@ if(REXGLUE_SWITCH_DEKO3D)
     list(APPEND NFSMW_SOURCES
         # Device, queue, memory and swapchain; the SPIR-V to GLSL to DKSH path and its cache; the compile worker;
         # the SDK's provider, presenter and ImGui drawer; the renderer backend.
-        src/nfsmw_dk_nucleo.cpp
-        src/nfsmw_dk_glsl.cpp
-        src/nfsmw_dk_cache_dksh.cpp
-        src/nfsmw_dk_compilador.cpp
-        src/nfsmw_dk_presentador.cpp
+        # (the core, the GLSL/DKSH path, the compile worker and the presenter are in the SDK now:
+        # rexglue_switch_add_deko3d below)
         src/nfsmw_dk_destinos.cpp
         src/nfsmw_dk_dibujos.cpp
         src/nfsmw_dk_texturas.cpp
@@ -190,25 +187,8 @@ else()
 endif()
 
 if(REXGLUE_SWITCH_DEKO3D)
-    # uam (GLSL to DKSH) and SPIRV-Cross, fetched with tools/fetch_thirdparty.py --deko3d.
-    foreach(fuente SPIRV-Cross/spirv_glsl.cpp uam/uam_api.h)
-        if(NOT EXISTS "${REXSDK_DIR}/thirdparty/${fuente}")
-            message(FATAL_ERROR "Missing sdk/thirdparty/${fuente}: run python tools/fetch_thirdparty.py --deko3d")
-        endif()
-    endforeach()
-    enable_language(C)  # uam has C sources (Mesa's preprocessor); this project only declares CXX
-    add_subdirectory("${REXSDK_DIR}/thirdparty/uam" uam EXCLUDE_FROM_ALL)
-    set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_HLSL OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "" FORCE)
-    set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
-    add_subdirectory("${REXSDK_DIR}/thirdparty/SPIRV-Cross" spirv-cross EXCLUDE_FROM_ALL)
-    target_link_libraries(nfsmw PRIVATE uamlib spirv-cross-glsl spirv-cross-core)
+    # The shared deko3d layer (sdk/src/ui/deko3d), with uam, SPIRV-Cross and xxHash.
+    rexglue_switch_add_deko3d(nfsmw)
     target_compile_definitions(nfsmw PRIVATE NFSMW_DEKO3D=1)
 endif()
 

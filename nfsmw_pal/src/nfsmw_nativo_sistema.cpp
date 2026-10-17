@@ -56,7 +56,7 @@
 // The deko3d build (docs/HowToDeko3d.md): the same ring, PM4 reading and shader identification, with the deko3d
 // provider, presenter and renderer backend instead of the Vulkan ones.
 #include "nfsmw_dk_destinos.h"
-#include "nfsmw_dk_presentador.h"
+#include <rex/ui/deko3d/presentador.h>
 #else
 #include <rex/ui/vulkan/device.h>
 #include <rex/ui/vulkan/presenter.h>

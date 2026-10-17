@@ -1,4 +1,4 @@
-// nfsmw - deko3d renderer, the core: device, queue, memory, work slots, shader code and swapchain
+// rex::deko3d (from nfsmw-nx): the core: device, queue, memory, work slots, shader code and swapchain
 // (docs/HowToDeko3d.md, sections 2, 5.8-5.10 and 6). Switch only.
 //
 // What the rest of the renderer records its GPU work with. It knows nothing about the game: the test NRO
@@ -32,7 +32,7 @@
 
 struct NWindow;
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 // ---- Log
 // The app sends the lines to its log (REXLOG); the test NRO to a file on the SD card. Without a function they go
@@ -306,4 +306,9 @@ class Presentacion {
 // 1920x1080 docked, 1280x720 handheld (appletGetOperationMode). The game recreates the swapchain when it changes.
 void TamanoDePantalla(uint32_t& ancho, uint32_t& alto);
 
+}  // namespace rex::deko3d
+
+// NFS's renderer code (nfsmw_pal/src/nfsmw_dk_*) still names these nfsmw::deko::..., until it is renamed.
+namespace nfsmw::deko {
+using namespace ::rex::deko3d;
 }  // namespace nfsmw::deko

@@ -1,4 +1,4 @@
-// nfsmw - deko3d renderer: the SPIR-V of the deko3d shader library as GLSL that uam (devkitPro's deko3d shader
+// rex::deko3d (from nfsmw-nx): the SPIR-V of the deko3d shader library as GLSL that uam (devkitPro's deko3d shader
 // compiler) accepts. docs/HowToDeko3d.md, section 3.
 //
 // The deko3d library is the same HLSL as the Vulkan one compiled with -DNFSMW_DEKO3D (shader_common.h): no
@@ -17,10 +17,10 @@
 #include <string>
 #include <vector>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 // Raise it when the GLSL this writes changes for the same input: it is part of the DKSH cache id
-// (nfsmw_dk_cache_dksh.h), and a cache made with another revision must not be loaded.
+// (rex/ui/deko3d/cache_dksh.h), and a cache made with another revision must not be loaded.
 inline constexpr uint32_t kRevisionGlsl = 1;
 
 // deko3d's limits per stage (uam's README): UBO and texture bindings.
@@ -66,4 +66,9 @@ GlslDeko SpirvAGlsl(std::span<const uint32_t> espirv, uint32_t especializacion, 
  */
 uint32_t MascaraEspecializacion(std::span<const uint32_t> espirv);
 
+}  // namespace rex::deko3d
+
+// NFS's renderer code (nfsmw_pal/src/nfsmw_dk_*) still names these nfsmw::deko::..., until it is renamed.
+namespace nfsmw::deko {
+using namespace ::rex::deko3d;
 }  // namespace nfsmw::deko

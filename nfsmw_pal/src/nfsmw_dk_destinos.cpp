@@ -19,8 +19,8 @@
 #include <thread>
 
 #include "nfsmw_ajustes_graficos.h"
-#include "nfsmw_dk_compilador.h"
-#include "nfsmw_dk_presentador.h"
+#include <rex/ui/deko3d/compilador.h>
+#include <rex/ui/deko3d/presentador.h>
 #include "nfsmw_dk_render.h"
 #include "nfsmw_nativo_xenos.h"
 
@@ -1769,7 +1769,7 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
   const uint32_t ranura = VistaDe(origen, 0x688 /* RGBA */, 0x688);
   const uint32_t ranura_tabla = VistaDe(rampa_tabla_, 0x688, 0x688);
   DkCmdBuf cmd = nucleo_.comandos();
-  // The presenter may still be sampling this image from its previous paint (nfsmw_dk_presentador.h).
+  // The presenter may still be sampling this image from its previous paint (rex/ui/deko3d/presentador.h).
   dkCmdBufBarrier(cmd, DkBarrier_Fragments, DkInvalidateFlags_Image);
   const DkImageView vista = VistaCompleta(salida);
   dkCmdBufBindRenderTarget(cmd, &vista, nullptr);

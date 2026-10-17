@@ -8,7 +8,7 @@
 // textures are bound as handles, and the three constant blocks are uniform buffers in the upload ring.
 //
 // Shaders: one DKSH per (library shader, specialization value masked to the bits it reads, and for a vertex shader
-// the interpolators its pixel shader reads), from the DKSH cache (nfsmw_dk_cache_dksh.h). A vertex shader variant
+// the interpolators its pixel shader reads), from the DKSH cache (rex/ui/deko3d/cache_dksh.h). A vertex shader variant
 // that is not there yet draws with the one that keeps every interpolator, while the exact one compiles on the
 // worker; anything else missing is compiled on the spot and added to the cache, which is saved on the SD card.
 
@@ -25,8 +25,8 @@
 #include <cstring>
 
 #include "nfsmw_ajustes_graficos.h"
-#include "nfsmw_dk_compilador.h"
-#include "nfsmw_dk_glsl.h"
+#include <rex/ui/deko3d/compilador.h>
+#include <rex/ui/deko3d/glsl.h>
 #include "nfsmw_dk_render.h"
 #include "nfsmw_nativo_shaders.h"
 #include "nfsmw_nativo_xenos.h"
@@ -1568,7 +1568,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
   if (!vs || !fs) {
     return Rechazar(60, "shader sin DKSH");
   }
-  nucleo_.InvalidarCodigoSiHaceFalta();  // code copied in the middle of a frame (nfsmw_dk_nucleo.h)
+  nucleo_.InvalidarCodigoSiHaceFalta();  // code copied in the middle of a frame (rex/ui/deko3d/nucleo.h)
   if (vs != g_.vs || fs != g_.ps) {
     const DkShader* shaders[2] = {vs, fs};
     dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);

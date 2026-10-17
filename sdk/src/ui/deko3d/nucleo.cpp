@@ -1,6 +1,6 @@
-// nfsmw - deko3d renderer, the core. See nfsmw_dk_nucleo.h.
+// rex::deko3d (from nfsmw-nx): the core. See rex/ui/deko3d/nucleo.h.
 
-#include "nfsmw_dk_nucleo.h"
+#include <rex/ui/deko3d/nucleo.h>
 
 #include <switch.h>
 
@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 namespace {
 
 FuncionRegistro g_escribir = nullptr;
@@ -647,4 +647,4 @@ void TamanoDePantalla(uint32_t& ancho, uint32_t& alto) {
   alto = sobremesa ? 1080 : 720;
 }
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d

@@ -26,6 +26,13 @@ endif()
 
 rexglue_setup_target(halo3)
 
+# deko3d (the Switch build): the SDK's shared presentation layer (sdk/src/ui/deko3d: device, swapchain, presenter,
+# ImGui overlay, the uam compile worker). The game's frames come with the renderer.
+if(REXGLUE_SWITCH_DEKO3D)
+    rexglue_switch_add_deko3d(halo3)
+    target_compile_definitions(halo3 PRIVATE HALO3_DEKO3D=1)
+endif()
+
 # Nintendo Switch: halo3.nro next to the ELF. On the SD card it goes in sdmc:/halo3-nx/ as halo3-nx.nro, beside
 # the extracted disc (default.xex and its folders); src/halo3_app.h finds the game there.
 # Built with -DREXGLUE_SWITCH_DEKO3D=ON: no Xenos emulation plugin. src/halo3_gpu.cpp stands in for the GPU;

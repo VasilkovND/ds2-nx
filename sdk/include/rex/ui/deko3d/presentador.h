@@ -1,4 +1,4 @@
-// nfsmw - deko3d renderer: the SDK's presentation interfaces on deko3d (docs/HowToDeko3d.md, P1). Switch only.
+// rex::deko3d (from nfsmw-nx): the SDK's presentation interfaces on deko3d (docs/HowToDeko3d.md, P1). Switch only.
 //
 // ReXApp only talks to rex::ui::GraphicsProvider, Presenter and ImmediateDrawer, so the deko3d build brings its own:
 //   ProveedorDeko3d     owns the device and its queue (Dispositivo) and the shader compile worker (Compilador);
@@ -24,10 +24,10 @@
 #include <memory>
 #include <mutex>
 
-#include "nfsmw_dk_compilador.h"
-#include "nfsmw_dk_nucleo.h"
+#include <rex/ui/deko3d/compilador.h>
+#include <rex/ui/deko3d/nucleo.h>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 // The guest output images: RGB10A2 like the Vulkan presenter's, so the gamma ramp and the post-processing keep
 // their precision.
@@ -53,7 +53,7 @@ class ContextoSalidaDeko3d final : public rex::ui::Presenter::GuestOutputRefresh
 
 class ProveedorDeko3d final : public rex::ui::GraphicsProvider {
  public:
-  // The device, the queue and the compile worker. A deko3d failure ends the process (nfsmw_dk_nucleo.h).
+  // The device, the queue and the compile worker. A deko3d failure ends the process (rex/ui/deko3d/nucleo.h).
   static std::unique_ptr<ProveedorDeko3d> Crear();
   ~ProveedorDeko3d() override;
 
@@ -71,4 +71,9 @@ class ProveedorDeko3d final : public rex::ui::GraphicsProvider {
   std::unique_ptr<Compilador> compilador_;
 };
 
+}  // namespace rex::deko3d
+
+// NFS's renderer code (nfsmw_pal/src/nfsmw_dk_*) still names these nfsmw::deko::..., until it is renamed.
+namespace nfsmw::deko {
+using namespace ::rex::deko3d;
 }  // namespace nfsmw::deko

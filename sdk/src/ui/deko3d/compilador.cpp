@@ -1,8 +1,8 @@
-// nfsmw - deko3d renderer: the shader compile worker. See nfsmw_dk_compilador.h.
+// rex::deko3d (from nfsmw-nx): the shader compile worker. See rex/ui/deko3d/compilador.h.
 
-#include "nfsmw_dk_compilador.h"
+#include <rex/ui/deko3d/compilador.h>
 
-#include "nfsmw_dk_nucleo.h"
+#include <rex/ui/deko3d/nucleo.h>
 #include "uam_api.h"
 
 #include <switch.h>
@@ -12,7 +12,7 @@
 #include <future>
 #include <mutex>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 namespace {
 constexpr size_t kPila = 8u << 20;
@@ -116,4 +116,4 @@ uint32_t Compilador::Pendientes() const {
   return datos_->pendientes;
 }
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d

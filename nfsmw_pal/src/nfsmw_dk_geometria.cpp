@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "nfsmw_dk_nucleo.h"
+#include <rex/ui/deko3d/nucleo.h>
 
 namespace nfsmw::deko {
 

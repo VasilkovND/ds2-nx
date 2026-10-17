@@ -1,8 +1,8 @@
-// nfsmw - deko3d renderer: the DKSH cache file. See nfsmw_dk_cache_dksh.h.
+// rex::deko3d (from nfsmw-nx): the DKSH cache file. See rex/ui/deko3d/cache_dksh.h.
 
-#include "nfsmw_dk_cache_dksh.h"
+#include <rex/ui/deko3d/cache_dksh.h>
 
-#include "nfsmw_dk_glsl.h"
+#include <rex/ui/deko3d/glsl.h>
 
 #include <cstring>
 // The same xxHash setup as nfsmw_shader_library.cpp (reads through memcpy: see the note there).
@@ -14,7 +14,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 namespace {
 
 constexpr uint32_t kMagia = 0x4B44464Eu;  // "NFDK"
@@ -125,4 +125,4 @@ void CacheDksh::Anadir(const Clave& clave, std::vector<uint8_t> dksh) {
   entradas_[clave] = std::move(dksh);
 }
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d

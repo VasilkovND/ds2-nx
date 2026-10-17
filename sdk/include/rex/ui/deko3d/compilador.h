@@ -1,4 +1,4 @@
-// nfsmw - deko3d renderer: the shader compile worker (docs/HowToDeko3d.md, section 3.3). Switch only.
+// rex::deko3d (from nfsmw-nx): the shader compile worker (docs/HowToDeko3d.md, section 3.3). Switch only.
 //
 // uam is not reentrant (Mesa's GLSL front end keeps one static context) and recurses deeply, so every compile in
 // the process runs here: one thread with an 8 MB stack at priority 0x3B (0x3C is invalid for an application and
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 class Compilador {
  public:
@@ -43,4 +43,9 @@ class Compilador {
   std::unique_ptr<Datos> datos_;
 };
 
+}  // namespace rex::deko3d
+
+// NFS's renderer code (nfsmw_pal/src/nfsmw_dk_*) still names these nfsmw::deko::..., until it is renamed.
+namespace nfsmw::deko {
+using namespace ::rex::deko3d;
 }  // namespace nfsmw::deko

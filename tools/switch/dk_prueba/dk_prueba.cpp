@@ -8,7 +8,7 @@
  *  1. uam on the console: the test pattern's own shaders are compiled at start by the same uam library (with
  *     SwitchWakerHD's patches) the game will use, on a worker thread as the game's will be (8 MB stack, priority
  *     0x3B). "uam listo" or "AUTOPRUEBA FALLIDA".
- *  2. The core (nfsmw_pal/src/nfsmw_dk_nucleo.cpp): device, queue, work slots, upload ring, image heap, descriptors,
+ *  2. The core (sdk/src/ui/deko3d/nucleo.cpp): device, queue, work slots, upload ring, image heap, descriptors,
  *     swapchain at the console's mode (1280x720 handheld, 1920x1080 docked).
  *  3. The test pattern, which must look like this (Direct3D's conventions, the ones the game's shaders use):
  *       - four quadrants: red top left, green top right, blue bottom left, white bottom right;
@@ -29,9 +29,9 @@
  * + exits. Build: tools/switch/dk_prueba/build.sh (devkitpro/devkita64 container).
  */
 
-#include "nfsmw_dk_cache_dksh.h"
-#include "nfsmw_dk_glsl.h"
-#include "nfsmw_dk_nucleo.h"
+#include <rex/ui/deko3d/cache_dksh.h>
+#include <rex/ui/deko3d/glsl.h>
+#include <rex/ui/deko3d/nucleo.h>
 #include "nfsmw_shader_library.h"
 #include "uam_api.h"
 

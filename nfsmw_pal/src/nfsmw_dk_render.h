@@ -31,9 +31,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "nfsmw_dk_cache_dksh.h"
+#include <rex/ui/deko3d/cache_dksh.h>
 #include "nfsmw_dk_geometria.h"
-#include "nfsmw_dk_nucleo.h"
+#include <rex/ui/deko3d/nucleo.h>
 #include "nfsmw_nativo_destinos.h"
 #include "nfsmw_nativo_vertices_dedupe.h"
 

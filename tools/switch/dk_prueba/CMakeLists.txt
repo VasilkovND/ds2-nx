@@ -23,11 +23,11 @@ add_subdirectory("${NFSMW_TERCEROS}/SPIRV-Cross" spirv-cross EXCLUDE_FROM_ALL)
 
 add_executable(dk_prueba
   dk_prueba.cpp
-  "${NFSMW_APP}/nfsmw_dk_nucleo.cpp"
-  "${NFSMW_APP}/nfsmw_dk_glsl.cpp"
-  "${NFSMW_APP}/nfsmw_dk_cache_dksh.cpp"
+  "${NFSMW_RAIZ}/sdk/src/ui/deko3d/nucleo.cpp"
+  "${NFSMW_RAIZ}/sdk/src/ui/deko3d/glsl.cpp"
+  "${NFSMW_RAIZ}/sdk/src/ui/deko3d/cache_dksh.cpp"
   "${NFSMW_APP}/nfsmw_shader_library.cpp")
-target_include_directories(dk_prueba PRIVATE "${NFSMW_APP}" "${NFSMW_TERCEROS}/xxHash")
+target_include_directories(dk_prueba PRIVATE "${NFSMW_APP}" "${NFSMW_TERCEROS}/xxHash" "${NFSMW_RAIZ}/sdk/include")
 set_target_properties(dk_prueba PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_compile_options(dk_prueba PRIVATE -O2 -Wall)
 

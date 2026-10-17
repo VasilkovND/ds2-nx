@@ -1,4 +1,4 @@
-// nfsmw - deko3d renderer: the DKSH cache file (docs/HowToDeko3d.md, section 3.3).
+// rex::deko3d (from nfsmw-nx): the DKSH cache file (docs/HowToDeko3d.md, section 3.3).
 //
 // One DKSH per (SPIR-V, specialization value, variant): the SPIR-V the renderer converts (a library shader, or
 // its color-write pruning or early depth variant), constant_id 0 masked to the bits the shader reads
@@ -6,7 +6,7 @@
 // pixel shaders). The file is made by shaders/dksh/nfsmw_dksh on the PC, or by the console's compile worker, and
 // kept on the SD card. It is made from the game's shaders, so it is never distributed.
 //
-// The DKSH depends on more than the key: uam and its patches, SPIRV-Cross, and nfsmw_dk_glsl.cpp. Their identity
+// The DKSH depends on more than the key: uam and its patches, SPIRV-Cross, and sdk/src/ui/deko3d/glsl.cpp. Their identity
 // (IdCompilador) is in the header, and a cache made by another one is not loaded: the lesson of NVK's shader
 // cache, which kept old compiled shaders after a compiler fix (docs/shaders.md).
 //
@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 // "uam ... ; SPIRV-Cross ... ; GLSL revision N". Change the first two with tools/fetch_thirdparty.py's commits.
 std::string IdCompilador();
@@ -58,4 +58,9 @@ class CacheDksh {
   std::map<Clave, std::vector<uint8_t>> entradas_;
 };
 
+}  // namespace rex::deko3d
+
+// NFS's renderer code (nfsmw_pal/src/nfsmw_dk_*) still names these nfsmw::deko::..., until it is renamed.
+namespace nfsmw::deko {
+using namespace ::rex::deko3d;
 }  // namespace nfsmw::deko

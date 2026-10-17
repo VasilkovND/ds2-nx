@@ -10,8 +10,12 @@
 //     3. interrupts: vblank, and PM4_INTERRUPT packets (the GPU reached that point of the ring);
 //     4. GPU writes to memory (MEM_WRITE, COND_WRITE, REG_TO_MEM, EVENT_WRITE_*, scratch registers), as in
 //        the SDK's graphics/command_processor.cpp. Occlusion queries report 1000 samples, like the SDK.
-//   Draws, copies and Swaps are counted, not drawn yet: the screen stays black. The deko3d renderer will be
-//   built on this ring reader, as NFS's is (nfsmw_pal/src/nfsmw_nativo_sistema.cpp, which this follows).
+//   Draws, copies and Swaps are counted, not drawn yet. The deko3d renderer will be built on this ring reader,
+//   as NFS's is (nfsmw_pal/src/nfsmw_nativo_sistema.cpp, which this follows).
+//
+// Presentation (the deko3d build): the SDK's deko3d provider and presenter (rex/ui/deko3d/presentador.h). ReXApp
+// sees them and sets up the window and the ImGui overlay as usual; until the renderer refreshes the guest output,
+// the presenter paints black under the overlay.
 //
 // Without it the runtime drops the game's Vd* calls ("no GPU emulation loaded") and the render thread waits
 // forever for a GPU that never reads its commands.
@@ -41,6 +45,13 @@
 #include <rex/system/xvideo.h>
 #include <rex/thread.h>
 #include <rex/types.h>
+#include <rex/ui/graphics_provider.h>
+#include <rex/ui/presenter.h>
+#include <rex/ui/windowed_app_context.h>
+
+#if HALO3_DEKO3D
+#include <rex/ui/deko3d/presentador.h>
+#endif
 
 namespace halo3::gpu {
 namespace {
@@ -116,9 +127,33 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   RingGraphicsSystem() : registers_(kRegisterCount, 0) {}
   ~RingGraphicsSystem() override { Shutdown(); }
 
-  // No presenter yet: ReXApp then leaves the window black.
   X_STATUS SetupPresentation(rex::ui::WindowedAppContext* app_context) override {
+#if HALO3_DEKO3D
+    if (presenter_) {
+      return X_STATUS_SUCCESS;
+    }
+    app_context_ = app_context;
+    if (!provider_) {
+      provider_ = rex::deko3d::ProveedorDeko3d::Crear();  // a deko3d failure ends the process, logged
+      if (!provider_) {
+        REXLOG_ERROR("[gpu] could not create the deko3d device");
+        return X_STATUS_UNSUCCESSFUL;
+      }
+    }
+    auto create = [this]() { presenter_ = provider_->CreatePresenter(); };
+    if (app_context_) {
+      app_context_->CallInUIThreadSynchronous(create);
+    } else {
+      create();
+    }
+    if (!presenter_) {
+      REXLOG_ERROR("[gpu] could not create the deko3d presenter");
+      return X_STATUS_UNSUCCESSFUL;
+    }
+    REXLOG_INFO("[gpu] deko3d presenter up (the game's frames come with the renderer)");
+#else
     (void)app_context;
+#endif
     return X_STATUS_SUCCESS;
   }
 
@@ -151,7 +186,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     return X_STATUS_SUCCESS;
   }
 
-  bool has_presentation() const override { return false; }
+  bool has_presentation() const override { return presenter_ != nullptr; }
+  rex::ui::GraphicsProvider* provider() const override { return provider_.get(); }
+  rex::ui::Presenter* presenter() const override { return presenter_.get(); }
 
   void SetInterruptCallback(uint32_t callback, uint32_t user_data) override {
     callback_data_.store(user_data, std::memory_order_release);
@@ -174,6 +211,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 
   void Shutdown() override {
     if (!active_.exchange(false)) {
+      DestroyPresentation();
       return;
     }
     {
@@ -188,6 +226,18 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       vblank_thread_->Wait(0, 0, 0, nullptr);
       vblank_thread_.reset();
     }
+    DestroyPresentation();
+  }
+
+  // After the threads: the presenter goes before its provider, on the UI thread.
+  void DestroyPresentation() {
+    if (presenter_) {
+      if (app_context_) {
+        app_context_->CallInUIThreadSynchronous([this]() { presenter_.reset(); });
+      }
+      presenter_.reset();
+    }
+    provider_.reset();
   }
 
  private:
@@ -682,6 +732,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
   }
 
+  rex::ui::WindowedAppContext* app_context_ = nullptr;
+  std::unique_ptr<rex::ui::GraphicsProvider> provider_;
+  std::unique_ptr<rex::ui::Presenter> presenter_;
   rex::runtime::FunctionDispatcher* dispatcher_ = nullptr;
   rex::system::KernelState* kernel_state_ = nullptr;
   rex::memory::Memory* memory_ = nullptr;

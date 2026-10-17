@@ -247,3 +247,53 @@ function(rexglue_switch_add_nro target_name)
         COMMENT "Packaging ${target_name}.nro"
         VERBATIM)
 endfunction()
+
+# The SDK's root, for the functions below (they run in the title's directory).
+get_filename_component(_REXGLUE_SWITCH_SDK_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
+# rexglue_switch_add_deko3d(<target>)
+#
+# The deko3d presentation layer every deko3d title shares (from nfsmw-nx): the device and its queue, memory and
+# swapchain (rex/ui/deko3d/nucleo.h), the SPIR-V -> GLSL -> DKSH path and its cache (glsl.h, cache_dksh.h), the
+# uam compile worker (compilador.h), and the SDK's provider, presenter and ImGui drawer on deko3d (presentador.h).
+# Brings uam and SPIRV-Cross (python tools/fetch_thirdparty.py --deko3d) and xxHash. Call it once per project.
+function(rexglue_switch_add_deko3d target_name)
+    if(NOT REXGLUE_SWITCH_DEKO3D)
+        return()
+    endif()
+    # REXSDK_DIR is what titles configure with (-DREXSDK_DIR=.../sdk); the path of this file is the fallback.
+    if(REXSDK_DIR)
+        get_filename_component(_root "${REXSDK_DIR}" ABSOLUTE)
+    else()
+        set(_root "${_REXGLUE_SWITCH_SDK_ROOT}")
+    endif()
+    foreach(_fuente SPIRV-Cross/spirv_glsl.cpp uam/uam_api.h xxHash/xxhash.h)
+        if(NOT EXISTS "${_root}/thirdparty/${_fuente}")
+            message(FATAL_ERROR "Missing sdk/thirdparty/${_fuente}: run python tools/fetch_thirdparty.py --deko3d")
+        endif()
+    endforeach()
+    target_sources(${target_name} PRIVATE
+        "${_root}/src/ui/deko3d/nucleo.cpp"
+        "${_root}/src/ui/deko3d/glsl.cpp"
+        "${_root}/src/ui/deko3d/cache_dksh.cpp"
+        "${_root}/src/ui/deko3d/compilador.cpp"
+        "${_root}/src/ui/deko3d/presentador.cpp")
+    enable_language(C)  # uam has C sources (Mesa's preprocessor)
+    if(NOT TARGET uamlib)
+        add_subdirectory("${_root}/thirdparty/uam" uam EXCLUDE_FROM_ALL)
+    endif()
+    if(NOT TARGET spirv-cross-glsl)
+        set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "" FORCE)
+        set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+        add_subdirectory("${_root}/thirdparty/SPIRV-Cross" spirv-cross EXCLUDE_FROM_ALL)
+    endif()
+    target_link_libraries(${target_name} PRIVATE uamlib spirv-cross-glsl spirv-cross-core)
+    target_include_directories(${target_name} PRIVATE "${_root}/thirdparty/xxHash")
+endfunction()

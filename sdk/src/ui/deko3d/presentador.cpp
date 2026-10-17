@@ -1,6 +1,6 @@
-// nfsmw - deko3d renderer: provider, presenter and immediate drawer. See nfsmw_dk_presentador.h.
+// rex::deko3d (from nfsmw-nx): provider, presenter and immediate drawer. See rex/ui/deko3d/presentador.h.
 
-#include "nfsmw_dk_presentador.h"
+#include <rex/ui/deko3d/presentador.h>
 
 #include <rex/logging.h>
 #include <rex/logging/api.h>
@@ -13,7 +13,7 @@
 #include <cstring>
 #include <vector>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 namespace {
 
 using rex::ui::Presenter;
@@ -643,4 +643,4 @@ std::unique_ptr<rex::ui::ImmediateDrawer> ProveedorDeko3d::CreateImmediateDrawer
   return d;
 }
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d
