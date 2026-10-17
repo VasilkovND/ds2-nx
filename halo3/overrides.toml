@@ -19,4 +19,18 @@
 "0x826CC8A0" = {}   # from b at 0x826CEF7C
 "0x826C5118" = {}   # from b at 0x826C49F4
 "0x8258BDA0" = {}   # from b at 0x8258C094 (8 bytes into 0x8258BD98)
-"0x825A2180" = {}   # from b at 0x8259FE40 (16 bytes into 0x825A2170)
+"0x825A2180" = {}   # from b at 0x8259FE40 (16 bytes into 0x825A2170): SwitchToFiber's body, unused once hooked ([rexcrt])
+
+[rexcrt]
+# XAPI's fiber functions, linked into default.xex. Halo 3 runs work (map decompression) on fibers with their own
+# stacks. The real SwitchToFiber saves the caller's registers, loads the target fiber's (r1 and LR included) and
+# returns into the target, which recompiled code cannot do: it returns through the host stack. The SDK's hooks
+# (sdk/src/kernel/crt/threading.cpp) run each fiber on a host fiber instead. All five go together: its
+# SwitchToFiber only knows fibers that its CreateFiber or ConvertThreadToFiber registered. Without them the
+# fourth Switch boot crashed in the decompressor (0x822AF7D8) after a switch: r26 came back 0.
+# Identified from their code: GetCurrentFiber (0x8259FC10) is r13 -> +0x100 (KTHREAD) -> +0x164.
+ConvertThreadToFiber = 0x8259FC20  # allocates 2640 bytes; fails with 1280 (ERROR_ALREADY_FIBER)
+ConvertFiberToThread = 0x8259FCB0  # frees it; fails with 1281 (ERROR_ALREADY_THREAD)
+CreateFiber = 0x8259FD00           # (stack size, start, parameter): stack rounded up, 16 KiB minimum
+DeleteFiber = 0x8259FDE0
+SwitchToFiber = 0x8259FE40         # b 0x825A2180, the register save
