@@ -18,3 +18,5 @@
 # Both are function starts in XenonAnalyse's map of the same default.xex (0x826CC8A0: 8 bytes, 0x826C5118: 40).
 "0x826CC8A0" = {}   # from b at 0x826CEF7C
 "0x826C5118" = {}   # from b at 0x826C49F4
+"0x8258BDA0" = {}   # from b at 0x8258C094 (8 bytes into 0x8258BD98)
+"0x825A2180" = {}   # from b at 0x8259FE40 (16 bytes into 0x825A2170)

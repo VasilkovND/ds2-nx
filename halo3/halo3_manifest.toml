@@ -12,7 +12,7 @@ game_root = "assets/game_root"
 file_path = "assets/game_root/default.xex"
 out_directory_path = "generated/default"
 # overrides.toml  written by hand: specific findings, each with its explanation
-includes = ["overrides.toml"]
+includes = ["xenonanalyse_functions.toml", "overrides.toml"]
 
 [[modules]]
 guest_path = "waveshell-xbox.dll"
