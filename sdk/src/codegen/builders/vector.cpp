@@ -184,22 +184,24 @@ bool build_vlogefp(BuilderContext& ctx) {
 //=============================================================================
 
 bool build_vmsum3fp128(BuilderContext& ctx) {
-  // 3-element dot product accounting for guest->host vector element reversal
-  // 0xEF = dot(yzw) with result broadcast to all elements (see constants doc)
+  // 3-element dot product accounting for guest->host vector element reversal:
+  // guest x, y, z are host lanes 3, 2, 1, so host lane 0 (guest w) is excluded.
+  // Accumulated in float64 to match the console (a host float32 dot product can
+  // differ by one bit), with float32 overflow mapped to a quiet NaN.
   ctx.emit_set_flush_mode(true);
   ctx.println(
-      "\tsimde_mm_store_ps({}.f32, simde_mm_dp_ps(simde_mm_load_ps({}.f32), "
-      "simde_mm_load_ps({}.f32), 0xEF));",
+      "\tsimde_mm_store_ps({}.f32, rex::ppc::simde_mm_vmsum3fp(simde_mm_load_ps({}.f32), "
+      "simde_mm_load_ps({}.f32)));",
       ctx.v(ctx.insn.operands[0]), ctx.v(ctx.insn.operands[1]), ctx.v(ctx.insn.operands[2]));
   return true;
 }
 
 bool build_vmsum4fp128(BuilderContext& ctx) {
-  // 4-element dot product: 0xFF = all 4 elements, result to all (see constants doc)
+  // 4-element dot product, float64 accumulation as in vmsum3fp128.
   ctx.emit_set_flush_mode(true);
   ctx.println(
-      "\tsimde_mm_store_ps({}.f32, simde_mm_dp_ps(simde_mm_load_ps({}.f32), "
-      "simde_mm_load_ps({}.f32), 0xFF));",
+      "\tsimde_mm_store_ps({}.f32, rex::ppc::simde_mm_vmsum4fp(simde_mm_load_ps({}.f32), "
+      "simde_mm_load_ps({}.f32)));",
       ctx.v(ctx.insn.operands[0]), ctx.v(ctx.insn.operands[1]), ctx.v(ctx.insn.operands[2]));
   return true;
 }
@@ -1356,20 +1358,39 @@ bool build_vpkd3d128(BuilderContext& ctx) {
 
     case 6:  // NORMPACKED64 - pack 4 floats to 4:20:20:20 format
     {
-      // Format: 4 bits for w, 20 bits each for x, y, z (packed into 64 bits)
+      // Format: w(4 bits):z(20 bits):y(20 bits):x(20 bits) packed into 64 bits.
+      // Mirror of the vupkd3d128 case 6 unpack: the inputs are in 3.0+X form
+      // (xyz, signed) and 3.0+w form (w, unsigned), so the fields are recovered
+      // by saturating the float against the encodable range and then masking the
+      // low bits of the bit pattern - NOT by converting the float to an integer,
+      // which discarded the bias entirely and produced garbage for any real
+      // input. Guest element i lives at host index 3-i, as in every other case.
+      auto vSrcP = ctx.v(ctx.insn.operands[1]);
       ctx.println("\t{}.u64[0] = 0;", ctx.v_temp());
-      // Pack x (20 bits, position 0-19)
-      ctx.println("\t{}.s32 = int32_t({}.f32[0]);", ctx.temp(), ctx.v(ctx.insn.operands[1]));
-      ctx.println("\t{}.u64[0] = uint64_t({}.s32 & 0xFFFFF);", ctx.v_temp(), ctx.temp());
-      // Pack y (20 bits, position 20-39)
-      ctx.println("\t{}.s32 = int32_t({}.f32[1]);", ctx.temp(), ctx.v(ctx.insn.operands[1]));
-      ctx.println("\t{}.u64[0] |= uint64_t({}.s32 & 0xFFFFF) << 20;", ctx.v_temp(), ctx.temp());
-      // Pack z (20 bits, position 40-59)
-      ctx.println("\t{}.s32 = int32_t({}.f32[2]);", ctx.temp(), ctx.v(ctx.insn.operands[1]));
-      ctx.println("\t{}.u64[0] |= uint64_t({}.s32 & 0xFFFFF) << 40;", ctx.v_temp(), ctx.temp());
-      // Pack w (4 bits, position 60-63)
-      ctx.println("\t{}.s32 = int32_t({}.f32[3]);", ctx.temp(), ctx.v(ctx.insn.operands[1]));
-      ctx.println("\t{}.u64[0] |= uint64_t({}.s32 & 0xF) << 60;", ctx.v_temp(), ctx.temp());
+      // Pack x (20 bits, position 0-19) - Guest element 0 is at index 3
+      ctx.println(
+          "\t{}.f32 = {}.f32[3] < kPack4202020_Min20 ? kPack4202020_Min20 : ({}.f32[3] > "
+          "kPack4202020_Max20 ? kPack4202020_Max20 : {}.f32[3]);",
+          ctx.temp(), vSrcP, vSrcP, vSrcP);
+      ctx.println("\t{}.u64[0] = uint64_t({}.u32 & 0xFFFFF);", ctx.v_temp(), ctx.temp());
+      // Pack y (20 bits, position 20-39) - Guest element 1 is at index 2
+      ctx.println(
+          "\t{}.f32 = {}.f32[2] < kPack4202020_Min20 ? kPack4202020_Min20 : ({}.f32[2] > "
+          "kPack4202020_Max20 ? kPack4202020_Max20 : {}.f32[2]);",
+          ctx.temp(), vSrcP, vSrcP, vSrcP);
+      ctx.println("\t{}.u64[0] |= uint64_t({}.u32 & 0xFFFFF) << 20;", ctx.v_temp(), ctx.temp());
+      // Pack z (20 bits, position 40-59) - Guest element 2 is at index 1
+      ctx.println(
+          "\t{}.f32 = {}.f32[1] < kPack4202020_Min20 ? kPack4202020_Min20 : ({}.f32[1] > "
+          "kPack4202020_Max20 ? kPack4202020_Max20 : {}.f32[1]);",
+          ctx.temp(), vSrcP, vSrcP, vSrcP);
+      ctx.println("\t{}.u64[0] |= uint64_t({}.u32 & 0xFFFFF) << 40;", ctx.v_temp(), ctx.temp());
+      // Pack w (4 bits, position 60-63) - Guest element 3 is at index 0
+      ctx.println(
+          "\t{}.f32 = {}.f32[0] < kPack4202020_Min4 ? kPack4202020_Min4 : ({}.f32[0] > "
+          "kPack4202020_Max4 ? kPack4202020_Max4 : {}.f32[0]);",
+          ctx.temp(), vSrcP, vSrcP, vSrcP);
+      ctx.println("\t{}.u64[0] |= uint64_t({}.u32 & 0xF) << 60;", ctx.v_temp(), ctx.temp());
       ctx.println("\t{}.u64[{}] = {}.u64[0];", ctx.v(ctx.insn.operands[0]),
                   ctx.insn.operands[4] >> 1, ctx.v_temp());
       break;
@@ -1400,10 +1421,15 @@ bool build_vupkd3d128(BuilderContext& ctx) {
       break;
 
     case 1:  // NORMSHORT2 - unpack 2 shorts to floats (3.0+X form)
+      // The most-negative short biases to exactly 3.0 + -32768 (0x403F8000),
+      // which the hardware replaces with a quiet NaN (vcmpeqps against
+      // XMMUnpackSHORT_Overflow, then blend). z/w are the constants 0.0/1.0 and
+      // can never collide with it, so only the two decoded lanes need the check.
       for (size_t i = 0; i < 2; i++) {
         ctx.println("\t{}.f32 = 3.0f;", ctx.temp());
         ctx.println("\t{}.s32 += {}.s16[{}];", ctx.temp(), ctx.v(ctx.insn.operands[1]), 1 - i);
-        ctx.println("\t{}.f32[{}] = {}.f32;", ctx.v_temp(), 3 - i, ctx.temp());
+        ctx.println("\t{}.s32[{}] = {}.s32 == 0x403F8000 ? 0x7FC00000 : {}.s32;", ctx.v_temp(),
+                    3 - i, ctx.temp(), ctx.temp());
       }
       ctx.println("\t{}.f32[1] = 0.0f;", ctx.v_temp());
       ctx.println("\t{}.f32[0] = 1.0f;", ctx.v_temp());
@@ -1424,12 +1450,18 @@ bool build_vupkd3d128(BuilderContext& ctx) {
                   ctx.v_temp(), ctx.temp(), ctx.temp());
       ctx.println("\t{}.u32[3] = {}.u32[0];", vDst, ctx.v_temp());
       // y (bits 10-19) - sign extend from 10 bits --> Guest element 1 (host u32[2])
+      // The most-negative field maps to a quiet NaN for every signed component,
+      // not just x: the hardware compares the whole biased vector against
+      // 3.0 + -512 (0x403FFE00) and blends in QNaN. Omitting the check on y/z
+      // let 0x403FFE00 through as a finite 2.99..., which then propagates.
       ctx.println("\t{}.s32 = ({}.s32[0] << 12) >> 22;", ctx.temp(), vSrc);
-      ctx.println("\t{}.s32[0] = {}.s32 + 0x40400000;", ctx.v_temp(), ctx.temp());
+      ctx.println("\t{}.s32[0] = {}.s32 == -512 ? 0x7FC00000 : ({}.s32 + 0x40400000);",
+                  ctx.v_temp(), ctx.temp(), ctx.temp());
       ctx.println("\t{}.u32[2] = {}.u32[0];", vDst, ctx.v_temp());
       // z (bits 20-29) - sign extend from 10 bits --> Guest element 2 (host u32[1])
       ctx.println("\t{}.s32 = ({}.s32[0] << 2) >> 22;", ctx.temp(), vSrc);
-      ctx.println("\t{}.s32[0] = {}.s32 + 0x40400000;", ctx.v_temp(), ctx.temp());
+      ctx.println("\t{}.s32[0] = {}.s32 == -512 ? 0x7FC00000 : ({}.s32 + 0x40400000);",
+                  ctx.v_temp(), ctx.temp(), ctx.temp());
       ctx.println("\t{}.u32[1] = {}.u32[0];", vDst, ctx.v_temp());
       // w (bits 30-31) - 2 bits, convert to 1.0+w form --> Guest element 3 (host u32[0])
       ctx.println("\t{}.u32[0] = ({}.u32[0] >> 30) | 0x3F800000;", ctx.v_temp(), vSrc);
@@ -1466,12 +1498,15 @@ bool build_vupkd3d128(BuilderContext& ctx) {
     {
       // Unpack 4 shorts from Guest elements 2-3 (host u16[0-3]) to 4 floats
       // Guest element order is reversed in host arrays
+      // As in NORMSHORT2, the most-negative short biases to 0x403F8000 and the
+      // hardware returns a quiet NaN for it - here all four lanes are decoded.
       for (size_t i = 0; i < 4; i++) {
         size_t srcIdx = 3 - i;  // Read from u16 indices 3, 2, 1, 0 (guest shorts 0, 1, 2, 3)
         size_t dstIdx = 3 - i;  // Write to f32 indices 3, 2, 1, 0 (Guest elements 0, 1, 2, 3)
         ctx.println("\t{}.f32 = 3.0f;", ctx.temp());
         ctx.println("\t{}.s32 += {}.s16[{}];", ctx.temp(), ctx.v(ctx.insn.operands[1]), srcIdx);
-        ctx.println("\t{}.f32[{}] = {}.f32;", ctx.v(ctx.insn.operands[0]), dstIdx, ctx.temp());
+        ctx.println("\t{}.s32[{}] = {}.s32 == 0x403F8000 ? 0x7FC00000 : {}.s32;",
+                    ctx.v(ctx.insn.operands[0]), dstIdx, ctx.temp(), ctx.temp());
       }
       break;
     }
@@ -1503,20 +1538,41 @@ bool build_vupkd3d128(BuilderContext& ctx) {
     {
       auto vSrc = ctx.v(ctx.insn.operands[1]);
       auto vDst = ctx.v(ctx.insn.operands[0]);
-      // Format: w(4 bits):z(20 bits):y(20 bits):x(20 bits) in 64 bits
-      // x, y, z --> floats, w --> float
-      ctx.println("\t{}.u64[0] = {}.u64[1];", ctx.v_temp(), vSrc);
-      // x (bits 0-19) - sign extend from 20 bits
-      ctx.println("\t{}.s32 = (int32_t({}.u64[0] << 44) >> 44);", ctx.temp(), ctx.v_temp());
-      ctx.println("\t{}.f32[0] = float({}.s32);", vDst, ctx.temp());
-      // y (bits 20-39) - sign extend from 20 bits
-      ctx.println("\t{}.s32 = (int32_t({}.u64[0] << 24) >> 44);", ctx.temp(), ctx.v_temp());
-      ctx.println("\t{}.f32[1] = float({}.s32);", vDst, ctx.temp());
-      // z (bits 40-59) - sign extend from 20 bits
-      ctx.println("\t{}.s32 = (int32_t({}.u64[0] << 4) >> 44);", ctx.temp(), ctx.v_temp());
-      ctx.println("\t{}.f32[2] = float({}.s32);", vDst, ctx.temp());
-      // w (bits 60-63) - 4 bits
-      ctx.println("\t{}.f32[3] = float({}.u64[0] >> 60);", vDst, ctx.v_temp());
+      // Format: w(4 bits):z(20 bits):y(20 bits):x(20 bits) packed into the
+      // guest LOW doubleword. The host arrays are word-reversed, so the guest
+      // low doubleword (guest words 2:3) lands in host u64[0], not u64[1] -
+      // reading u64[1] picks up the guest high doubleword, which after the
+      // usual lvlx / vsldoi 8 / vupkd3d128 sequence holds unrelated data.
+      //
+      // x, y, z are SIGNED 20-bit fields (-524288..524287) and are returned in
+      // 3.0+X form; w is an unsigned 4-bit field returned in 1.0+w form (the
+      // biases are added as integers to the float bit patterns, matching the
+      // hardware and the other D3D unpack types above).
+      //
+      // Output: x --> Guest element 0 (host u32[3]), y --> Guest element 1
+      //         (host u32[2]), z --> Guest element 2 (host u32[1]),
+      //         w --> Guest element 3 (host u32[0]).
+      //
+      // Copy the packed doubleword out of the source first so the destination
+      // is allowed to alias the source register.
+      ctx.println("\t{}.u64[0] = {}.u64[0];", ctx.v_temp(), vSrc);
+      // The sign extension must stay 64-bit wide until the shift completes -
+      // casting to int32_t first discards the field entirely (the value has
+      // been shifted above bit 31) and then shifts by >= 32, which is UB.
+      // x (bits 0-19) - sign extend from 20 bits --> Guest element 0 (host u32[3])
+      ctx.println("\t{}.s64 = int64_t({}.u64[0] << 44) >> 44;", ctx.temp(), ctx.v_temp());
+      ctx.println("\t{}.s32[3] = {}.s64 == -524288 ? 0x7FC00000 : (int32_t({}.s64) + 0x40400000);",
+                  vDst, ctx.temp(), ctx.temp());
+      // y (bits 20-39) - sign extend from 20 bits --> Guest element 1 (host u32[2])
+      ctx.println("\t{}.s64 = int64_t({}.u64[0] << 24) >> 44;", ctx.temp(), ctx.v_temp());
+      ctx.println("\t{}.s32[2] = {}.s64 == -524288 ? 0x7FC00000 : (int32_t({}.s64) + 0x40400000);",
+                  vDst, ctx.temp(), ctx.temp());
+      // z (bits 40-59) - sign extend from 20 bits --> Guest element 2 (host u32[1])
+      ctx.println("\t{}.s64 = int64_t({}.u64[0] << 4) >> 44;", ctx.temp(), ctx.v_temp());
+      ctx.println("\t{}.s32[1] = {}.s64 == -524288 ? 0x7FC00000 : (int32_t({}.s64) + 0x40400000);",
+                  vDst, ctx.temp(), ctx.temp());
+      // w (bits 60-63) - unsigned 4 bits, 1.0+w form --> Guest element 3 (host u32[0])
+      ctx.println("\t{}.s32[0] = int32_t({}.u64[0] >> 60) + 0x3F800000;", vDst, ctx.v_temp());
       break;
     }
 

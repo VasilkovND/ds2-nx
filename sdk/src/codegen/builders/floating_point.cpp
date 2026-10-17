@@ -58,9 +58,14 @@ bool build_fcfid(BuilderContext& ctx) {
 
 bool build_fctid(BuilderContext& ctx) {
   ctx.emit_set_flush_mode(false);
+  // double(LLONG_MAX) rounds up to exactly 2^63, which is not representable as
+  // an int64_t, so the saturation test must be >= rather than >: an input of
+  // exactly 2^63 would otherwise fall through to the host conversion and yield
+  // the "integer indefinite" value 0x8000000000000000 - a large negative result
+  // for a large positive input.
   ctx.println(
       "\t{0}.s64 = std::isnan({1}.f64) ? int64_t(0x8000000000000000ULL) : "
-      "({1}.f64 > double(LLONG_MAX)) ? LLONG_MAX : "
+      "({1}.f64 >= double(LLONG_MAX)) ? LLONG_MAX : "
       "simde_mm_cvtsd_si64(simde_mm_load_sd(&{1}.f64));",
       ctx.f(ctx.insn.operands[0]), ctx.f(ctx.insn.operands[1]));
   return true;
@@ -68,9 +73,10 @@ bool build_fctid(BuilderContext& ctx) {
 
 bool build_fctidz(BuilderContext& ctx) {
   ctx.emit_set_flush_mode(false);
+  // See build_fctid for why the saturation test is >= and not >.
   ctx.println(
       "\t{0}.s64 = std::isnan({1}.f64) ? int64_t(0x8000000000000000ULL) : "
-      "({1}.f64 > double(LLONG_MAX)) ? LLONG_MAX : "
+      "({1}.f64 >= double(LLONG_MAX)) ? LLONG_MAX : "
       "simde_mm_cvttsd_si64(simde_mm_load_sd(&{1}.f64));",
       ctx.f(ctx.insn.operands[0]), ctx.f(ctx.insn.operands[1]));
   return true;
@@ -267,14 +273,24 @@ bool build_fnmsubs(BuilderContext& ctx) {
 
 bool build_fres(BuilderContext& ctx) {
   ctx.emit_set_flush_mode(false);
-  ctx.println("\t{}.f64 = double(float(1.0 / {}.f64));", ctx.f(ctx.insn.operands[0]),
+  // Narrow the INPUT to single precision before taking the reciprocal, matching
+  // xenia (Recip(Convert(frB, FLOAT32_TYPE))). Computing 1.0/frB in double and
+  // rounding afterwards gives a different result in the low bits.
+  ctx.println("\t{}.f64 = double(1.0f / float({}.f64));", ctx.f(ctx.insn.operands[0]),
               ctx.f(ctx.insn.operands[1]));
   return true;
 }
 
 bool build_frsqrte(BuilderContext& ctx) {
   ctx.emit_set_flush_mode(false);
-  ctx.println("\t{}.f64 = double(float(1.0 / sqrt({}.f64)));", ctx.f(ctx.insn.operands[0]),
+  // NOTE: xenia keeps this in full double precision (RSqrt(LoadFPR(frB)), no
+  // ToSingle) and its x64 backend implements the real hardware estimate via a
+  // lookup table (X64HelperEmitter::EmitFrsqrteHelper), including the non-IEEE
+  // mode and NaN/denormal edge cases. This is a plain double-precision
+  // approximation instead - more accurate than the ~5-bit hardware estimate,
+  // but not bit-exact with either the console or xenia. Left as-is: unlike fres
+  // there is no cheap expression that gets closer.
+  ctx.println("\t{}.f64 = 1.0 / sqrt({}.f64);", ctx.f(ctx.insn.operands[0]),
               ctx.f(ctx.insn.operands[1]));
   return true;
 }

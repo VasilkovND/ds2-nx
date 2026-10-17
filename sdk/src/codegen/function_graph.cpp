@@ -644,6 +644,8 @@ std::string FunctionNode::emitCpp(const EmitContext& ctx) const {
     emit_println(out, "\tPPCXERRegister xer{{}};");
   if (localVariables.reserved)
     emit_println(out, "\tPPCRegister reserved{{}};");
+  if (localVariables.reserved_address)
+    emit_println(out, "\tuint64_t reserved_address = ~uint64_t(0);");
 
   for (size_t i = 0; i < 8; i++) {
     if (localVariables.cr[i])

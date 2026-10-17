@@ -29,6 +29,7 @@ struct RecompilerLocalVariables {
   bool ctr{};
   bool xer{};
   bool reserved{};
+  bool reserved_address{};
   bool cr[8]{};
   bool r[32]{};
   bool f[32]{};
@@ -150,6 +151,7 @@ struct BuilderContext {
 
   /// Get expression for reservation register (used by lwarx/stwcx)
   const char* reserved();
+  const char* reserved_address();
 
   /// Get expression for scalar temporary variable (always "temp")
   const char* temp();

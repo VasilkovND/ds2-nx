@@ -232,7 +232,22 @@ inline simde__m128i simde_mm_vsr(simde__m128i a, simde__m128i b) {
 
 // Vector Shift Left - shift entire 128-bit vector left by bits in low 3 bits of b
 inline simde__m128i simde_mm_vsl(simde__m128i a, simde__m128i b) {
-  int shift = simde_mm_extract_epi8(b, 15) & 0x7;  // Get low 3 bits from byte 15 (BE: byte 0)
+  // On hardware each byte shifts by its own count, taking the bits of the
+  // next lower-addressed byte; the 128-bit shift below is the usual case where
+  // all counts agree (a vspltisb count).
+  const simde__m128i counts = simde_mm_and_si128(b, simde_mm_set1_epi8(0x7));
+  if (simde_mm_movemask_epi8(simde_mm_cmpeq_epi8(
+          counts, simde_mm_shuffle_epi8(counts, simde_mm_setzero_si128()))) != 0xFFFF) {
+    alignas(16) uint8_t src[16], count[16], dst[16];
+    simde_mm_store_si128((simde__m128i*)src, a);
+    simde_mm_store_si128((simde__m128i*)count, counts);
+    // Host byte j is guest byte 15 - j, so the next guest byte is host j - 1.
+    for (int j = 0; j < 16; ++j) {
+      dst[j] = uint8_t((src[j] << count[j]) | (j ? src[j - 1] >> (8 - count[j]) : 0));
+    }
+    return simde_mm_load_si128((simde__m128i*)dst);
+  }
+  int shift = simde_mm_extract_epi8(counts, 0);
   if (shift == 0)
     return a;
 
@@ -391,6 +406,58 @@ inline simde__m128i simde_mm_sllv_epi8(simde__m128i a, simde__m128i count) {
   r_lo = simde_mm_and_si128(r_lo, mask8);
   r_hi = simde_mm_and_si128(r_hi, mask8);
   return simde_mm_packus_epi16(r_lo, r_hi);
+}
+
+//=============================================================================
+// Vector Dot Products (vmsum3fp128 / vmsum4fp128)
+//=============================================================================
+// The Xbox 360 accumulates vmsum products in higher precision than float32, so
+// a plain host float32 dot product can differ from the guest result by one bit.
+// Xenia keeps a float64 accumulation for this reason, and maps a float32
+// overflow of the (finite) float64 sum to the canonical quiet NaN while
+// preserving infinities and NaNs that came from the inputs themselves.
+//
+// Note the guest-to-host element reversal used throughout this project: guest
+// element i lives at host lane 3-i, so the 3-element form sums host lanes
+// 3, 2, 1 (guest x, y, z) and ignores host lane 0 (guest w).
+
+inline simde__m128 simde_mm_vmsum_finish_(double sum) {
+  float result = float(sum);
+  // A dot product of four float32 values cannot overflow float64, so a float32
+  // overflow happened exactly when the float64 sum is finite but its float32
+  // conversion is not.
+  if (!std::isfinite(result) && std::isfinite(sum)) {
+    uint32_t qnan = 0x7FC00000u;
+    float qnan_f;
+    std::memcpy(&qnan_f, &qnan, sizeof(qnan_f));
+    result = qnan_f;
+  }
+  return simde_mm_set1_ps(result);
+}
+
+// 3-element dot product (guest x, y, z = host lanes 3, 2, 1).
+inline simde__m128 simde_mm_vmsum3fp(simde__m128 a, simde__m128 b) {
+  alignas(16) float av[4];
+  alignas(16) float bv[4];
+  simde_mm_store_ps(av, a);
+  simde_mm_store_ps(bv, b);
+  double sum = double(av[3]) * double(bv[3]);
+  sum += double(av[2]) * double(bv[2]);
+  sum += double(av[1]) * double(bv[1]);
+  return simde_mm_vmsum_finish_(sum);
+}
+
+// 4-element dot product.
+inline simde__m128 simde_mm_vmsum4fp(simde__m128 a, simde__m128 b) {
+  alignas(16) float av[4];
+  alignas(16) float bv[4];
+  simde_mm_store_ps(av, a);
+  simde_mm_store_ps(bv, b);
+  double sum = double(av[3]) * double(bv[3]);
+  sum += double(av[2]) * double(bv[2]);
+  sum += double(av[1]) * double(bv[1]);
+  sum += double(av[0]) * double(bv[0]);
+  return simde_mm_vmsum_finish_(sum);
 }
 
 }  // namespace rex::ppc

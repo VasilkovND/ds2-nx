@@ -34,6 +34,18 @@ constexpr float kPack2101010_Max10 = std::bit_cast<float>(0x404001FFu);
 constexpr float kPack2101010_Min2 = std::bit_cast<float>(0x40400000u);
 constexpr float kPack2101010_Max2 = std::bit_cast<float>(0x40400003u);
 
+//=============================================================================
+// Pack/Unpack Constants (NORMPACKED64 - 4:20:20:20 format)
+//=============================================================================
+// XYZ are signed 20-bit fields in 3.0+X form, saturated to -524287..524287
+// (the most negative value is reserved as the overflow/NaN slot on unpack).
+// W is an unsigned 4-bit field in 3.0+w form, saturated to 0..15.
+
+constexpr float kPack4202020_Min20 = std::bit_cast<float>(0x40380001u);
+constexpr float kPack4202020_Max20 = std::bit_cast<float>(0x4047FFFFu);
+constexpr float kPack4202020_Min4 = std::bit_cast<float>(0x40400000u);
+constexpr float kPack4202020_Max4 = std::bit_cast<float>(0x4040000Fu);
+
 namespace rex::ppc {
 
 //=============================================================================
@@ -146,6 +158,9 @@ constexpr uint32_t kRoundMask = 0x03;
 
 struct FPSCRRegister {
   uint32_t csr;
+  // FPSCR bits other than RN as the guest last wrote them with mtfsf. Only RN
+  // reaches the host; status bits aren't tracked, so mffs returns these.
+  uint32_t guest_bits = 0;
 
   static constexpr size_t HostToGuest[] = {kRoundNearest, kRoundDown, kRoundUp, kRoundTowardZero};
 
@@ -158,7 +173,18 @@ struct FPSCRRegister {
   static constexpr uint32_t GuestMask = uint32_t(RoundMaskVal) | uint32_t(FlushMask);
 
   inline uint32_t getcsr() noexcept { return Platform::getcsr(); }
-  inline void setcsr(uint32_t csr) noexcept { Platform::setcsr(csr); }
+  inline void setcsr(uint32_t csr) noexcept {
+    // Keep host FP exceptions masked on every write, not just in InitHost.
+    // Recompiled guest code reaches setcsr via storeFromGuest /
+    // enableFlushMode / etc., and a csr value that still has the exception
+    // bits in their trapping state (e.g. a context whose fpscr.csr field was
+    // zero-initialized before InitHost ran) would otherwise re-arm host FP
+    // traps and raise SIGFPE on the next FP op. InitHostExceptions applies the
+    // per-arch polarity (x86: 1 = masked, ARM: 1 = trap enabled), so it is used
+    // here rather than open-coding a mask that is correct on only one of them.
+    Platform::InitHostExceptions(csr);
+    Platform::setcsr(csr);
+  }
 
   // Restoring the whole word would unmask every FP exception when csr is 0.
   inline void restoreGuestBits(uint32_t saved) noexcept {
@@ -168,10 +194,11 @@ struct FPSCRRegister {
 
   inline uint32_t loadFromHost() noexcept {
     csr = getcsr();
-    return HostToGuest[(csr & RoundMaskVal) >> RoundShift];
+    return guest_bits | uint32_t(HostToGuest[(csr & RoundMaskVal) >> RoundShift]);
   }
 
   inline void storeFromGuest(uint32_t value) noexcept {
+    guest_bits = value & ~kRoundMask;
     csr &= ~RoundMaskVal;
     csr |= Platform::GuestToHost[value & kRoundMask];
     setcsr(csr);
@@ -258,6 +285,8 @@ struct alignas(0x40) PPCContext {
   PPCRegister ctr;
   PPCXERRegister xer;
   PPCRegister reserved;
+  // The address lwarx/ldarx reserved; all ones when none is held.
+  uint64_t reserved_address = ~uint64_t(0);
   uint32_t msr = 0x200A000;
   PPCCRRegister cr0;
   PPCCRRegister cr1;

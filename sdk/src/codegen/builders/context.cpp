@@ -111,6 +111,14 @@ const char* BuilderContext::reserved() {
   return "ctx.reserved";
 }
 
+const char* BuilderContext::reserved_address() {
+  if (config().reservedRegisterAsLocalVariable) {
+    locals.reserved_address = true;
+    return "reserved_address";
+  }
+  return "ctx.reserved_address";
+}
+
 const char* BuilderContext::temp() {
   locals.temp = true;
   return "temp";
