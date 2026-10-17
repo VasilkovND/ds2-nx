@@ -13,6 +13,7 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
 #include <algorithm>
+#include <vector>
 
 #include <rex/kernel/xboxkrnl/private.h>
 #include <rex/logging.h>
@@ -221,14 +222,128 @@ typedef struct {
 } XECRYPT_RSA;
 static_assert_size(XECRYPT_RSA, 0x10);
 
+#if !REX_PLATFORM_WIN32
+// The RSA public operation without BCrypt: b = a^e mod n. Games check content signatures with it (Halo 3 calls
+// it at startup); without a result their check fails. Numbers here are arrays of 64-bit limbs, least significant
+// first, one limb wider than the modulus so that doubling never overflows. Square-and-multiply, and each modular
+// multiplication by doubling and adding (one bit at a time): slow next to Montgomery, but only a handful of
+// 2048-bit operations are ever needed. (Lesson from xenon-pc-comp's notes: the SDK wrote no output here.)
+namespace {
+using RsaLimbs = std::vector<uint64_t>;
+
+bool RsaGreaterOrEqual(const RsaLimbs& a, const RsaLimbs& b) {
+  for (size_t i = a.size(); i-- > 0;) {
+    if (a[i] != b[i]) {
+      return a[i] > b[i];
+    }
+  }
+  return true;
+}
+
+void RsaSubtract(RsaLimbs& a, const RsaLimbs& b) {  // a -= b, with a >= b
+  uint64_t borrow = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    const unsigned __int128 d = static_cast<unsigned __int128>(a[i]) - b[i] - borrow;
+    a[i] = static_cast<uint64_t>(d);
+    borrow = static_cast<uint64_t>(d >> 64) ? 1 : 0;
+  }
+}
+
+// r = 2r mod m, with r < m
+void RsaDouble(RsaLimbs& r, const RsaLimbs& m) {
+  uint64_t carry = 0;
+  for (auto& limb : r) {
+    const uint64_t next = limb >> 63;
+    limb = (limb << 1) | carry;
+    carry = next;
+  }
+  if (RsaGreaterOrEqual(r, m)) {
+    RsaSubtract(r, m);
+  }
+}
+
+// r = r + a mod m, with r, a < m
+void RsaAdd(RsaLimbs& r, const RsaLimbs& a, const RsaLimbs& m) {
+  uint64_t carry = 0;
+  for (size_t i = 0; i < r.size(); ++i) {
+    const unsigned __int128 s = static_cast<unsigned __int128>(r[i]) + a[i] + carry;
+    r[i] = static_cast<uint64_t>(s);
+    carry = static_cast<uint64_t>(s >> 64);
+  }
+  if (RsaGreaterOrEqual(r, m)) {
+    RsaSubtract(r, m);
+  }
+}
+
+bool RsaBit(const RsaLimbs& x, size_t bit) { return (x[bit / 64] >> (bit % 64)) & 1; }
+
+// a * b mod m, with a < m
+RsaLimbs RsaMultiply(const RsaLimbs& a, const RsaLimbs& b, const RsaLimbs& m) {
+  RsaLimbs r(m.size(), 0);
+  for (size_t bit = b.size() * 64; bit-- > 0;) {
+    RsaDouble(r, m);
+    if (RsaBit(b, bit)) {
+      RsaAdd(r, a, m);
+    }
+  }
+  return r;
+}
+
+// x mod m, any x of the same width
+RsaLimbs RsaReduce(const RsaLimbs& x, const RsaLimbs& m) {
+  RsaLimbs one(m.size(), 0);
+  one[0] = 1;
+  RsaLimbs r(m.size(), 0);
+  for (size_t bit = x.size() * 64; bit-- > 0;) {
+    RsaDouble(r, m);
+    if (RsaBit(x, bit)) {
+      RsaAdd(r, one, m);
+    }
+  }
+  return r;
+}
+}  // namespace
+#endif
+
 u32 XeCryptBnQwNeRsaPubCrypt_entry(ppc_ptr_t<uint64_t> qw_a, ppc_ptr_t<uint64_t> qw_b,
                                    ppc_ptr_t<XECRYPT_RSA> rsa) {
   // 0 indicates failure (but not a BOOL return value)
 #if !REX_PLATFORM_WIN32
-  REXKRNL_ERROR(
-      "XeCryptBnQwNeRsaPubCrypt called but no implementation available for "
-      "this platform!");
-  assert_always();
+  // Guest numbers: rsa->size 64-bit words, each big-endian, least significant word first. The modulus follows
+  // the XECRYPT_RSA header.
+  const uint32_t words = rsa->size;
+  const uint32_t exponent = rsa->public_exponent;
+  if (!words || words > 512) {
+    REXKRNL_ERROR("XeCryptBnQwNeRsaPubCrypt: unsupported modulus size {} words", words);
+    return 0;
+  }
+  const uint64_t* guest_a = qw_a;
+  const uint64_t* guest_n = reinterpret_cast<const uint64_t*>(&rsa[1]);
+  RsaLimbs n(words + 1, 0), a(words + 1, 0);
+  bool n_is_zero = true;
+  for (uint32_t i = 0; i < words; ++i) {
+    n[i] = memory::load_and_swap<uint64_t>(guest_n + i);
+    a[i] = memory::load_and_swap<uint64_t>(guest_a + i);
+    n_is_zero = n_is_zero && !n[i];
+  }
+  if (n_is_zero) {
+    REXKRNL_ERROR("XeCryptBnQwNeRsaPubCrypt: zero modulus");
+    return 0;
+  }
+  const RsaLimbs base_value = RsaReduce(a, n);
+  RsaLimbs one(words + 1, 0);
+  one[0] = 1;
+  RsaLimbs result = RsaReduce(one, n);  // 0 if n == 1
+  for (int bit = 31; bit >= 0; --bit) {
+    result = RsaMultiply(result, result, n);
+    if ((exponent >> bit) & 1) {
+      result = RsaMultiply(result, base_value, n);
+    }
+  }
+  uint64_t* guest_b = qw_b;
+  for (uint32_t i = 0; i < words; ++i) {
+    memory::store_and_swap<uint64_t>(guest_b + i, result[i]);
+  }
   return 1;
 #else
   uint32_t modulus_size = rsa->size * 8;

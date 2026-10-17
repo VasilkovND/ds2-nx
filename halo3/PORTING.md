@@ -19,6 +19,7 @@ the concrete record of one port.
 | 6 | Closed after ~15 s, same as 5 | Too short for the profiler, which writes every 10 s | Run a full minute when measuring |
 | 7 | CPU exception (`brk`) in `sub_8213FB68`: "Switch case out of range" | A jump table ReXGlue sized at one entry; the index has no bounds check before the jump | [Jump tables](#7-jump-tables) |
 | 7 | (same run, stack samples) one game thread at 98 % in one loop | A worker polling its queue without resting, built for the 360's six hardware threads | [Busy waits](#8-busy-waits) |
+| 8 | Read of guest `0xE0` in `sub_82107DD8`, called from `sub_8231D8D0` on the main thread, ~14 s in, just after the game gave music control back (a transition) | A game object looked up by handle was missing (its slot in the per-thread object table was empty). Suspect: content signature checks failing, since `XeCryptBnQwNeRsaPubCrypt` wrote no result | [Kernel exports](#9-kernel-exports-that-only-worked-on-windows) (to be confirmed) |
 
 ## 1. The game folder
 
@@ -129,6 +130,17 @@ underran (static). A `[[midasm_hook]]` at the loop's repeat (`0x821A85C4`) calls
 `src/halo3_hooks.cpp`, which sleeps 100 us. Expect more of these: the 360 had six hardware threads, the Switch gives
 the game three cores.
 
+## 9. Kernel exports that only worked on Windows
+
+`XeCryptBnQwNeRsaPubCrypt` (the RSA public operation, `b = a^e mod n`) was implemented with BCrypt on Windows only;
+elsewhere it logged an error, wrote nothing and returned success, so every signature the game checks with it fails.
+Halo 3 calls it several times at startup. `sdk/src/kernel/xboxkrnl/xboxkrnl_crypt.cpp` now has a portable version
+(multi-word arithmetic, checked against Python's `pow` on random 64- to 2048-bit numbers).
+
+The lead came from xenon-pc-comp's notes (retail Halo 3 on ReXGlue for Linux; read as reference, no code copied).
+They list other runtime pieces worth checking for the next game: `XeKeysConsolePrivateKeySign` must return TRUE
+(Reach retries forever otherwise), the utility-partition cache drives, and a pause behind the `db16cyc` spin hint.
+
 ## How each crash was read
 
 - **Logs on the console**: `<NRO folder>/logs/` (one `halo3_NNN.log` per run) and `<NRO folder>/logs/rex/`
@@ -150,6 +162,8 @@ the game three cores.
 - Nothing is drawn: the deko3d renderer, and Halo's shaders (they come from the map files, not the executable).
 - `cache0:` / `cache1:` (the 360's cache partition) are left unmounted, as upstream does; the game reads from the
   disc instead.
-- `XeCryptBnQwNeRsaPubCrypt` has no implementation on this platform; the game calls it at startup.
+- `XeKeysConsolePrivateKeySign` returns 0 (failure, as a BOOL); Halo 3 has not been seen calling it.
+- `db16cyc` (the 360's "pause for 16 cycles" hint, 12 sites in Halo 3) compiles to nothing, so loops built around
+  it spin flat out. A pause there would help every game; it needs a codegen change.
 - The cross-DLL import lookup tries the bare name before `.dll`, which floods the log with
   `'WavesLibDLL' -> [no device]`.
