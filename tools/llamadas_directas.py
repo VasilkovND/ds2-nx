@@ -22,15 +22,19 @@ import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEN = os.path.join(RAIZ, 'nfsmw', 'generated', 'default')
-FUENTES = [os.path.join(RAIZ, 'nfsmw', 'src'), os.path.join(RAIZ, 'sdk', 'src'),
-           os.path.join(RAIZ, 'sdk', 'include'), os.path.join(RAIZ, 'nfsmw', 'overrides.toml'),
-           os.path.join(RAIZ, 'nfsmw', 'huecos.toml'), os.path.join(RAIZ, 'nfsmw', 'nfsmw_manifest.toml'),
-           os.path.join(RAIZ, 'nfsmw', 'CMakeLists.txt')]
 
 
-def enganchadas():
+def fuentes(juego):
+    # The game folder (nfsmw/, halo3/, an edition tree) is the one that holds the generated folder.
+    manifiestos = [os.path.join(juego, f) for f in sorted(os.listdir(juego)) if f.endswith('_manifest.toml')]
+    return [os.path.join(juego, 'src'), os.path.join(RAIZ, 'sdk', 'src'), os.path.join(RAIZ, 'sdk', 'include'),
+            os.path.join(juego, 'overrides.toml'), os.path.join(juego, 'huecos.toml'), *manifiestos,
+            os.path.join(juego, 'CMakeLists.txt')]
+
+
+def enganchadas(juego):
     nombres = set()
-    for raiz in FUENTES:
+    for raiz in fuentes(juego):
         if os.path.isfile(raiz):
             rutas = [raiz]
         else:
@@ -52,7 +56,7 @@ def main():
     if '--enganchadas' in sys.argv:
         con_gancho = set(open(sys.argv[sys.argv.index('--enganchadas') + 1], encoding='utf-8').read().split())
     else:
-        con_gancho = enganchadas()
+        con_gancho = enganchadas(os.path.dirname(os.path.dirname(os.path.abspath(gen))))
     llamada = re.compile(r'(?<![\w])sub_([0-9A-F]{8})\(ctx, base\);')
     directa = re.compile(r'__imp__sub_([0-9A-F]{8})\(ctx, base\);')
     cambiadas = 0
