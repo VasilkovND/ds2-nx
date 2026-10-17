@@ -21,11 +21,11 @@ import re
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GEN = os.path.join(RAIZ, 'app', 'generated', 'default')
-FUENTES = [os.path.join(RAIZ, 'app', 'src'), os.path.join(RAIZ, 'sdk', 'src'),
-           os.path.join(RAIZ, 'sdk', 'include'), os.path.join(RAIZ, 'app', 'overrides.toml'),
-           os.path.join(RAIZ, 'app', 'huecos.toml'), os.path.join(RAIZ, 'app', 'nfsmw_manifest.toml'),
-           os.path.join(RAIZ, 'app', 'CMakeLists.txt')]
+GEN = os.path.join(RAIZ, 'nfsmw', 'generated', 'default')
+FUENTES = [os.path.join(RAIZ, 'nfsmw', 'src'), os.path.join(RAIZ, 'sdk', 'src'),
+           os.path.join(RAIZ, 'sdk', 'include'), os.path.join(RAIZ, 'nfsmw', 'overrides.toml'),
+           os.path.join(RAIZ, 'nfsmw', 'huecos.toml'), os.path.join(RAIZ, 'nfsmw', 'nfsmw_manifest.toml'),
+           os.path.join(RAIZ, 'nfsmw', 'CMakeLists.txt')]
 
 
 def enganchadas():

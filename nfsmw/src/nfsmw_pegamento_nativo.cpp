@@ -96,7 +96,7 @@ REX_EXTERN(sub_826992F0);  // parametros de efecto
 REX_EXTERN(sub_82593C50);  // DrawIndexedVertices
 // The rest, as the generated code calls them (8244_EA48 through its sub_ alias, the others directly). The
 // name is built in pieces on purpose: tools/llamadas_directas.py treats any address that appears whole in
-// app/src as hooked, and their calls from the rest of the game must stay direct (__imp__, inlinable).
+// nfsmw/src as hooked, and their calls from the rest of the game must stay direct (__imp__, inlinable).
 #define NFSMW_PEGAMENTO_UNIR_(a, b) a##b
 #define NFSMW_PEGAMENTO_CAMBIO_ESTADO NFSMW_PEGAMENTO_UNIR_(sub_8244, EA48)
 #define NFSMW_PEGAMENTO_VISTA_E20 NFSMW_PEGAMENTO_UNIR_(__imp__sub_8245, 3E20)

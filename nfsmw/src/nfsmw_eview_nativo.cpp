@@ -101,7 +101,7 @@ REXCVAR_DEFINE_BOOL(nfsmw_eview_nativo, true, "NFSMW",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 // This file only names by their 8 digits the functions it hooks or that were already hooked
-// (tools/llamadas_directas.py treats any 82xxxxxx address in app/src as hooked); the rest are split (8245_4428).
+// (tools/llamadas_directas.py treats any 82xxxxxx address in nfsmw/src as hooked); the rest are split (8245_4428).
 REX_EXTERN(__imp__sub_8243E358);  // original Render (the hook is in nfsmw_sombras_lod.cpp and calls Render() from here)
 REX_EXTERN(__imp__sub_82452868);  // draw packet
 REX_EXTERN(__imp__sub_82500010);
@@ -688,7 +688,7 @@ void Apagar(const PPCContext& ctx, uint64_t n, const char* que, bool de_la_traza
                           t.donde, kNombreLlamada[y.tipo], y.r[0], y.r[1], y.r[2], y.r[3], y.r[4]);
   } else if (t.n == 0 && t.camino == 3) {
     detalle = "; la traza esta VACIA: las llamadas de la Render original no pasan por los ganchos de este fichero "
-              "(falta revertir_llamadas_eview.py en app/generated/default?)";
+              "(falta revertir_llamadas_eview.py en nfsmw/generated/default?)";
   }
   REXLOG_INFO("[eview] DIFERENCIA en Render ({}; llamada {}, camino {}): vista 0x{:08X} modelo 0x{:08X} matriz "
               "0x{:08X} r1 0x{:08X}; la original hizo {} llamadas{}. Camino nativo APAGADO para el resto de la "

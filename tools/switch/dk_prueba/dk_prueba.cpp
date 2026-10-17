@@ -8,7 +8,7 @@
  *  1. uam on the console: the test pattern's own shaders are compiled at start by the same uam library (with
  *     SwitchWakerHD's patches) the game will use, on a worker thread as the game's will be (8 MB stack, priority
  *     0x3B). "uam listo" or "AUTOPRUEBA FALLIDA".
- *  2. The core (app/src/nfsmw_dk_nucleo.cpp): device, queue, work slots, upload ring, image heap, descriptors,
+ *  2. The core (nfsmw/src/nfsmw_dk_nucleo.cpp): device, queue, work slots, upload ring, image heap, descriptors,
  *     swapchain at the console's mode (1280x720 handheld, 1920x1080 docked).
  *  3. The test pattern, which must look like this (Direct3D's conventions, the ones the game's shaders use):
  *       - four quadrants: red top left, green top right, blue bottom left, white bottom right;

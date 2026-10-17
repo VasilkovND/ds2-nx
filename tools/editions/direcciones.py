@@ -24,7 +24,7 @@ WEAK_CALL = re.compile(r'(?<![\w])sub_([0-9A-F]{8})\(ctx, base\);')
 
 
 def main():
-    tree = sys.argv[1] if len(sys.argv) > 1 else 'app'
+    tree = sys.argv[1] if len(sys.argv) > 1 else 'nfsmw'
     found = set()
 
     def scan(text):

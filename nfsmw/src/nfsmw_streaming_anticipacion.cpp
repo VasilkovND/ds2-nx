@@ -15,7 +15,7 @@
 //
 // Where it is in the recompiled binary   (see "The proof" below)
 //   sub_824BE0A8 = TrackStreamer::GetPredictedZone(StreamingPositionEntry* r4)
-//                  app/generated/default/nfsmw_recomp.99.cpp:18500
+//                  nfsmw/generated/default/nfsmw_recomp.99.cpp:18500
 //   sub_824BEF30 = TrackStreamer::DetermineCurrentZones   nfsmw_recomp.129.cpp:17543  (only caller)
 //   sub_824BE4E8 = TrackStreamer::DetermineStreamingSections  nfsmw_recomp.88.cpp:18083
 //   sub_824BA290 = TrackPathManager::FindZone             nfsmw_recomp.37.cpp:18450

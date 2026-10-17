@@ -1,43 +1,58 @@
-# halo3-nx
+# xbox360-nx
 
-A native Nintendo Switch port of **Halo 3** (Xbox 360). It's not an emulator: the game's PowerPC code is statically
-recompiled to C++ with [ReXGlue](https://github.com/rexglue/rexglue-sdk) and built for the Switch, and frames are
-drawn by a native deko3d renderer.
+Xbox 360 games running natively on the Nintendo Switch. It's not an emulator: each game's PowerPC code is
+statically recompiled to C++ with [ReXGlue](https://github.com/rexglue/rexglue-sdk) and built for the Switch, and
+frames are drawn by a native renderer.
 
 > [!NOTE]
-> Work in progress, not playable yet. You need your own copy of the Xbox 360 game.
+> You need your own copy of each game. This repository contains no game data or game code.
 
-## How it works
+## Games
 
-This repository is a fork of [nfsmw-nx](https://github.com/StevensND/nfsmw-nx), the Switch port of Need for Speed:
-Most Wanted. Halo 3 sits beside it as a second game on the same Switch layer:
+| Game | Folder | Status |
+| --- | --- | --- |
+| Need for Speed: Most Wanted (2005) | [`nfsmw/`](nfsmw) | Playable, about 30 FPS ([details](README.nfsmw.md)) |
+| Halo 3 | [`halo3/`](halo3) | In progress, not playable yet |
+
+Every game is its own folder with its own NRO, and they all build on one shared SDK. A fix in `sdk/` reaches every
+game. To add a game, see [porting another game](docs/porting-another-game.md).
+
+## Layout
 
 | Folder | Contents |
 | --- | --- |
-| `halo3/` | Halo 3: manifest, codegen fixes, game hooks |
-| `app/` | Need for Speed: Most Wanted, from upstream ([its README](README.nfsmw.md)) |
-| `sdk/` | ReXGlue SDK with the Horizon layer |
-| `shaders/` | Xenos shader translator and library tools |
-| `docs/` | Documentation, including [porting another game](docs/porting-another-game.md) |
+| `<game>/` | One per game: manifest, codegen fixes, hooks, renderer glue, CMake project |
+| `sdk/` | ReXGlue SDK with the Horizon (Switch) layer, shared by every game |
+| `shaders/` | Xenos shader translator and shader library tools |
+| `tools/` | Codegen and build scripts |
+| `docs/` | Documentation: start with [docs/README.md](docs/README.md) |
+
+## Build
+
+devkitA64 and libnx from [devkitPro](https://devkitpro.org), CMake, Ninja, Python, and your own copy of the game.
+The steps are in [docs/building.md](docs/building.md).
 
 ## Credits
 
-- **Bungie and Microsoft**: creators of Halo 3. This is an unofficial fan port with no affiliation.
-- **[StevensND](https://github.com/StevensND/nfsmw-nx)**: nfsmw-nx, the Switch layer, renderer and docs this port
-  is built on.
+- **[StevensND](https://github.com/StevensND/nfsmw-nx)**: nfsmw-nx, the Switch port this repository is forked from:
+  its Switch layer, renderer and documentation.
+- **[madelrandel-blip](https://github.com/madelrandel-blip/NFSMW-Recompiled)**: NFSMW Recompiled.
 - **[Tom Clay](https://github.com/rexglue/rexglue-sdk)**: the ReXGlue SDK, built on the work of the
   **[Xenia](https://xenia.jp)** team.
 - **[summers-aaron](https://github.com/summers-aaron/xenon-pc-comp)**: xenon-pc-comp, Halo 3 on ReXGlue for Linux.
   Used as a reference for what Halo 3 needs; none of its code is copied.
 - **[hedge-dev](https://github.com/hedge-dev/XenosRecomp)**: XenosRecomp.
+- **[danfromtico](https://github.com/danfromtico/mesa-switch)** and **[NaGaa95](https://github.com/NaGaa95/mesa-switch)**:
+  mesa-switch.
 - **[centollOS](https://github.com/centollOS/SwitchWakerHD)**: the uam shader compiler patches.
 - **[devkitPro](https://devkitpro.org) and [switchbrew](https://github.com/switchbrew/libnx)**: devkitA64 and libnx.
 - The other libraries listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Legal
 
-No affiliation with Microsoft or Bungie. "Halo" is a trademark of Microsoft. This repository contains no assets or
-program code from the game; you provide your own legally obtained copy.
+Unofficial fan ports with no affiliation to Microsoft, Bungie, Electronic Arts or EA Black Box. "Halo" is a trademark
+of Microsoft; "Need for Speed" is a trademark of Electronic Arts. You provide your own legally obtained copy of each
+game. Running homebrew requires custom firmware, which violates Nintendo's terms and can get a console banned.
 
 Source code is under the GPL-3.0 license (see [LICENSE](LICENSE)), inherited from nfsmw-nx. The SDK changes are under
-the SDK's BSD-3-Clause license.
+the SDK's BSD-3-Clause license, and the shader translator and Mesa changes under MIT.

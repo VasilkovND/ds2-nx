@@ -7,7 +7,7 @@ project(nfsmw_dk_prueba C CXX)
 
 get_filename_component(NFSMW_RAIZ "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(NFSMW_TERCEROS "${NFSMW_RAIZ}/sdk/thirdparty")
-set(NFSMW_APP "${NFSMW_RAIZ}/app/src")
+set(NFSMW_APP "${NFSMW_RAIZ}/nfsmw/src")
 
 add_subdirectory("${NFSMW_TERCEROS}/uam" uam EXCLUDE_FROM_ALL)
 set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)

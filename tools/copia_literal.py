@@ -1,14 +1,14 @@
 """Generates the literal copies of guest functions used by the self-checking guards of the native code.
 
-Some game functions have a native C++ replacement (see app/src/nfsmw_efecto_pasada_nativo.cpp and
-app/src/nfsmw_pegamento_nativo.cpp). Their guards run the native version against a copy of the recompiled original
+Some game functions have a native C++ replacement (see nfsmw/src/nfsmw_efecto_pasada_nativo.cpp and
+nfsmw/src/nfsmw_pegamento_nativo.cpp). Their guards run the native version against a copy of the recompiled original
 in which every outgoing call goes through a recording policy, so both can be compared without side effects. Those
 copies are code translated from the game's executable, so they are not part of this repository: this tool extracts
 them from your own generated code.
 
 Run it after the code generator and after llamadas_directas.py:
 
-    python tools/copia_literal.py app/generated/default app/src/copias_literales
+    python tools/copia_literal.py nfsmw/generated/default nfsmw/src/copias_literales
     python tools/copia_literal.py app_usa/generated/default app_usa/src/copias_literales --tabla app_usa/tabla.tsv
 
 The addresses below are those of the PAL Spanish executable. For another edition, --tabla takes the address table

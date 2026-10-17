@@ -5,7 +5,7 @@ The Vulkan build has them as SPIR-V made from a modified copy of the game's brig
 kHuellaBrightPass); that copy is game-derived, so it is not in the repository, and neither is what this makes. This
 script makes the deko3d ones from the deko3d library's own rewritten HLSL of p_000094 (the one
 shaders/nfsmw_regenerar_biblioteca_pcf.sh compiles with DEKO3D=1), with the same DXC options, and writes
-app/src/nfsmw_dk_resplandor_spirv.h (gitignored). Without that header the deko3d build keeps the game's shader.
+nfsmw/src/nfsmw_dk_resplandor_spirv.h (gitignored). Without that header the deko3d build keeps the game's shader.
 
 The game's bright pass scales the scene by middle gray over the adapted luminance and subtracts the threshold from
 each channel. On saturated colors that leaves a blue halo around trees and roofs against the sky. The variants
@@ -14,7 +14,7 @@ take the same scaled color c and:
   suave    c * (sum of max(c - threshold, 0)) / sum(c): the per-channel energy, with c's hue.
 These are the formulas of the Vulkan build's variants (read from its SPIR-V).
 
-  tools/switch/dk_resplandor.py out/dk/hlsl_rw/p_000094.hlsl --dxc path/to/dxc [--salida app/src/...h]
+  tools/switch/dk_resplandor.py out/dk/hlsl_rw/p_000094.hlsl --dxc path/to/dxc [--salida nfsmw/src/...h]
 
 DXC: the one the libraries are made with (v1.8.2502, linux_dxc_2025_02_20); with it the plain shader comes out
 byte-identical to the library's, which this checks when --referencia is given.
@@ -62,7 +62,7 @@ def main():
     a.add_argument("hlsl", help="p_000094.hlsl reescrito de la biblioteca de deko3d")
     a.add_argument("--dxc", default="dxc")
     a.add_argument("--referencia", help="spirv_dk/p_000094.spv de la biblioteca, para comprobar el DXC")
-    a.add_argument("--salida", default=os.path.join(os.path.dirname(__file__), "..", "..", "app", "src",
+    a.add_argument("--salida", default=os.path.join(os.path.dirname(__file__), "..", "..", "nfsmw", "src",
                                                    "nfsmw_dk_resplandor_spirv.h"))
     args = a.parse_args()
     fuente = open(args.hlsl, encoding="utf-8").read()

@@ -8,7 +8,7 @@ from emparejar import BASE, normalizar
 
 R = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) + '/'
 ed, img_pal, img_otra = sys.argv[1:4]
-pal = json.load(open(R + 'app/generated/default/codegen.partition.json'))['assignments']
+pal = json.load(open(R + 'nfsmw/generated/default/codegen.partition.json'))['assignments']
 otra = json.load(open(R + 'app_%s/generated/default/codegen.partition.json' % ed))['assignments']
 mapa = {}
 for l in open(ed + '/todas.tsv', encoding='utf-8').read().splitlines()[1:]:

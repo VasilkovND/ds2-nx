@@ -55,7 +55,7 @@ This extracts the disc into `assets/game_root` ("fase1_extraer" means "phase 1: 
 folder, so the game never ends up in the repository.
 
 Each [edition](glossary.md#edition) of the game has a different `default.xex` and needs its own build. The main
-folder, `app/`, is set up for the PAL Spanish edition; [editions.md](editions.md) explains the others.
+folder, `nfsmw/`, is set up for the PAL Spanish edition; [editions.md](editions.md) explains the others.
 
 ## 3. Build the graphics driver
 
@@ -81,16 +81,16 @@ variables, shared by the pieces of a split function (`share_registers`, see [too
 ## 5. Translate the game to C++
 
 ```sh
-REXGLUE=out/host/rexglue tools/codegen.sh app
+REXGLUE=out/host/rexglue tools/codegen.sh nfsmw
 ```
 
 This does three things:
 
-1. It runs the code generator with the settings in `app/nfsmw_manifest.toml`. The C++ goes to `app/generated/default`,
+1. It runs the code generator with the settings in `nfsmw/nfsmw_manifest.toml`. The C++ goes to `nfsmw/generated/default`,
    which git ignores because it is made from the game.
 2. It runs `tools/llamadas_directas.py` ("direct calls"). It turns calls between translated functions into direct C++
    calls, so that LTO can optimize across files.
-3. It runs `tools/copia_literal.py` ("literal copy"). It writes `app/src/copias_literales/`: exact copies of five game
+3. It runs `tools/copia_literal.py` ("literal copy"). It writes `nfsmw/src/copias_literales/`: exact copies of five game
    functions. The [guards](glossary.md#guard) of their native replacements compare against them (see
    [native-renderer.md](native-renderer.md)).
 
@@ -105,23 +105,23 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 -MesaSdk C:\path\to\mes
 Or by hand:
 
 ```sh
-cmake -S app -B app/out/sw8 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+cmake -S nfsmw -B nfsmw/out/sw8 -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE=tools/switch/cmake/switch-devkitA64.cmake \
   -DREXSDK_DIR=$PWD/sdk \
   -DREXGLUE_SWITCH_NVK_SDK=/path/to/mesa-sdk/opt/devkitpro/portlibs/switch \
   -DNFSMW_PGO=usar -DNFSMW_BUILD_LAUNCHER=OFF
-cmake --build app/out/sw8 -j 4
+cmake --build nfsmw/out/sw8 -j 4
 ```
 
-The result is `app/out/sw8/nfsmw.nro`. Rename it to `nfsmw-nx.nro` when you copy it to the SD card (step 8).
+The result is `nfsmw/out/sw8/nfsmw.nro`. Rename it to `nfsmw-nx.nro` when you copy it to the SD card (step 8).
 
-Build options, in `app/CMakeLists.txt`:
+Build options, in `nfsmw/CMakeLists.txt`:
 
 | Option | Normally | What it does |
 |---|---|---|
 | `NFSMW_LTO` | ON | Optimizes the translated code and the app as a whole at the end of the build ([LTO](glossary.md#lto)). It uses 2 jobs (`-flto=2`), because more do not fit in 16 GB of RAM. |
 | `NFSMW_PGO` | empty | `usar` ("use") builds with the recorded profile in `pgo/pal_es`. `generar` ("generate") builds a special NRO that records a new profile. |
-| `NFSMW_ORDEN_FUNCIONES` | ON | Puts the functions that run most at the start of the program (list in `app/orden_funciones.ld`), which makes them faster to fetch. |
+| `NFSMW_ORDEN_FUNCIONES` | ON | Puts the functions that run most at the start of the program (list in `nfsmw/orden_funciones.ld`), which makes them faster to fetch. |
 
 The icon for the Homebrew Menu is not included. Put a 256x256 JPEG at `tools/switch/icono/nfsmw_icono.jpg`, or the
 NRO gets libnx's default icon.
@@ -181,7 +181,7 @@ game), or with a [forwarder](glossary.md#forwarder). Started from the album, it 
 
 Every `default.xex` is a different program, so every edition needs its own build:
 
-- `tools/editions/crear_arbol.py` ("create tree") makes a copy of the app, `app_<edition>`, with all of our addresses
+- `tools/editions/crear_arbol.py` ("create tree") makes a copy of the app, `nfsmw_<edition>`, with all of our addresses
   translated to that edition.
 - `tools/editions/build_edition.ps1` builds it from the same folder paths as the main one, so the PGO profile matches.
 

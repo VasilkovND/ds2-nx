@@ -43,7 +43,7 @@ solve when you build:
    opaque: Mesa only uses it through pointers.
 
 The install step leaves an SDK folder. The app is pointed at its `opt/devkitpro/portlibs/switch` subfolder with
-`REXGLUE_SWITCH_NVK_SDK`. **After you replace the libraries, delete `app/out/sw8/nfsmw` and `nfsmw.nro`**: Ninja does
+`REXGLUE_SWITCH_NVK_SDK`. **After you replace the libraries, delete `nfsmw/out/sw8/nfsmw` and `nfsmw.nro`**: Ninja does
 not notice a library that changed outside its build folder, and would keep the old driver.
 
 ## ZCULL: skipping hidden pixels

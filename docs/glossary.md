@@ -248,7 +248,7 @@ the "profile"). Then the normal build uses it to optimize and arrange that code 
 ### Function ordering
 
 Putting the functions that run most often next to each other in the program, so the processor keeps them in its fast
-memory (its cache) more easily. The list is `app/orden_funciones.ld`.
+memory (its cache) more easily. The list is `nfsmw/orden_funciones.ld`.
 
 ## This port
 

@@ -15,11 +15,11 @@ rom/
 
 # --- Generated from the game --------------------------------------------------
 generated/
-app*/generated/
-app*/src/copias_literales/
-app*/src/nfsmw_nativo_resplandor_*_spirv.h
-app*/src/nfsmw_dk_resplandor_spirv.h
-app_*/
+nfsmw*/generated/
+nfsmw*/src/copias_literales/
+nfsmw*/src/nfsmw_nativo_resplandor_*_spirv.h
+nfsmw*/src/nfsmw_dk_resplandor_spirv.h
+nfsmw_*/
 
 # --- Build output -------------------------------------------------------------
 out/

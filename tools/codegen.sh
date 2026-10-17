@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs the code generator on one edition tree and the two steps the build depends on.
 #
-#   REXGLUE=out/host/rexglue tools/codegen.sh app
+#   REXGLUE=out/host/rexglue tools/codegen.sh nfsmw
 #   REXGLUE=out/host/rexglue tools/codegen.sh app_usa app_usa/enganchadas.txt app_usa/tabla.tsv
 #
 # The second and third arguments are for the trees made by tools/editions/crear_arbol.py: the list of hooked

@@ -97,7 +97,7 @@ REX_EXTERN(__imp__sub_824538D0);
 REX_EXTERN(sub_82449C00);
 REX_EXTERN(sub_82449988);
 // The original normalization. The name is assembled from parts on purpose: tools/llamadas_directas.py treats
-// any address that appears whole in app/src as hooked, and its 70 calls from the generated code must stay
+// any address that appears whole in nfsmw/src as hooked, and its 70 calls from the generated code must stay
 // direct.
 #define NFSMW_MATRICES_UNIR_(a, b) a##b
 #define NFSMW_MATRICES_NORMALIZAR NFSMW_MATRICES_UNIR_(__imp__sub_8215, A588)

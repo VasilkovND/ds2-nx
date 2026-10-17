@@ -7,7 +7,7 @@
 //   the switch changes geometry and texture, and it is a pointer swap without a fade: pop.
 //
 // WHERE IT IS IN THE RECOMPILED BINARY
-//   sub_824C2850 = ScenerySectionHeader::DrawAScenery   app/generated/default/nfsmw_recomp.70.cpp:18095
+//   sub_824C2850 = ScenerySectionHeader::DrawAScenery   nfsmw/generated/default/nfsmw_recomp.70.cpp:18095
 //     :18292  call to sub_824C2720 (InlinedViewGetPixelSize) -> returns pixel_size in r3
 //             and writes the distance to the camera into the float r6 points to
 //     :18391  lfs f7,80(r1)      <- that distance
@@ -15,7 +15,7 @@
 //     :18410  blt -> 0x824C2A88  <- if distance < K: full mesh, nothing else is checked
 //     :18412  lfs f13,-4396(r27) <- the 8.7f, at 0x82060BBC
 //     :18417  blt -> 0x824C2AC8  <- if pixel_size/max(Density,6) < 8.7: reduced mesh
-//   sub_824C2720 = InlinedViewGetPixelSize              app/generated/default/nfsmw_recomp.4.cpp:18706
+//   sub_824C2720 = InlinedViewGetPixelSize              nfsmw/generated/default/nfsmw_recomp.4.cpp:18706
 //   A single caller in the whole binary: nfsmw_recomp.70.cpp:18292, inside DrawAScenery.
 //
 // WHY THE HOOK IS HERE AND NOT IN DrawAScenery

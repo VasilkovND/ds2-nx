@@ -96,7 +96,7 @@ REXCVAR_DECLARE(int32_t, nfsmw_escenario_detalle);
 REX_EXTERN(__imp__sub_824C2850);  // la original
 REX_EXTERN(sub_8243E7D8);         // GetVisibleState through its hook, like the original (itself native)
 // CreateWindRotMatrix and bMulMatrix, the originals. The name is assembled from parts on purpose:
-// tools/llamadas_directas.py treats any address that appears whole in app/src as hooked, and their calls
+// tools/llamadas_directas.py treats any address that appears whole in nfsmw/src as hooked, and their calls
 // from the generated code must remain direct (__imp__, inlinable).
 #define NFSMW_ESCENARIO_UNIR_(a, b) a##b
 #define NFSMW_ESCENARIO_VIENTO NFSMW_ESCENARIO_UNIR_(__imp__sub_824F, D7C0)

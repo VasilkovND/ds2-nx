@@ -1,4 +1,4 @@
-#include "../app/src/nfsmw_shader_vulkan.h"
+#include "../nfsmw/src/nfsmw_shader_vulkan.h"
 #include <algorithm>
 #include <cstdio>
 #include <fstream>

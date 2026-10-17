@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-# Creates the build tree for another edition of the game (app_<edition>) from app/.
+# Creates the build tree for another edition of the game (nfsmw_<edition>) from nfsmw/.
 #
-# Each different default.xex is a different program and needs its own NRO. Our code (app/src, the codegen
+# Each different default.xex is a different program and needs its own NRO. Our code (nfsmw/src, the codegen
 # toml files and the linker function order) is written against the Spanish PAL executable. This step
 # copies what the build needs and translates every 82xxxxxx address with the table from
-# tools/editions/emparejar.py. app/ is not touched.
+# tools/editions/emparejar.py. nfsmw/ is not touched.
 #
-# app_<edition> sits next to app/: the relative paths (../assets, ../tools, the SDK) resolve the same and
+# nfsmw_<edition> sits next to nfsmw/: the relative paths (../assets, ../tools, the SDK) resolve the same and
 # the build objects keep the same names. That is why PGO finds its .gcda files under the same name.
 #
 # The partition of functions across files (generated/default/codegen.partition.json) is seeded with the
 # translated Spanish one: the codegen honors it, and every file comes out with the same functions in the
 # same order.
 #
-# Usage: py tools/editions/crear_arbol.py <edition> <table.tsv> <xex relative to app/> [OLD=NEW ...]
+# Usage: py tools/editions/crear_arbol.py <edition> <table.tsv> <xex relative to nfsmw/> [OLD=NEW ...]
 #   OLD=NEW: XXH3 fingerprints of shaders that change in that edition (kHuellaBrightPass, kHuellaCielo...).
 import glob
 import json
@@ -23,7 +23,7 @@ import shutil
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-APP = os.path.join(RAIZ, 'app')
+APP = os.path.join(RAIZ, 'nfsmw')
 PAT = re.compile(r'(?<![0-9A-Fa-f])82[0-9A-Fa-f]{6}(?![0-9A-Fa-f])')
 # headers with SPIR-V or other binary data written in hexadecimal: not addresses
 BINARIOS = ('_spirv.h', '_ps.h', '_vs.h')
@@ -102,7 +102,7 @@ def main():
         open(ruta, 'w', encoding='utf-8', newline='').write(texto)
         escritos.append(rel)
 
-    # sources: every address must have a safe translation. Files no longer in app/src are deleted.
+    # sources: every address must have a safe translation. Files no longer in nfsmw/src are deleted.
     for d, _, fs in os.walk(os.path.join(destino, 'src')):
         for f in fs:
             rel = os.path.relpath(os.path.join(d, f), destino)
@@ -126,7 +126,7 @@ def main():
             cambios += nuevo != texto
             escribir(rel, nuevo)
 
-    # the rest of app/ that the build uses
+    # the rest of nfsmw/ that the build uses
     for rel in ('CMakeLists.txt', 'CMakePresets.json', 'nfsmw.toml', 'orden_funciones.ld', 'overrides.toml',
                 os.path.join('generated', 'rexglue.cmake')):
         texto = open(os.path.join(APP, rel), encoding='utf-8', newline='').read()
@@ -182,7 +182,7 @@ def main():
     reparto['assignments'] = dict(sorted(sembrado.items()))
     escribir(os.path.join('generated', 'default', 'codegen.partition.json'), json.dumps(reparto, indent=2) + '\n')
 
-    # weak calls, for tools/llamadas_directas.py: the functions that the tested build (app/generated/default)
+    # weak calls, for tools/llamadas_directas.py: the functions that the tested build (nfsmw/generated/default)
     # calls through the weak path, translated. That way every call comes out the same as in the Spanish
     # edition, call by call. A list taken from the current sources does not work: they mention new addresses
     # since the last run of the tool.

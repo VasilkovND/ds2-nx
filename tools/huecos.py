@@ -57,7 +57,7 @@ Usage:
 #
 #  What does work:
 #    1. Split only the gaps proven to have several entries (where a crash
-#       already happened inside). See the block at the end of app/huecos.toml.
+#       already happened inside). See the block at the end of nfsmw/huecos.toml.
 #    2. A probing run of the release build, which finds them empirically in
 #       one go.
 # ============================================================================
@@ -101,7 +101,7 @@ def medir_funciones(gen_dir):
 
 def main():
     p = argparse.ArgumentParser(description="Busca huecos de codigo sin funcion.")
-    p.add_argument("--gen", default="app/generated/default",
+    p.add_argument("--gen", default="nfsmw/generated/default",
                    help="carpeta con el codigo generado")
     p.add_argument("--min", type=int, default=4,
                    help="tamano minimo de hueco a listar (por defecto 4)")

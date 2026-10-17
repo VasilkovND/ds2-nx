@@ -65,7 +65,7 @@ game thread and another busy guest thread, and the GPU ring thread ran above it 
 - The audio worker (the thread that mixes each audio frame) may wait up to 30 ms for a late packet, instead of mixing
   that voice as silence (setting `nfsmw_audio_esperar_servidor_ms`).
 
-Both are in `app/src/nfsmw_audio_servidor.cpp`. Together they made the problem "barely noticeable".
+Both are in `nfsmw/src/nfsmw_audio_servidor.cpp`. Together they made the problem "barely noticeable".
 
 The SDK's priority table also had a bug. It compared thread names exactly, but thread names get a ` (F80000xx)`
 suffix, so the audio worker and the XMA decoder never got the priority meant for them. It now compares with
@@ -79,7 +79,7 @@ recompiled code. The C++ does the same floating-point operations in the same ord
 for example `double(float(std::fma(...)))`, and the PowerPC instruction `fnmsubs` written as `-std::fma(x, y, -z)`.
 Over 159 million samples there were zero differences. The server's CPU time dropped by 17.5 %.
 
-The code is in `app/src/`: `nfsmw_audio_remuestreo.cpp` (resamplers), `nfsmw_audio_filtro.cpp` (filter),
+The code is in `nfsmw/src/`: `nfsmw_audio_remuestreo.cpp` (resamplers), `nfsmw_audio_filtro.cpp` (filter),
 `nfsmw_audio_suma.cpp` (gain sum) and `nfsmw_crt_nativo.cpp` (`memset`).
 
 ### 3. XMA decoding off the game's thread
@@ -121,7 +121,7 @@ timeout. When it wakes up and its slot is still busy, it goes back to waiting wi
 lost end-of-packet notification stops it for good, and with it the game's queue of audio commands.
 
 **Fix:** a timeout on that wait. After 250 ms without progress, the thread retries the delivery and frees the slot.
-A timeout alone is not enough: the loop must also retry. The code is in `app/src/nfsmw_audio_servidor.cpp` (setting
+A timeout alone is not enough: the loop must also retry. The code is in `nfsmw/src/nfsmw_audio_servidor.cpp` (setting
 `nfsmw_audio_rescate`, on by default).
 
 **Lesson:** when a failure is intermittent, one run with working audio does not prove that a build is good.
@@ -162,7 +162,7 @@ at 30 frames per second). So videos stuttered and their audio ended before the p
 
 The port now gives the same bytes to FFmpeg's WMV3 decoder instead. It reads them through the game's own data
 callbacks, and writes the decoded image planes (the Y, U and V parts of each frame) where the game expects them.
-Videos now take 7-15 ms per frame. The code is in `app/src/nfsmw_video_nativo.cpp` and `app/src/nfsmw_video_wmv3.cpp`,
+Videos now take 7-15 ms per frame. The code is in `nfsmw/src/nfsmw_video_nativo.cpp` and `nfsmw/src/nfsmw_video_wmv3.cpp`,
 and the setting `nfsmw_video_wmv3_nativo` turns it on (on by default).
 
 - **License.** FFmpeg is linked under the LGPL 2.1 (the SDK's build, configured without GPL parts). Do not link a GPL
