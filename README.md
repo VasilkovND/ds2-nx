@@ -39,6 +39,10 @@ The steps are in [docs/building.md](docs/building.md).
 - **[madelrandel-blip](https://github.com/madelrandel-blip/NFSMW-Recompiled)**: NFSMW Recompiled.
 - **[Tom Clay](https://github.com/rexglue/rexglue-sdk)**: the ReXGlue SDK, built on the work of the
   **[Xenia](https://xenia.jp)** team.
+- ReXGlue forks whose codegen fixes are applied here, with credit in each commit:
+  **[stuken](https://github.com/stuken/rexglue-sdk)** (D3D pack/unpack, vmsum, fctid/fres, FPSCR) and
+  **[furqanagwan](https://github.com/furqanagwan/rexglue-sdk)** (stwcx. reservations, mffs, vsl).
+- **[haloce-nx](https://github.com/nx-mod/haloce-nx)** (CC0): the first-launch copy of the game out of a disc image.
 - **[summers-aaron](https://github.com/summers-aaron/xenon-pc-comp)**: xenon-pc-comp, Halo 3 on ReXGlue for Linux.
   Used as a reference for what Halo 3 needs; none of its code is copied.
 - **[hedge-dev](https://github.com/hedge-dev/XenosRecomp)**: XenosRecomp.

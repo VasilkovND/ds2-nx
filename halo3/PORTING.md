@@ -20,7 +20,8 @@ the concrete record of one port.
 | 7 | CPU exception (`brk`) in `sub_8213FB68`: "Switch case out of range" | A jump table ReXGlue sized at one entry; the index has no bounds check before the jump | [Jump tables](#7-jump-tables) |
 | 7 | (same run, stack samples) one game thread at 98 % in one loop | A worker polling its queue without resting, built for the 360's six hardware threads | [Busy waits](#8-busy-waits) |
 | 8 | Read of guest `0xE0` in `sub_82107DD8`, called from `sub_8231D8D0` on the main thread, ~14 s in, just after the game gave music control back (a transition) | A game object looked up by handle was missing (its slot in the per-thread object table was empty). Suspect: content signature checks failing, since `XeCryptBnQwNeRsaPubCrypt` wrote no result | [Kernel exports](#9-kernel-exports-that-only-worked-on-windows) |
-| 9 | Same place, same moment; the "pointer" is now `0x3F800020` (`0x3F800000` is the float 1.0) | Not RSA (its errors are gone). Wrong data, not missing data: suspect a translation bug | [Vector instructions](#10-vector-instructions-that-overwrite-their-input) (to be confirmed) |
+| 9 | Same place, same moment; the "pointer" is now `0x3F800020` (`0x3F800000` is the float 1.0) | Not RSA (its errors are gone). Wrong data, not missing data: suspect a translation bug | [Vector instructions](#10-vector-instructions-that-overwrite-their-input) |
+| 10 | Got past it: the main menu's scene drew (~2,300 draws a frame, ~1 frame/s), XMA audio decoded; then the same function, null + `0x20` | More translation bugs of the same kind; the ARM CPU also reorders memory between cores, and PowerPC's barriers were translated to nothing | [Upstream and fork fixes](#11-fixes-from-upstream-rexglue-and-its-forks) |
 
 ## 1. The game folder
 
@@ -156,6 +157,39 @@ register within the same instruction, then read each kind by hand: in Halo 3, `v
 
 After a codegen change, rebuild `rexglue` and delete `generated/*/codegen.stamp`: codegen does not notice that the
 tool changed and reports every module up to date.
+
+## 11. Fixes from upstream ReXGlue and its forks
+
+Our SDK is ReXGlue 0.10.0. Upstream's `development` branch and its forks (all BSD-3, the same licence) had
+already fixed translation bugs that hit Halo 3. Applied, each credited in its commit:
+
+- **Memory barriers** (upstream `bd833a2a`): `sync`, `lwsync` and `eieio` were translated to nothing ("x86 has
+  strong ordering"). The Switch's ARM CPU does reorder memory between cores, so threads could see each other's
+  writes out of order. They are now `std::atomic_thread_fence` (733 sites in Halo 3).
+- **`stwcx.`** as a `std::atomic` compare-and-swap (upstream `7f7c92ef`), with unsigned fields (`ea222e98`), and
+  failing unless `lwarx` reserved the same address (furqanagwan `78a67609`; 693 sites).
+- **The pack fix of section 10** is upstream's #449 too, fixed the same way.
+- **D3D pack/unpack and `vmsum`** (stuken `62f4b4d4`): `vupkd3d128` type 6 read the wrong half of the register and
+  lost its sign; the hardware's NaN rule was missing from the other types; dot products accumulate in double, as
+  the console does.
+- **`fctid` saturation, `fres` narrowing** (stuken `b5b8f310`), **FPSCR exceptions kept masked** (stuken
+  `119a6b54`), **`mffs` status bits** and **`vsl` per byte** (furqanagwan `78a67609`).
+
+How the forks were surveyed, for next time: list the forks by last push (`gh api repos/rexglue/rexglue-sdk/forks`),
+compare each with upstream's `development` (`.../compare/development...owner:repo:branch`; most are 2 commits
+ahead, which is only `main`'s build commits), and read the commit list of the ones that carry real work.
+Not applied yet, worth a look: furqanagwan's PowerPC test corpus and FP NaN/denormal rules (`b1bfca86`), its
+missed indirect entries (`3f9c6faf`) and CRT `setjmp`/`longjmp` (`69053f09`), shipa-2's idle threads that spin
+(`2bd11462`, POSIX only), and arcanite24's 16 KiB host pages (`5f73784b`).
+
+## 12. First launch from a disc image
+
+The Switch cannot run from the `.iso`: the SDK's disc reader maps the whole image, and 7 GB does not fit. So, as
+haloce-nx does, the first start copies the disc into `game/` beside the NRO (`src/halo3_first_launch.cpp`, on top
+of `rex::filesystem::ExtractDiscImage` in `sdk/`, which reads the image in pieces). It can be interrupted and carries
+on at the next start (`game/.extracting`), leaves `$SystemUpdate` out, and never deletes the `.iso`. Progress is on
+libnx's text console for now; once the presenter is in, it moves to the ImGui overlay (`OnFinalizePaths`), the
+nearest thing to haloce-nx's in-game text.
 
 ## How each crash was read
 
