@@ -13,7 +13,10 @@
 #include <rex/filesystem.h>
 #include <rex/rex_app.h>
 
+#include "halo3_first_launch.h"
 #include "halo3_gpu.h"
+#include <rex/filesystem/disc_image_extract.h>
+#include <rex/logging.h>
 
 class Halo3App : public rex::ReXApp {
  public:
@@ -35,11 +38,13 @@ class Halo3App : public rex::ReXApp {
 
   // The game's files, when --game_data_root is not given. Searched next to the
   // executable, in this order:
-  //   1. a game_root/ or game/ folder with the extracted disc (sdmc:/halo3-nx/game/
-  //      on the Switch). Before the folder itself: the old port left a lone
-  //      default.xex beside its NRO, without the maps.
-  //   2. the folder itself, if it holds default.xex
-  //   3. an .iso, the first in alphabetical order
+  //   1. on the Switch, an .iso there and no complete game/ folder: the disc is copied into game/ first
+  //      (halo3_first_launch.cpp; the Switch cannot read a 7 GB image in place)
+  //   2. a game_root/ or game/ folder with the extracted disc (sdmc:/halo3-nx/game/ on the Switch).
+  //      Before the folder itself: the old port left a lone default.xex beside its NRO, without the maps.
+  //      A game/ whose copy has not finished (game/.extracting) does not count.
+  //   3. the folder itself, if it holds default.xex
+  //   4. elsewhere than the Switch, an .iso, the first in alphabetical order
   // Left empty if none is found: the SDK then says what is missing. Runs before
   // the config file is read, as in nfsmw (see nfsmw_pal/src/nfsmw_app.h).
   void OnConfigurePaths(rex::PathConfig& paths) override {
@@ -51,8 +56,15 @@ class Halo3App : public rex::ReXApp {
     if (folder.empty() || !std::filesystem::is_directory(folder, ec)) {
       return;
     }
+#if REX_PLATFORM_SWITCH
+    if (auto extracted = halo3::first_launch::ExtractIfNeeded(folder); !extracted.empty()) {
+      paths.game_data_root = extracted;
+      return;
+    }
+#endif
     for (const auto& candidate : {folder / "game_root", folder / "game", folder}) {
-      if (std::filesystem::is_regular_file(candidate / "default.xex", ec)) {
+      if (std::filesystem::is_regular_file(candidate / "default.xex", ec) &&
+          !rex::filesystem::DiscExtractionUnfinished(candidate)) {
         paths.game_data_root = candidate;
         return;
       }
@@ -66,8 +78,17 @@ class Halo3App : public rex::ReXApp {
         isos.push_back(e.path());
       }
     }
+#if !REX_PLATFORM_SWITCH
     if (!isos.empty()) {
       paths.game_data_root = *std::min_element(isos.begin(), isos.end());
+    }
+#endif
+  }
+
+  // The first-launch copy happens before logging starts; its result goes to the log here.
+  void OnPostInitLogging() override {
+    if (!halo3::first_launch::Summary().empty()) {
+      REXLOG_INFO("[first launch] {}", halo3::first_launch::Summary());
     }
   }
 };

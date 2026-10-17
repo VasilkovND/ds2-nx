@@ -15,6 +15,7 @@ set(HALO3_SOURCES
     src/main.cpp
     src/halo3_gpu.cpp
     src/halo3_hooks.cpp
+    src/halo3_first_launch.cpp
 )
 
 if(WIN32)
