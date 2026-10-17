@@ -19,7 +19,8 @@ the concrete record of one port.
 | 6 | Closed after ~15 s, same as 5 | Too short for the profiler, which writes every 10 s | Run a full minute when measuring |
 | 7 | CPU exception (`brk`) in `sub_8213FB68`: "Switch case out of range" | A jump table ReXGlue sized at one entry; the index has no bounds check before the jump | [Jump tables](#7-jump-tables) |
 | 7 | (same run, stack samples) one game thread at 98 % in one loop | A worker polling its queue without resting, built for the 360's six hardware threads | [Busy waits](#8-busy-waits) |
-| 8 | Read of guest `0xE0` in `sub_82107DD8`, called from `sub_8231D8D0` on the main thread, ~14 s in, just after the game gave music control back (a transition) | A game object looked up by handle was missing (its slot in the per-thread object table was empty). Suspect: content signature checks failing, since `XeCryptBnQwNeRsaPubCrypt` wrote no result | [Kernel exports](#9-kernel-exports-that-only-worked-on-windows) (to be confirmed) |
+| 8 | Read of guest `0xE0` in `sub_82107DD8`, called from `sub_8231D8D0` on the main thread, ~14 s in, just after the game gave music control back (a transition) | A game object looked up by handle was missing (its slot in the per-thread object table was empty). Suspect: content signature checks failing, since `XeCryptBnQwNeRsaPubCrypt` wrote no result | [Kernel exports](#9-kernel-exports-that-only-worked-on-windows) |
+| 9 | Same place, same moment; the "pointer" is now `0x3F800020` (`0x3F800000` is the float 1.0) | Not RSA (its errors are gone). Wrong data, not missing data: suspect a translation bug | [Vector instructions](#10-vector-instructions-that-overwrite-their-input) (to be confirmed) |
 
 ## 1. The game folder
 
@@ -140,6 +141,21 @@ Halo 3 calls it several times at startup. `sdk/src/kernel/xboxkrnl/xboxkrnl_cryp
 The lead came from xenon-pc-comp's notes (retail Halo 3 on ReXGlue for Linux; read as reference, no code copied).
 They list other runtime pieces worth checking for the next game: `XeKeysConsolePrivateKeySign` must return TRUE
 (Reach retries forever otherwise), the utility-partition cache drives, and a pause behind the `db16cyc` spin hint.
+
+## 10. Vector instructions that overwrite their input
+
+ReXGlue writes some vector instructions one lane at a time. When the destination is also a source, a later lane can
+read bytes an earlier lane already overwrote: `vpkuwus v0,v0,v0` wrote `u16[7]` (the top half of `u32[3]`) and then
+read `u32[3]` again for `u16[3]`, so a value like `0x1234` became `0xFFFF`. `vpkuwus` and `vpkuhus` now build the
+result in `vTemp` and copy it once (`sdk/src/codegen/builders/vector.cpp`). A known ReXGlue issue (rexglue-sdk#449,
+found through xenon-pc-comp's notes).
+
+To check another game, list generated instructions that write part of a vector register and later read the same
+register within the same instruction, then read each kind by hand: in Halo 3, `vupkd3d128`, `vsrw`, `vsraw` and
+`vlogefp` showed up too, but write their lanes in an order that never reads a clobbered byte.
+
+After a codegen change, rebuild `rexglue` and delete `generated/*/codegen.stamp`: codegen does not notice that the
+tool changed and reports every module up to date.
 
 ## How each crash was read
 
