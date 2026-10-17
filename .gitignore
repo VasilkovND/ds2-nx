@@ -19,9 +19,6 @@ nfsmw*/generated/
 nfsmw*/src/copias_literales/
 nfsmw*/src/nfsmw_nativo_resplandor_*_spirv.h
 nfsmw*/src/nfsmw_dk_resplandor_spirv.h
-nfsmw_*/
-# ...except the base tree (PAL Spanish); the edition trees (nfsmw_usa, ...) are made from it by tools/editions/crear_arbol.py
-!nfsmw_pal/
 
 # --- Build output -------------------------------------------------------------
 out/
