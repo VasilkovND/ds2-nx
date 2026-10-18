@@ -51,6 +51,7 @@
 
 #if HALO3_DEKO3D
 #include <rex/ui/deko3d/presentador.h>
+#include <rex/x360/deko/destinos.h>
 #endif
 
 namespace halo3::gpu {
@@ -231,6 +232,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 
   // After the threads: the presenter goes before its provider, on the UI thread.
   void DestroyPresentation() {
+    destinos_.reset();  // frees its deko3d memory before the device goes
     if (presenter_) {
       if (app_context_) {
         app_context_->CallInUIThreadSynchronous([this]() { presenter_.reset(); });
@@ -332,6 +334,23 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   }
 
   // --- Threads ----------------------------------------------------------------
+
+  // Creates the deko renderer backend on first use (on the ring thread, as the device allows). Halo plugs in no
+  // effects, so it uses the default hooks.
+  bool EnsureRenderer() {
+    if (destinos_) {
+      return true;
+    }
+    if (!provider_ || !presenter_) {
+      return false;
+    }
+    destinos_ = rex::x360::CrearDestinosDeko3d(
+        static_cast<rex::deko3d::ProveedorDeko3d*>(provider_.get()), memory_);
+    if (destinos_) {
+      REXLOG_INFO("[gpu] deko3d renderer backend up (no geometry decoded yet; present path live)");
+    }
+    return destinos_ != nullptr;
+  }
 
   // Runs the game's interrupt callback on the calling thread (one of ours, an XHostThread).
   void Interrupt(uint32_t source, uint32_t cpu) {
@@ -502,9 +521,13 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         break;
       }
       case xenos::PM4_XE_SWAP:
-        // VdSwap writes "SWAP", the frontbuffer's physical address and its size. Nothing to show yet.
+        // VdSwap writes "SWAP", the frontbuffer's physical address and its size. The renderer presents whatever is
+        // resolved (clears and, once the ring decoder feeds draws, the frame). Handheld 1280x720.
         ++swaps_;
         counter_.fetch_add(1, std::memory_order_relaxed);
+        if (EnsureRenderer()) {
+          destinos_->Presentar(presenter_.get(), rex::x360::TexturaSwap{}, 1280, 720);
+        }
         break;
       case xenos::PM4_INDIRECT_BUFFER:
       case xenos::PM4_INDIRECT_BUFFER_PFD: {
@@ -735,6 +758,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   rex::ui::WindowedAppContext* app_context_ = nullptr;
   std::unique_ptr<rex::ui::GraphicsProvider> provider_;
   std::unique_ptr<rex::ui::Presenter> presenter_;
+  std::unique_ptr<rex::x360::DestinosNativos> destinos_;  // the universal deko renderer backend
   rex::runtime::FunctionDispatcher* dispatcher_ = nullptr;
   rex::system::KernelState* kernel_state_ = nullptr;
   rex::memory::Memory* memory_ = nullptr;
