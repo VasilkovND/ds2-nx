@@ -1811,10 +1811,21 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     // The condition belongs to the whole EXEC block, including its
                     // return. Per-instruction ALU predication does not replace it.
                     const auto booleano = boolConstants.find(cfInstr.condExec.boolAddress);
+#ifdef HALO3_RECOMP
+                    // Halo 3 uses the full 0-255 boolean register space, far past NFS's 16 bits per stage.
+                    // halo_bool(A) (halo3_shader_common.h) reads bit A of a 256-bit boolean block, so no named
+                    // boolean constant is needed.
+                    indent();
+                    if (booleano != boolConstants.end())
+                        println("if ((g_Booleans & {}) {}= 0)", booleano->second, cfInstr.condExec.condition ? "!" : "=");
+                    else
+                        println("if (halo_bool({}) {}= 0)", uint32_t(cfInstr.condExec.boolAddress), cfInstr.condExec.condition ? "!" : "=");
+#else
                     if (booleano == boolConstants.end())
                         throw std::runtime_error("EXEC condicional sin constante booleana declarada");
                     indent();
                     println("if ((g_Booleans & {}) {}= 0)", booleano->second, cfInstr.condExec.condition ? "!" : "=");
+#endif
                     indent();
                     out += "{\n";
                     ++indentation;
@@ -1905,8 +1916,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         auto findResult = boolConstants.find(cfInstr.condJmp.boolAddress);
                         if (findResult != boolConstants.end())
                             println("if ((g_Booleans & {}) {}= 0)", findResult->second, cfInstr.condJmp.condition ^ simpleControlFlow ? "!" : "=");
+#ifdef HALO3_RECOMP
+                        else
+                            println("if (halo_bool({}) {}= 0)", uint32_t(cfInstr.condJmp.boolAddress), cfInstr.condJmp.condition ^ simpleControlFlow ? "!" : "=");
+#else
                         else
                             println("if (b{} {}= 0)", uint32_t(cfInstr.condJmp.boolAddress), cfInstr.condJmp.condition ^ simpleControlFlow ? "!" : "=");
+#endif
                     }
 
                     if (simpleControlFlow)
