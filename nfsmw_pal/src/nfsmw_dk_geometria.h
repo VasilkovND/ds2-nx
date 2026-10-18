@@ -44,9 +44,13 @@
 #include <utility>
 #include <vector>
 
+// Nucleo lives in the universal SDK (rex::deko3d). Forward-declare it there and import the SDK's deko types into
+// NFS's deko namespace, so this header's unqualified Nucleo is the SDK's, not a phantom local one.
+namespace rex::deko3d { class Nucleo; }
+
 namespace nfsmw::deko {
 
-class Nucleo;
+using namespace ::rex::deko3d;
 
 class AlmacenGeometria {
  public:
