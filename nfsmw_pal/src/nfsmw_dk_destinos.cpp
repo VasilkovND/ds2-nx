@@ -121,10 +121,6 @@ REXCVAR_DEFINE_BOOL(nfsmw_dk_geometria_muestreo, true, "NFSMW",
 extern "C" void RexSwitchPerfCount(unsigned id);
 
 // The 30 FPS guard (nfsmw_guardia_30) lives in nfsmw_recorte_sombras.cpp.
-namespace nfsmw::guardia30 {
-void Latir(double ms);
-}  // namespace nfsmw::guardia30
-
 namespace nfsmw::nativo {
 
 // Guest waits handled by the ring thread (nfsmw_nativo_peticion.h). The Vulkan build defines it in
@@ -1825,7 +1821,7 @@ bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swa
                                          : 10;
     ++cubetas_swap_[cubeta];
     peor_swap_ms_ = std::max(peor_swap_ms_, ms);
-    nfsmw::guardia30::Latir(ms);
+    hooks_.Latido(ms);
   }
   ultimo_swap_ns_ = ahora;
   RecogerCompilaciones();

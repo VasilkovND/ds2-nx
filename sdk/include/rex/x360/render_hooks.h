@@ -47,6 +47,9 @@ class RenderHooks {
   virtual PostProcess Posproceso() { return {}; }
   virtual uint64_t VersionPosproceso() { return 0; }  // changes when Posproceso() would differ
 
+  // Called once per Swap with the interval in milliseconds, for a game's frame-pacing watchdog. Default: ignored.
+  virtual void Latido(double ms) { (void)ms; }
+
   // Per-pixel-shader classification. A game recognises its own passes by ps.huella_contenedor and returns how the
   // renderer should treat the draw. Default: a plain draw, no extra behaviour.
   virtual ClasePase Clasificar(const EntradaShader& ps) { (void)ps; return {}; }

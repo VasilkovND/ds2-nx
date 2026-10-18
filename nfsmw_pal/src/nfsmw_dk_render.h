@@ -697,6 +697,6 @@ class RenderDk final : public DestinosNativos {
 };
 
 std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
-                                                    rex::x360::RenderHooks& hooks = rex::x360::HooksPorDefecto());
+                                                    rex::x360::RenderHooks& hooks);  // default in nfsmw_dk_destinos.h
 
 }  // namespace nfsmw::nativo
