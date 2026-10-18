@@ -299,8 +299,8 @@ constexpr uint32_t kBytesUboRampa = 4 * 16;  // mezcla, efectos, desplazamiento,
 
 // ---- Construction
 
-RenderDk::RenderDk(deko::ProveedorDeko3d& proveedor, rex::memory::Memory* memoria)
-    : proveedor_(proveedor), compilador_(proveedor.compilador()), memoria_(memoria) {
+RenderDk::RenderDk(deko::ProveedorDeko3d& proveedor, rex::memory::Memory* memoria, rex::x360::RenderHooks& hooks)
+    : proveedor_(proveedor), compilador_(proveedor.compilador()), memoria_(memoria), hooks_(hooks) {
   deko::ConfigNucleo config;
   config.ranuras = kRanuras;
   config.mb_subida = uint32_t(REXCVAR_GET(nfsmw_dk_subida_mb));
@@ -1634,8 +1634,8 @@ void RenderDk::RampaGamma(const std::array<std::array<uint16_t, 3>, 256>& rampa)
 // The output table: the game's ramp followed by the menu's post-processing, exactly as the Vulkan path computes it
 // (nfsmw_nativo_destinos.cpp, RecalcularRampa, where the order is explained).
 void RenderDk::RecalcularRampa() {
-  const nfsmw::ajustes::Posproceso p =
-      version_posproceso_ == UINT64_MAX ? nfsmw::ajustes::Posproceso{} : nfsmw::ajustes::LeerPosproceso();
+  const rex::x360::PostProcess p =
+      version_posproceso_ == UINT64_MAX ? rex::x360::PostProcess{} : hooks_.Posproceso();
   graduacion_ = p.activo && (p.saturacion != 1.0f || p.vibracion != 0.0f || p.vineta > 0.0f || p.lineas > 0.0f);
   const float tinte[3] = {p.tinte_r, p.tinte_g, p.tinte_b};
   const float inversa_gamma = p.gamma > 0.0f ? 1.0f / p.gamma : 1.0f;
@@ -1720,13 +1720,13 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
   AntesDe3D();
   MarcarGpu(kGpuOtros);  // the output pass
   // The menu's post-processing, if it changed (an atomic counter; the cvars are only read then).
-  const uint64_t version = nfsmw::ajustes::VersionPosproceso();
+  const uint64_t version = hooks_.VersionPosproceso();
   if (version != version_posproceso_) {
     version_posproceso_ = version;
     RecalcularRampa();
   }
   const bool exacta = ancho_salida == ancho && alto_salida == alto;
-  const bool fxaa = nfsmw::ajustes::AntialiasingFxaa();
+  const bool fxaa = hooks_.Fxaa();
   if (fxaa != fxaa_anotado_) {
     fxaa_anotado_ = fxaa;
     REXLOG_INFO("[deko3d] antialiasing en la salida: {}", fxaa ? "FXAA" : "ninguno");
@@ -1852,7 +1852,7 @@ bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swa
       if (desde_destino) {
         // From the target only texel for texel at the same size (it is taller than the front buffer); otherwise, or
         // with FXAA, the copy is made now and painted as always.
-        if (nfsmw::ajustes::AntialiasingFxaa() || contexto.ancho() != w || contexto.alto() != h) {
+        if (hooks_.Fxaa() || contexto.ancho() != w || contexto.alto() != h) {
           MaterializarFrontal();
           fuente = TexturaResuelta(base);
         } else {
@@ -2270,11 +2270,12 @@ void RenderDk::IntervalosEntreSwaps(std::array<uint64_t, kCubetasSwap>& cubetas,
 }
 void RenderDk::CostePresentar(uint64_t coste[12]) const { std::fill(coste, coste + 12, 0); }
 
-std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria) {
+std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
+                                                    rex::x360::RenderHooks& hooks) {
   if (!proveedor) {
     return nullptr;
   }
-  return std::make_unique<RenderDk>(*proveedor, memoria);
+  return std::make_unique<RenderDk>(*proveedor, memoria, hooks);
 }
 
 }  // namespace nfsmw::nativo

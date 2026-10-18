@@ -856,13 +856,12 @@ const DkShader* RenderDk::ShaderDe(const EntradaShader& entrada, uint32_t especi
   // The SPIR-V: the library's, or the bright pass replaced by a glow variant (same inputs and constants, so the
   // library shader's mask applies).
   std::span<const uint32_t> espirv(entrada.spirv);
-#if NFSMW_DK_RESPLANDOR
-  if (variante_ps & kVarianteResplandorNatural) {
-    espirv = kSpirvDkResplandorNatural;
-  } else if (variante_ps & kVarianteResplandorSuave) {
-    espirv = kSpirvDkResplandorSuave;
+  if (variante_ps) {
+    const std::span<const uint32_t> v = hooks_.SpirvDeVariante(variante_ps);
+    if (!v.empty()) {
+      espirv = v;
+    }
   }
-#endif
   const uint32_t espec = especializacion & info.mascara;
   const uint32_t variante = entrada.vertices ? salidas : variante_ps;
   const ClaveCargado clave{&entrada, espec, variante};
@@ -1486,17 +1485,12 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
   }
   // nfsmw_nativo_sin_desenfoque: the race's final composite without its radial blur (the Vulkan path's
   // composicion_sin_desenfoque; its texture side only feeds the lazy depth copies, which this backend has not).
-  const uint64_t huella_ps = ps ? ps->huella_contenedor : 0;
-  if (huella_ps == kHuellaComposicion && REXCVAR_GET(nfsmw_nativo_sin_desenfoque)) {
+  // The game classifies its own passes (sky, bright pass, composite); a game with no effects classifies none.
+  const rex::x360::ClasePase clase = ps ? hooks_.Clasificar(*ps) : rex::x360::ClasePase{};
+  if (clase.sin_desenfoque) {
     especializacion |= kSpecSinDesenfoque;
   }
-  uint32_t variante_ps = 0;
-#if NFSMW_DK_RESPLANDOR
-  if (huella_ps == kHuellaBrightPass) {
-    const int modo = nfsmw::ajustes::ResplandorCielo();  // 0 original, 1 natural, 2 soft
-    variante_ps = modo == 1 ? kVarianteResplandorNatural : modo == 2 ? kVarianteResplandorSuave : 0;
-  }
-#endif
+  uint32_t variante_ps = clase.variante;
   // nfsmw_nativo_z_temprana, the Vulkan path's rule: a pixel shader that can discard (alpha test or its own kill)
   // makes the GPU shade before testing depth, which only matters if the draw writes depth or stencil. When it only
   // tests depth, testing first is exact and hidden fragments are not shaded. Not for the bright pass and the
@@ -1508,8 +1502,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
     const bool estencil = control_profundidad & 0x1;
     const bool ps_escribe_z = ps->salidas & 0x10;
     const bool tardio = (especializacion & 0x2) || ps->descarta || ps_escribe_z;
-    if (prueba_z && tardio && !escribe_z && !ps_escribe_z && !estencil && huella_ps != kHuellaBrightPass &&
-        huella_ps != kHuellaComposicion) {
+    if (prueba_z && tardio && !escribe_z && !ps_escribe_z && !estencil && !clase.pantalla_completa_sin_z) {
       variante_ps |= kVarianteZTemprana;
       ++dibujos_z_temprana_;
     }
@@ -1545,7 +1538,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
   const bool prueba_z_dibujo = (control_profundidad >> 1) & 0x1;
   const bool escribe_z_dibujo = prueba_z_dibujo && ((control_profundidad >> 2) & 0x1) && claves[4];
   bool es_cielo = false;
-  if (huella_ps == kHuellaCielo && mascaras) {
+  if (clase.cielo && mascaras) {
     const bool es_el_domo = CategoriaDeDestino(pitch, claves) == kGpuEscena && opaco_en_todos && prueba_z_dibujo &&
                             !escribe_z_dibujo && !(control_profundidad & 0x1) && !(ps->salidas & 0x10) &&
                             con_indices && n_indices == kIndicesDomoCielo && dibujos_en_pase_ == 0;

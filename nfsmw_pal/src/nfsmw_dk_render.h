@@ -21,6 +21,7 @@
 
 #include <deko3d.h>
 #include <rex/x360/shader_entry.h>
+#include <rex/x360/render_hooks.h>
 
 #include <array>
 #include <cstdint>
@@ -130,7 +131,8 @@ struct EntradaVerticesDk {
 
 class RenderDk final : public DestinosNativos {
  public:
-  RenderDk(deko::ProveedorDeko3d& proveedor, rex::memory::Memory* memoria);
+  RenderDk(deko::ProveedorDeko3d& proveedor, rex::memory::Memory* memoria,
+           rex::x360::RenderHooks& hooks = rex::x360::HooksPorDefecto());
   ~RenderDk() override;
 
   // ---- DestinosNativos (nfsmw_dk_destinos.cpp, except Dibujar)
@@ -404,6 +406,7 @@ class RenderDk final : public DestinosNativos {
   deko::ProveedorDeko3d& proveedor_;
   deko::Compilador& compilador_;
   rex::memory::Memory* memoria_;
+  rex::x360::RenderHooks& hooks_;  // the game's effects and image settings (default: none)
   deko::Nucleo nucleo_;  // the ring thread's
 
   // Work slots and frames
@@ -693,6 +696,7 @@ class RenderDk final : public DestinosNativos {
   std::array<uint64_t, kGpuCategorias> informe_categorias_{};
 };
 
-std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria);
+std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
+                                                    rex::x360::RenderHooks& hooks = rex::x360::HooksPorDefecto());
 
 }  // namespace nfsmw::nativo

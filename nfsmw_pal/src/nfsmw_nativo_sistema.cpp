@@ -55,6 +55,7 @@
 // deko3d renderer (docs/HowToDeko3d.md): the ring, PM4 reading and shader identification, with the deko3d
 // provider, presenter and renderer backend.
 #include "nfsmw_dk_destinos.h"
+#include "nfsmw_render_hooks.h"
 #include <rex/ui/deko3d/presentador.h>
 #include <rex/ui/windowed_app_context.h>
 
@@ -2210,7 +2211,7 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
   bool AsegurarDestinos() {
     if (!destinos_ && !destinos_fallidos_) {
 #if NFSMW_DEKO3D
-      destinos_ = CrearDestinosDeko3d(provider_.get(), memory_);
+      destinos_ = CrearDestinosDeko3d(provider_.get(), memory_, nfsmw::HooksNfsmw());
 #else
       destinos_ = DestinosNativos::Crear(provider_ ? provider_->vulkan_device() : nullptr, memory_);
 #endif
