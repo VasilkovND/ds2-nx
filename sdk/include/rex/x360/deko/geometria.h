@@ -48,7 +48,7 @@
 // NFS's deko namespace, so this header's unqualified Nucleo is the SDK's, not a phantom local one.
 namespace rex::deko3d { class Nucleo; }
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 using namespace ::rex::deko3d;
 
@@ -182,4 +182,4 @@ class AlmacenGeometria {
   Estadisticas estadisticas_;
 };
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d

@@ -262,7 +262,13 @@ function(rexglue_switch_add_deko3d target_name)
         "${_root}/src/ui/deko3d/glsl.cpp"
         "${_root}/src/ui/deko3d/cache_dksh.cpp"
         "${_root}/src/ui/deko3d/compilador.cpp"
-        "${_root}/src/ui/deko3d/presentador.cpp")
+        "${_root}/src/ui/deko3d/presentador.cpp"
+        # The universal Xbox 360 deko renderer backend (rex::x360::RenderDk): draws, render targets, textures,
+        # geometry. A game feeds it from its ring reader and plugs its effects in through rex::x360::RenderHooks.
+        "${_root}/src/x360/deko/destinos.cpp"
+        "${_root}/src/x360/deko/dibujos.cpp"
+        "${_root}/src/x360/deko/texturas.cpp"
+        "${_root}/src/x360/deko/geometria.cpp")
     enable_language(C)  # uam has C sources (Mesa's preprocessor)
     if(NOT TARGET uamlib)
         add_subdirectory("${_root}/thirdparty/uam" uam EXCLUDE_FROM_ALL)

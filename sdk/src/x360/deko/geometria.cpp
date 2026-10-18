@@ -1,6 +1,6 @@
 // nfsmw - deko3d renderer: vertex and index data kept across frames. See nfsmw_dk_geometria.h.
 
-#include "nfsmw_dk_geometria.h"
+#include <rex/x360/deko/geometria.h>
 
 #include <xxhash.h>
 
@@ -8,7 +8,7 @@
 
 #include <rex/ui/deko3d/nucleo.h>
 
-namespace nfsmw::deko {
+namespace rex::deko3d {
 
 namespace {
 
@@ -395,4 +395,4 @@ void AlmacenGeometria::Barrer() {
   }
 }
 
-}  // namespace nfsmw::deko
+}  // namespace rex::deko3d

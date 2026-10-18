@@ -158,9 +158,5 @@ extern std::atomic<uint32_t> g_sincronizaciones_anillo;
  * own thread) and queued; the "NFSMW informes" thread (priority 0x3B) writes it. The queue never blocks
  * the producer: if it fills up, the line is dropped and counted. Defined in nfsmw_nativo_sistema.cpp.
  */
-void InformeDiferido(std::string linea);
-
-// Like REXLOG_INFO, but the report thread does the SD write (InformeDiferido).
-#define NFSMW_INFORME_ANILLO(...) ::nfsmw::nativo::InformeDiferido(fmt::format(__VA_ARGS__))
 
 }  // namespace rex::x360

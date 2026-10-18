@@ -4,6 +4,7 @@
 #include <rex/x360/shader_entry.h>
 
 #include "nfsmw_ajustes_graficos.h"
+#include "nfsmw_informe_diferido.h"
 
 namespace nfsmw::guardia30 { void Latir(double ms); }
 
@@ -33,6 +34,8 @@ class HooksNfsmwImpl final : public rex::x360::RenderHooks {
   bool Fxaa() override { return nfsmw::ajustes::AntialiasingFxaa(); }
 
   void Latido(double ms) override { nfsmw::guardia30::Latir(ms); }
+
+  void Informe(const std::string& linea) override { nfsmw::nativo::InformeDiferido(linea); }
 
   uint64_t VersionPosproceso() override { return nfsmw::ajustes::VersionPosproceso(); }
 

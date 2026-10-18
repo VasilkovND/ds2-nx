@@ -24,19 +24,13 @@
 #include <cmath>
 #include <cstring>
 
-#include "nfsmw_ajustes_graficos.h"
 #include <rex/ui/deko3d/compilador.h>
 #include <rex/ui/deko3d/glsl.h>
-#include "nfsmw_dk_render.h"
-#include "nfsmw_nativo_shaders.h"
-#include "nfsmw_nativo_xenos.h"
-#include "nfsmw_shader_library.h"
+#include <rex/x360/deko/render.h>
+#include <rex/x360/shader_entry.h>
+#include <rex/x360/xenos.h>
 // The glow's bright pass variants (nfsmw_resplandor_cielo), made from the game's shader by tools/switch/dk_resplandor.py
 // and not distributed. Without them the setting keeps the game's shader, as in the Vulkan build.
-#if __has_include("nfsmw_dk_resplandor_spirv.h")
-#include "nfsmw_dk_resplandor_spirv.h"
-#define NFSMW_DK_RESPLANDOR 1
-#endif
 
 // The same settings as the Vulkan build's (nfsmw_nativo_dibujos.cpp): names, types and defaults.
 REXCVAR_DEFINE_BOOL(nfsmw_nativo_inv_tamano_tex, true, "NFSMW",
@@ -88,7 +82,7 @@ REXCVAR_DEFINE_BOOL(nfsmw_dk_compilar_en_fondo, true, "NFSMW",
                     "plano; mientras, dibuja la que conserva todos los interpoladores. false = se compila en el acto")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
-namespace nfsmw::nativo {
+namespace rex::x360 {
 namespace {
 
 namespace gr = rex::graphics;
@@ -2030,4 +2024,4 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
   return true;
 }
 
-}  // namespace nfsmw::nativo
+}  // namespace rex::x360

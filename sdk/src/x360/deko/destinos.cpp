@@ -1,7 +1,7 @@
 // nfsmw - deko3d renderer: frames and work slots, render targets, copies (resolve and clear), the output pass with
 // the game's gamma ramp, the DKSH cache file and the statistics. See nfsmw_dk_render.h.
 
-#include "nfsmw_dk_destinos.h"
+#include <rex/x360/deko/destinos.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -18,11 +18,10 @@
 #include <fstream>
 #include <thread>
 
-#include "nfsmw_ajustes_graficos.h"
 #include <rex/ui/deko3d/compilador.h>
 #include <rex/ui/deko3d/presentador.h>
-#include "nfsmw_dk_render.h"
-#include "nfsmw_nativo_xenos.h"
+#include <rex/x360/deko/render.h>
+#include <rex/x360/xenos.h>
 
 // Settings of the renderer that the game hooks also read (nfsmw_nativo_ganchos.cpp). The Vulkan build defines them
 // in nfsmw_nativo_dibujos.cpp, which this build leaves out: same names, types and defaults.
@@ -121,7 +120,7 @@ REXCVAR_DEFINE_BOOL(nfsmw_dk_geometria_muestreo, true, "NFSMW",
 extern "C" void RexSwitchPerfCount(unsigned id);
 
 // The 30 FPS guard (nfsmw_guardia_30) lives in nfsmw_recorte_sombras.cpp.
-namespace nfsmw::nativo {
+namespace rex::x360 {
 
 // Guest waits handled by the ring thread (nfsmw_nativo_peticion.h). The Vulkan build defines it in
 // nfsmw_nativo_dibujos.cpp; this build has no upload deduplication yet.
@@ -1974,7 +1973,7 @@ void RenderDk::InformePeriodico() {
   const double fotogramas = std::max(1.0, double(fotograma_ - informe_fotogramas_));
   const uint64_t dibujos = dibujados_ - informe_dibujos_;
   const deko::EstadisticasNucleo n = nucleo_.TomarEstadisticas();
-  NFSMW_INFORME_ANILLO(
+  X360_INFORME(
       "[deko3d] ultimos {:.0f} s: {:.1f} fotogramas/s, {:.0f} dibujos por fotograma ({} rechazados en total); GPU "
       "{:.2f} ms por fotograma ({} trabajos medidos); por fotograma: {:.1f} copias, {:.1f} borrados, {:.1f} barreras de transferencia, {:.2f} MB de subida (vertices, "
       "indices, constantes, texturas); grabar un dibujo {:.2f} us en RenderDk (sin esperas a la GPU); texturas: {} vivas ({} MB), {} creadas "
@@ -1993,7 +1992,7 @@ void RenderDk::InformePeriodico() {
       cambios_ranura_, n.bytes_comandos_max >> 10, n.bytes_imagenes >> 20, n.trozos_imagenes, aciertos_cache_,
       compilados_en_el_acto_, compilados_en_fondo_);
   const auto ms = [&](uint32_t c) { return double(gpu_categorias_ns_[c] - informe_categorias_[c]) / 1e6 / fotogramas; };
-  NFSMW_INFORME_ANILLO(
+  X360_INFORME(
       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
       "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}",
@@ -2004,7 +2003,7 @@ void RenderDk::InformePeriodico() {
       double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas);
   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
-  NFSMW_INFORME_ANILLO(
+  X360_INFORME(
       "[deko3d] por fotograma: {:.2f} intercambios en vez de copias, {:.2f} restauraciones, {:.2f} cubos con caras "
       "resueltas, {:.2f} cielos aplazados (guardia {}), {:.2f} MB de vertices sin copiar (repetidos en el trabajo); "
       "sombra por minimo: fase {}, {} ciclos ({} limpios seguidos, {} aplicados), {} diferencias; por dibujo en el "
@@ -2016,7 +2015,7 @@ void RenderDk::InformePeriodico() {
       cielo_guardia_ == kCieloAplazando ? "superada" : cielo_guardia_ == kCieloDescartado ? "descartada" : "mirando",
       double(dedupe_.bytes_ahorrados() - informe_dedupe_bytes_) / 1048576.0 / fotogramas, kFasesSm[sm_fase_ % 3],
       sm_ciclos_, sm_limpios_seguidos_, sm_ciclos_aplicados_, sm_diferencias_, us(0), us(1), us(2), us(3), us(4), us(5));
-  NFSMW_INFORME_ANILLO(
+  X360_INFORME(
       "[deko3d] por fotograma: {:.1f} copias en el motor 3D, {:.1f} barreras de fragmentos, {:.2f} frontales pintados "
       "desde su destino sin copiar ({} copiados en total, {}), {:.2f} bandas borradas; constantes por diferencias: "
       "{:.1f} registros y {:.1f} empujes por dibujo",
@@ -2026,7 +2025,7 @@ void RenderDk::InformePeriodico() {
       frontal_apagado_ ? "APAGADO por una lectura tardia" : "activo", double(bandas_completadas_ - informe_bandas_) / fotogramas,
       dibujos ? double(registros_empujados_ - informe_registros_empujados_) / double(dibujos) : 0.0,
       dibujos ? double(empujes_ - informe_empujes_) / double(dibujos) : 0.0);
-  NFSMW_INFORME_ANILLO(
+  X360_INFORME(
       "[deko3d] comprobacion de texturas: por fotograma {:.2f} MB leidos para sus huellas, {:.2f} MB ahorrados por "
       "muestreo ({:.1f} recomprobaciones solo con la muestra), {:.1f} aplazadas por el presupuesto; muestreo {} ({} "
       "con las dos huellas, {} muestras distintas en total); {:.0f} % de los dibujos reusan las texturas del anterior",
@@ -2040,7 +2039,7 @@ void RenderDk::InformePeriodico() {
     const deko::AlmacenGeometria::Estadisticas& g = geometria_.estadisticas();
     const deko::AlmacenGeometria::Estadisticas& a = informe_geometria_;
     const auto mb = [&](uint64_t ahora_b, uint64_t antes_b) { return double(ahora_b - antes_b) / 1048576.0 / fotogramas; };
-    NFSMW_INFORME_ANILLO(
+    X360_INFORME(
         "[deko3d] geometria entre fotogramas: por fotograma {:.2f} MB sin copiar ({:.0f} de {:.0f} consultas), {:.2f} MB "
         "con huella, {:.3f} MB guardados ({:.1f} rangos), {:.1f} cambios, {:.1f} al anillo sin huella (cambiantes); "
         "{} MB de {} usados, {} rangos conocidos; {} desalojos, {} sin sitio, {} colisiones (en el intervalo); "
@@ -2274,4 +2273,4 @@ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* prov
   return std::make_unique<RenderDk>(*proveedor, memoria, hooks);
 }
 
-}  // namespace nfsmw::nativo
+}  // namespace rex::x360

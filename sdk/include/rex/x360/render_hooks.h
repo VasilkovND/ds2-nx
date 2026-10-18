@@ -8,6 +8,9 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
+
+#include <rex/logging.h>
 
 namespace rex::x360 {
 
@@ -49,6 +52,9 @@ class RenderHooks {
 
   // Called once per Swap with the interval in milliseconds, for a game's frame-pacing watchdog. Default: ignored.
   virtual void Latido(double ms) { (void)ms; }
+
+  // A log line from the renderer. A game may write it off the hot thread; the default writes it now.
+  virtual void Informe(const std::string& linea) { REXLOG_INFO("{}", linea); }
 
   // Per-pixel-shader classification. A game recognises its own passes by ps.huella_contenedor and returns how the
   // renderer should treat the draw. Default: a plain draw, no extra behaviour.

@@ -19,8 +19,8 @@
 #include <algorithm>
 #include <cstring>
 
-#include "nfsmw_dk_render.h"
-#include "nfsmw_nativo_xenos.h"
+#include <rex/x360/deko/render.h>
+#include <rex/x360/xenos.h>
 
 REXCVAR_DEFINE_BOOL(nfsmw_nativo_mipmaps, true, "NFSMW",
                     "Renderizador nativo: sube los niveles de mip que trae el juego (como en la Xbox 360). false: solo "
@@ -49,7 +49,7 @@ REXCVAR_DEFINE_INT32(nfsmw_nativo_huellas_kb_fotograma, 6144, "NFSMW",
                      "pueden leer en un fotograma; las que no caben esperan 1-2 fotogramas (8 veces seguidas como "
                      "mucho). Reparte las comprobaciones que coincidian en el mismo fotograma. 0 = sin limite");
 
-namespace nfsmw::nativo {
+namespace rex::x360 {
 namespace {
 
 namespace xenos = rex::graphics::xenos;
@@ -865,4 +865,4 @@ void RenderDk::SoltarTexturasSiHaceFalta() {
   }
 }
 
-}  // namespace nfsmw::nativo
+}  // namespace rex::x360

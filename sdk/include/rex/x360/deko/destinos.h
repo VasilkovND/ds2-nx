@@ -11,7 +11,7 @@
 
 #include <memory>
 
-#include "nfsmw_nativo_destinos.h"
+#include <rex/x360/destinos.h>
 #include <rex/x360/render_hooks.h>
 
 // Forward-declare in the SDK namespace (rex::deko3d) and import, so this is the real SDK type, not a phantom
@@ -19,12 +19,13 @@
 namespace rex::deko3d {
 class ProveedorDeko3d;
 }
-namespace nfsmw::deko { using namespace ::rex::deko3d; }
+// `deko::X` in this renderer means the SDK deko3d layer.
+namespace deko = ::rex::deko3d;
 
-namespace nfsmw::nativo {
+namespace rex::x360 {
 
-std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(nfsmw::deko::ProveedorDeko3d* proveedor,
+std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor,
                                                      rex::memory::Memory* memoria,
                                                      rex::x360::RenderHooks& hooks = rex::x360::HooksPorDefecto());
 
-}  // namespace nfsmw::nativo
+}  // namespace rex::x360

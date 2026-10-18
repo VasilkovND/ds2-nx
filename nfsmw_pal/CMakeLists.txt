@@ -128,11 +128,7 @@ if(REXGLUE_SWITCH_DEKO3D)
         # the SDK's provider, presenter and ImGui drawer; the renderer backend.
         # (the core, the GLSL/DKSH path, the compile worker and the presenter are in the SDK now:
         # rexglue_switch_add_deko3d below)
-        src/nfsmw_dk_destinos.cpp
-        src/nfsmw_dk_dibujos.cpp
-        src/nfsmw_dk_texturas.cpp
-        # posix_memalign for FFmpeg is in the SDK now (src/ui/switch_dk_libc.cpp): every deko3d title needs it.
-        src/nfsmw_dk_geometria.cpp
+        # The deko renderer backend is in the SDK now (rexglue_switch_add_deko3d). NFS keeps only its plug-in.
         src/nfsmw_render_hooks.cpp)
 endif()
 

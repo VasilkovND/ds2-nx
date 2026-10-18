@@ -34,10 +34,10 @@
 #include <vector>
 
 #include <rex/ui/deko3d/cache_dksh.h>
-#include "nfsmw_dk_geometria.h"
+#include <rex/x360/deko/geometria.h>
 #include <rex/ui/deko3d/nucleo.h>
-#include "nfsmw_nativo_destinos.h"
-#include "nfsmw_nativo_vertices_dedupe.h"
+#include <rex/x360/destinos.h>
+#include <rex/x360/vertices_dedupe.h>
 
 namespace rex::memory {
 class Memory;
@@ -49,11 +49,15 @@ namespace rex::deko3d {
 class ProveedorDeko3d;
 class Compilador;
 }
-namespace nfsmw::deko { using namespace ::rex::deko3d; }
+// `deko::X` in this renderer means the SDK deko3d layer.
+namespace deko = ::rex::deko3d;
 
-namespace nfsmw::nativo {
+namespace rex::x360 {
 
 using ::rex::x360::EntradaShader;
+
+// Deferred log from the renderer; the game's hooks decide where it goes (used in RenderDk methods, where hooks_ exists).
+#define X360_INFORME(...) hooks_.Informe(fmt::format(__VA_ARGS__))
 
 // An image of the renderer: a render target, a resolved texture or a game texture.
 struct ImagenDk {
@@ -699,4 +703,4 @@ class RenderDk final : public DestinosNativos {
 std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
                                                     rex::x360::RenderHooks& hooks);  // default in nfsmw_dk_destinos.h
 
-}  // namespace nfsmw::nativo
+}  // namespace rex::x360

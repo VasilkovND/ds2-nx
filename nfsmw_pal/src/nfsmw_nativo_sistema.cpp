@@ -54,7 +54,8 @@
 #include <rex/ui/presenter.h>
 // deko3d renderer (docs/HowToDeko3d.md): the ring, PM4 reading and shader identification, with the deko3d
 // provider, presenter and renderer backend.
-#include "nfsmw_dk_destinos.h"
+#include <rex/x360/deko/destinos.h>
+#include "nfsmw_informe_diferido.h"
 #include "nfsmw_render_hooks.h"
 #include <rex/ui/deko3d/presentador.h>
 #include <rex/ui/windowed_app_context.h>

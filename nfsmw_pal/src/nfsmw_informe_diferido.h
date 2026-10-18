@@ -17,3 +17,5 @@ void InformeDiferido(std::string linea);
 }  // namespace nfsmw::nativo
 
 #define NFSMW_INFORME_DIFERIDO(...) ::nfsmw::nativo::InformeDiferido(fmt::format(__VA_ARGS__))
+// Historical alias (used by the ring reader): the same deferred write.
+#define NFSMW_INFORME_ANILLO(...) ::nfsmw::nativo::InformeDiferido(fmt::format(__VA_ARGS__))
