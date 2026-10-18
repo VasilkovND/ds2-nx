@@ -61,8 +61,10 @@ bool build_eieio(BuilderContext& ctx) {
 }
 
 bool build_db16cyc(BuilderContext& ctx) {
-  // Xenon-specific 16-cycle delay hint, no effect in recompiled code
-  (void)ctx;
+  // The Xenon's "pause for 16 cycles" spin hint. Dropping it (as before) left the busy-wait loops the game builds
+  // around it spinning flat out, pegging the Switch's three cores and starving audio. Emit the CPU pause hint
+  // instead (SIMDe maps simde_mm_pause to ARM's `yield` and x86's `pause`), as the other recompilers do.
+  ctx.println("	simde_mm_pause();");
   return true;
 }
 
