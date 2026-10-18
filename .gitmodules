@@ -1,0 +1,4 @@
+[submodule "sdk"]
+	path = sdk
+	url = https://github.com/nx-mod/rexglue-sdk-nx.git
+	branch = switch
