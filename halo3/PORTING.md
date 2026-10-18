@@ -24,6 +24,7 @@ the concrete record of one port.
 | 10 | Got past it: the main menu's scene drew (~2,300 draws a frame, ~1 frame/s), XMA audio decoded; then the same function, null + `0x20` | More translation bugs of the same kind; the ARM CPU also reorders memory between cores, and PowerPC's barriers were translated to nothing | [Upstream and fork fixes](#11-fixes-from-upstream-rexglue-and-its-forks) |
 | 11 | Same crash ~20 s into the menu, pointer `0x4B1E6BA0` | Not the barrier or fork fixes | Diagnostic hook on the object lookup |
 | 12 | First run with the deko3d presenter: froze before the game folder mount (log ends at "Too few processor cores", no crash report). Rerun: menu as in boot 10, same crash, `lvx128` from `0x4B1DA500` | The object lookup was fine (the hook never fired). The bad pointer is the node loop's orientation pointer, `r4 = r22 + 32 * node` for node `1 .. [r21 + 48]`: the loop walks past the object's node data | Diagnostic hook at both calls of the loop, see [How each crash was read](#how-each-crash-was-read) |
+| 13 | Menu, then the same call: a store to `r5 = r17 + 52 * node`, `r5` = `0x1_4B1E_2890` | Both loop pointers are bad on different runs. `r17` holds a 64-bit value that `add r17,r10,r29` (object + 16-bit offset) cannot produce, so something in `sub_8231D8D0` replaces it after it is set. The `[nodos]` lines of this run were false alarms: `QueryProtect` does not report the executable's image readable | `r17` kept after the add (0x8231D940) and compared after each of the function's 16 calls |
 
 ## 1. The game folder
 

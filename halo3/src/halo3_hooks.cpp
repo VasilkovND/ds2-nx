@@ -23,39 +23,95 @@ void Halo3WorkerPollYield() {
   rex::thread::Sleep(std::chrono::microseconds(100));
 }
 
-// 0x8231DF8C and 0x8231DFF8, the two `bl sub_82107DD8` of the node loop in sub_8231D8D0 (diagnostic, while it is
-// being chased). The loop builds each node's matrix from its orientation (r4 = r22 + 32 * node, r22 = the object
-// r29 plus the 16-bit offset at r29 + 312) for node = 1 .. [r21 + 48]. Boots 8-12 crashed on the first load of
-// sub_82107DD8 with r4 unmapped (0x20, 0xE0, 0x3F800020, 0x4B1E6BA0, 0x4B1DA500, see PORTING.md); the object
-// lookup itself was fine (boot 12). This logs the first 16 such nodes, with what the loop was built from, and
-// points r4 at the game's default-orientation buffer (0x82804480, 32 bytes per node, filled by sub_8210ECF8) so
-// the run goes on and shows whether more follows.
-void Halo3NodeLoopCheck(PPCRegister& r4, PPCRegister& r22, PPCRegister& r29, PPCRegister& r30, PPCRegister& r21,
-                        PPCRegister& r14) {
-  static std::atomic<int> reported{0};
-  static std::atomic<uint32_t> redirected{0};
+// Diagnostics while the node-loop crash of boots 8-13 is chased (see overrides.toml and PORTING.md). sub_8231D8D0
+// builds each node's matrix with sub_82107DD8(r3 = parent matrix, r4 = orientation, r5 = output), where
+// r4 = r22 + 32 * node and r5 = r17 + 52 * node. r17 is set once, after the object lookup, as the object (r29) plus
+// a 16-bit offset; boot 13 crashed with r17 = 0x1_4B1E_xxxx, which that add cannot produce. So r17 is kept per
+// thread right after the add and compared after every call in the function: the first call site after which it
+// differs is the one that replaced it.
+namespace {
+
+struct R17State {
+  uint64_t kept = 0;
+  uint32_t object = 0;
+  uint32_t handle = 0;
+  bool valid = false;
+};
+thread_local R17State g_r17;
+std::atomic<int> g_r17_reported{0};
+
+bool GuestReadable(uint32_t address) {
+  if (address >= 0x82000000u && address < 0x84000000u) {
+    return true;  // the executable's image: QueryProtect does not report it readable, and it is
+  }
   auto* memory = rex::system::kernel_memory();
-  auto readable = [memory](uint32_t address) {
-    uint32_t protect = 0;
-    auto* heap = memory->LookupHeap(address);
-    return heap && heap->QueryProtect(address, &protect) && (protect & rex::memory::kMemoryProtectRead);
-  };
-  if (readable(r4.u32) && readable(r4.u32 + 31)) {
+  uint32_t protect = 0;
+  auto* heap = memory->LookupHeap(address);
+  return heap && heap->QueryProtect(address, &protect) && (protect & rex::memory::kMemoryProtectRead);
+}
+
+void CheckR17(uint32_t site, PPCRegister& r17) {
+  if (!g_r17.valid || r17.u64 == g_r17.kept) {
     return;
   }
-  const uint32_t node = r30.u32;
-  const uint32_t total = redirected.fetch_add(1, std::memory_order_relaxed) + 1;
-  if (reported.fetch_add(1, std::memory_order_relaxed) < 16) {
-    auto load32 = [&](uint32_t address) {
-      return readable(address) ? rex::memory::load_and_swap<uint32_t>(memory->TranslateVirtual<const uint8_t*>(address))
-                               : 0xDEADDEADu;
-    };
-    const uint32_t object = r29.u32;
-    const int32_t offset = readable(object + 312) ? int16_t(load32(object + 312) >> 16) : 0x7FFFFFFF;
-    REXLOG_WARN("[nodos] handle {:08X} object {:08X} [{:08X} {:08X} {:08X} {:08X}] offset at +312 {} -> r22 {:08X}; "
-                "node {} of {} (r21 {:08X}): r4 {:08X} not readable (redirected so far: {})",
-                r14.u32, object, load32(object), load32(object + 4), load32(object + 8), load32(object + 12), offset,
-                r22.u32, node, load32(r21.u32 + 48), r21.u32, r4.u32, total);
+  if (g_r17_reported.fetch_add(1, std::memory_order_relaxed) < 16) {
+    REXLOG_WARN("[r17] changed by the call returning to {:08X}: {:016X} -> {:016X} (object {:08X}, handle {:08X})",
+                site, g_r17.kept, r17.u64, g_r17.object, g_r17.handle);
   }
-  r4.u64 = 0x82804480u + 32u * (node < 255 ? node : 0u);
+  g_r17.kept = r17.u64;  // one line per change
+}
+
+}  // namespace
+
+// 0x8231D940, after add r17,r10,r29.
+void Halo3R17Keep(PPCRegister& r17, PPCRegister& r29, PPCRegister& r14) {
+  g_r17 = {r17.u64, r29.u32, r14.u32, true};
+  if (r17.u64 >> 32 && g_r17_reported.fetch_add(1, std::memory_order_relaxed) < 16) {
+    REXLOG_WARN("[r17] already wrong at the add: {:016X} (object {:016X}, handle {:08X})", r17.u64, r29.u64,
+                r14.u32);
+  }
+}
+
+#define HALO3_R17_AFTER(addr) \
+  void Halo3R17After_##addr(PPCRegister& r17) { CheckR17(0x##addr, r17); }
+HALO3_R17_AFTER(8231DA04)
+HALO3_R17_AFTER(8231DA18)
+HALO3_R17_AFTER(8231DA9C)
+HALO3_R17_AFTER(8231DB30)
+HALO3_R17_AFTER(8231DB7C)
+HALO3_R17_AFTER(8231DBE8)
+HALO3_R17_AFTER(8231DC54)
+HALO3_R17_AFTER(8231DC78)
+HALO3_R17_AFTER(8231DC9C)
+HALO3_R17_AFTER(8231DCD4)
+HALO3_R17_AFTER(8231DD3C)
+HALO3_R17_AFTER(8231DDBC)
+HALO3_R17_AFTER(8231DDF0)
+HALO3_R17_AFTER(8231DE5C)
+HALO3_R17_AFTER(8231DE6C)
+HALO3_R17_AFTER(8231DEC8)
+#undef HALO3_R17_AFTER
+
+// 0x8231DF8C and 0x8231DFF8, the two `bl sub_82107DD8` of the node loop: compares r17 once more, and logs the
+// first 16 nodes whose orientation (r4) or output (r5) is not readable, with what the loop was built from.
+void Halo3NodeLoopCheck(PPCRegister& r4, PPCRegister& r5, PPCRegister& r17, PPCRegister& r22, PPCRegister& r29,
+                        PPCRegister& r30, PPCRegister& r21, PPCRegister& r14) {
+  CheckR17(0x8231DF8C, r17);
+  if (GuestReadable(r4.u32) && GuestReadable(r4.u32 + 31) && GuestReadable(r5.u32) && GuestReadable(r5.u32 + 51)) {
+    return;
+  }
+  static std::atomic<int> reported{0};
+  if (reported.fetch_add(1, std::memory_order_relaxed) >= 16) {
+    return;
+  }
+  auto* memory = rex::system::kernel_memory();
+  auto load32 = [memory](uint32_t address) {
+    return GuestReadable(address)
+               ? rex::memory::load_and_swap<uint32_t>(memory->TranslateVirtual<const uint8_t*>(address))
+               : 0xDEADDEADu;
+  };
+  REXLOG_WARN("[nodos] handle {:08X} object {:016X} [{:08X} {:08X} {:08X} {:08X}] +312/+316 {:08X}; node {} of {} "
+              "(r21 {:08X}): r4 {:016X} (r22 {:016X}), r5 {:016X} (r17 {:016X})",
+              r14.u32, r29.u64, load32(r29.u32), load32(r29.u32 + 4), load32(r29.u32 + 8), load32(r29.u32 + 12),
+              load32(r29.u32 + 312), r30.u32, load32(r21.u32 + 48), r21.u32, r4.u64, r22.u64, r5.u64, r17.u64);
 }
