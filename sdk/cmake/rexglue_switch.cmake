@@ -42,21 +42,6 @@ endif()
 # instead; the NVIDIA CUBIN parser that uses libelf never runs on Switch.
 # Listed twice for archive rescanning, as the Mesa config does without
 # LINK_GROUP support.
-if(NOT REXGLUE_SWITCH_DEKO3D AND NOT TARGET rex::nvk)
-    add_library(rexglue_switch_nvk INTERFACE)
-    add_library(rex::nvk ALIAS rexglue_switch_nvk)
-    add_library(rex::switch_gpu ALIAS rexglue_switch_nvk)
-    target_link_directories(rexglue_switch_nvk INTERFACE
-        "${REXGLUE_SWITCH_NVK_SDK}/lib"
-        "${DEVKITPRO}/portlibs/switch/lib"
-        "${DEVKITPRO}/libnx/lib")
-    target_link_libraries(rexglue_switch_nvk INTERFACE
-        vulkan expat zstd z nx
-        vulkan expat zstd z nx
-        stdc++ m)
-    target_link_options(rexglue_switch_nvk INTERFACE -pthread)
-endif()
-
 # Startup objects every title needs, built here, in the SDK's scope, where C is
 # enabled: a title project may declare CXX only, and CMake cannot compile a C
 # source added to a target of that directory. Linked as an OBJECT library, the

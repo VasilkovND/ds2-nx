@@ -146,9 +146,6 @@ target_link_libraries(rexcore
 if(REXGLUE_USE_D3D12)
     target_compile_definitions(rexcore PUBLIC REX_HAS_D3D12=1)
 endif()
-if(REXGLUE_USE_VULKAN)
-    target_compile_definitions(rexcore PUBLIC REX_HAS_VULKAN=1)
-endif()
 
 if(REXGLUE_ENABLE_TRACY)
     target_link_libraries(rexcore PUBLIC

@@ -99,9 +99,6 @@ set(NFSMW_SOURCES
     # PNG captures of the game image for testing (cvar
     # nfsmw_captura_cada_s, 0 = never).
     src/nfsmw_nativo_captura.cpp
-    # Native renderer, part C2: render targets, copies (resolve and
-    # clear) and presentation of the game image.
-    src/nfsmw_nativo_destinos.cpp
     # Native renderer, part C5a: identifies the shaders that reach the PM4 ring
     # in the NFSSPV library (nfsmw_shaders.nfsp next to the executable).
     src/nfsmw_nativo_shaders.cpp
@@ -109,10 +106,6 @@ set(NFSMW_SOURCES
     # Native renderer, part C5b: VS and PS of each draw from the game
     # thread (shader constructors and the D3D Draw* functions).
     src/nfsmw_nativo_ganchos.cpp
-    # Native renderer, parts C3-C6: textures, vertices, constants,
-    # pipelines and render passes with the shaders from the library.
-    src/nfsmw_nativo_dibujos.cpp
-    src/nfsmw_nativo_texturas_pool.cpp
     src/nfsmw_escenario_lod.cpp
     # The streamer requests the zone too late: facade popping and a hitch when entering a new
     # zone (hook on TrackStreamer::GetPredictedZone).
@@ -130,10 +123,6 @@ set(NFSMW_SOURCES
 # built without Vulkan, and the native renderer's Vulkan backend (C2-C6) is replaced by the deko3d one; the ring,
 # the PM4 reading, the shader identification and the game hooks are the same.
 if(REXGLUE_SWITCH_DEKO3D)
-    list(REMOVE_ITEM NFSMW_SOURCES
-        src/nfsmw_nativo_destinos.cpp
-        src/nfsmw_nativo_dibujos.cpp
-        src/nfsmw_nativo_texturas_pool.cpp)
     list(APPEND NFSMW_SOURCES
         # Device, queue, memory and swapchain; the SPIR-V to GLSL to DKSH path and its cache; the compile worker;
         # the SDK's provider, presenter and ImGui drawer; the renderer backend.
@@ -157,8 +146,7 @@ if(WIN32)
     # symbols, and all the code in anonymous namespaces shows up under the name of the preceding public symbol.
     # Debug info only; it does not change the generated code.
     set_source_files_properties(
-        src/nfsmw_nativo_sistema.cpp src/nfsmw_nativo_destinos.cpp src/nfsmw_nativo_dibujos.cpp
-        src/nfsmw_nativo_texturas_pool.cpp
+        src/nfsmw_nativo_sistema.cpp
         src/nfsmw_nativo_shaders.cpp src/nfsmw_nativo_ganchos.cpp src/nfsmw_espera_anillo.cpp
         src/nfsmw_espera_fotograma.cpp
         PROPERTIES COMPILE_OPTIONS "-g;-gcodeview")
@@ -210,27 +198,9 @@ if(NOT REXGLUE_PLATFORM_SWITCH AND TARGET renderdoc)
         $<TARGET_PROPERTY:renderdoc,INTERFACE_INCLUDE_DIRECTORIES>)
 endif()
 
-# Precompiled SPIR-V of the SDK presenter: nfsmw_nativo_destinos.cpp uses it to draw
-# the game image into the presenter output.
-target_include_directories(nfsmw PRIVATE "${REXSDK_DIR}/src/ui/shaders")
-
 # The SDK's xxHash: fingerprints for the shader library and the native renderer.
 find_path(NFSMW_XXHASH_INCLUDE xxhash.h HINTS "${REXSDK_DIR}/thirdparty/xxHash" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
 target_include_directories(nfsmw PRIVATE "${NFSMW_XXHASH_INCLUDE}")
-
-# Experimental library: the synthetic tests do not validate the full game.
-# Regression confirmed on Switch: the release build excludes this path.
-option(NFSMW_NATIVE_SHADER_LIBRARY "Integrar la biblioteca experimental de shaders nativos" OFF)
-if(NFSMW_NATIVE_SHADER_LIBRARY)
-    target_sources(nfsmw PRIVATE
-        src/nfsmw_shader_vulkan.cpp
-        src/nfsmw_video_vulkan.cpp
-        src/nfsmw_video_session.cpp
-        src/nfsmw_video_bridge.cpp
-        src/nfsmw_video_present.cpp
-        src/nfsmw_shader_hooks.cpp)
-    target_compile_definitions(nfsmw PRIVATE NFSMW_NATIVE_SHADER_LIBRARY=1)
-endif()
 
 # Nintendo Switch: nfsmw.nro next to the ELF. On the SD card it goes in sdmc:/switch/nfsmw/
 # with the game_root/ folder extracted beside it (src/nfsmw_app.h looks for it there).

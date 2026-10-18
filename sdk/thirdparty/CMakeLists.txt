@@ -1,5 +1,4 @@
 # Third-party vendored dependencies for ReXGlue
-include(${PROJECT_SOURCE_DIR}/cmake/rexglue_vulkan_stack.cmake)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
@@ -46,16 +45,6 @@ set(REQUIRED_SUBMODULES
 # where libnx backends replace it.
 if(NOT REXGLUE_PLATFORM_SWITCH)
     list(APPEND REQUIRED_SUBMODULES sdl3)
-endif()
-
-if(REXGLUE_USE_VULKAN)
-    list(APPEND REQUIRED_SUBMODULES
-        vulkan-headers vulkan-memory-allocator
-        spirv-headers spirv-tools glslang
-    )
-    if(APPLE)
-        list(APPEND REQUIRED_SUBMODULES vulkan-loader moltenvk)
-    endif()
 endif()
 
 
@@ -192,39 +181,6 @@ target_compile_options(spdlog PRIVATE -w)
 #=============================================================================
 add_subdirectory(utfcpp)
 
-#=============================================================================
-# Vulkan dependencies (only when Vulkan backend is enabled)
-#=============================================================================
-if(REXGLUE_USE_VULKAN)
-    message(STATUS "Vulkan stack: SDK ${REXGLUE_VULKAN_SDK_VERSION}")
-
-    # Vulkan-Headers
-    set(VULKAN_HEADERS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-    set(VULKAN_HEADERS_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
-    set(VULKAN_HEADERS_ENABLE_MODULE OFF CACHE BOOL "" FORCE)
-    add_subdirectory(vulkan-headers)
-
-    # VulkanMemoryAllocator
-    set(VMA_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
-    add_subdirectory(vulkan-memory-allocator)
-
-    if(APPLE)
-        # Build the loader and MoltenVK revisions shipped by the pinned SDK.
-        # They remain runtime-loaded; no Vulkan implementation is linked into
-        # rexglue itself.
-        set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        set(BUILD_WERROR OFF CACHE BOOL "" FORCE)
-        set(LOADER_CODEGEN OFF CACHE BOOL "" FORCE)
-        string(REGEX REPLACE "\\.[0-9]+$" "" VulkanHeaders_VERSION
-            "${REXGLUE_VULKAN_SDK_VERSION}")
-        add_subdirectory(vulkan-loader EXCLUDE_FROM_ALL)
-        set_target_properties(vulkan PROPERTIES EXCLUDE_FROM_ALL FALSE)
-
-        set(MVK_BUILD_SHADER_CONVERTER_TOOL OFF CACHE BOOL "" FORCE)
-        set(MVK_EXCLUDE_SPIRV_TOOLS ON CACHE BOOL "" FORCE)
-        add_subdirectory(moltenvk)
-    endif()
-endif()
 
 #=============================================================================
 # FidelityFX (optional, fetched on demand)

@@ -41,23 +41,6 @@ set(REXUI_OVERLAY_SOURCES
     overlay/settings_overlay.cpp
 )
 
-# Vulkan UI backend
-set(REXUI_VULKAN_SOURCES
-    vulkan/linked_type_descriptor_set_allocator.cpp
-    vulkan/vulkan_moltenvk.cpp
-    vulkan/single_layout_descriptor_set_pool.cpp
-    vulkan/spirv_tools_context.cpp
-    vulkan/ui_samplers.cpp
-    vulkan/vulkan_device.cpp
-    vulkan/vulkan_immediate_drawer.cpp
-    vulkan/vulkan_instance.cpp
-    vulkan/vulkan_mem_alloc.cpp
-    vulkan/vulkan_presenter.cpp
-    vulkan/vulkan_provider.cpp
-    vulkan/vulkan_submission_tracker.cpp
-    vulkan/vulkan_upload_buffer_pool.cpp
-    vulkan/vulkan_util.cpp
-)
 
 # D3D12 UI backend
 if(REXGLUE_USE_D3D12)
@@ -97,10 +80,6 @@ set(REXUI_SOURCES
     ${REXUI_OVERLAY_SOURCES}
     ${REXUI_PLATFORM_SOURCES}
 )
-
-if(REXGLUE_USE_VULKAN)
-    list(APPEND REXUI_SOURCES ${REXUI_VULKAN_SOURCES})
-endif()
 
 if(REXGLUE_USE_D3D12)
     list(APPEND REXUI_SOURCES ${REXUI_D3D12_SOURCES})
@@ -152,13 +131,6 @@ if(REXUI_HAS_FIDELITYFX_RUNTIME)
     target_compile_definitions(rexui PRIVATE REX_HAS_FIDELITYFX_RUNTIME=1)
 endif()
 
-if(REXGLUE_USE_VULKAN)
-    target_link_libraries(rexui PUBLIC
-        Vulkan::Headers
-        GPUOpen::VulkanMemoryAllocator
-        spirv-tools-headers
-    )
-endif()
 
 # Platform-specific dependencies
 if(UNIX AND NOT APPLE)

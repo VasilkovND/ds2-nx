@@ -39,25 +39,20 @@ endif()
 # D3D12: Windows only, ON by default.
 # Vulkan: Cross-platform, ON by default on Linux, OFF by default on Windows.
 if(WIN32)
-    option(REXGLUE_USE_D3D12  "Enable D3D12 graphics backend" ON)
-    option(REXGLUE_USE_VULKAN "Enable Vulkan graphics backend" OFF)
+    option(REXGLUE_USE_D3D12 "Enable D3D12 graphics backend" ON)
 else()
     set(REXGLUE_USE_D3D12 OFF)
-    option(REXGLUE_USE_VULKAN "Enable Vulkan graphics backend" ON)
 endif()
 
 if(REXGLUE_SWITCH_DEKO3D AND NOT REXGLUE_PLATFORM_SWITCH)
     message(FATAL_ERROR "REXGLUE_SWITCH_DEKO3D is for the Nintendo Switch build only")
 endif()
-if(REXGLUE_SWITCH_DEKO3D AND REXGLUE_USE_VULKAN)
-    message(FATAL_ERROR "REXGLUE_SWITCH_DEKO3D needs REXGLUE_USE_VULKAN=OFF (switch-devkitA64.cmake sets it)")
-endif()
-if(NOT REXGLUE_USE_D3D12 AND NOT REXGLUE_USE_VULKAN AND NOT REXGLUE_SWITCH_DEKO3D)
-    message(FATAL_ERROR "At least one graphics backend must be enabled (REXGLUE_USE_D3D12 or REXGLUE_USE_VULKAN)")
+if(NOT REXGLUE_USE_D3D12 AND NOT REXGLUE_SWITCH_DEKO3D)
+    message(FATAL_ERROR "A graphics backend must be enabled (REXGLUE_USE_D3D12 on Windows, or REXGLUE_SWITCH_DEKO3D on Switch)")
 endif()
 
 if (REXGLUE_ENABLE_FIDELITYFX AND
-    NOT (REXGLUE_USE_VULKAN OR REXGLUE_USE_D3D12))
+    NOT REXGLUE_USE_D3D12)
     message(FATAL_ERROR
         "REXGLUE_ENABLE_FIDELITYFX requires at least one graphics backend")
 endif()
@@ -313,7 +308,7 @@ message(STATUS "  Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSIO
 message(STATUS "  Configurations: ${CMAKE_CONFIGURATION_TYPES}")
 message(STATUS "  Output Dir: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "  C++ Standard: C++${CMAKE_CXX_STANDARD}")
-message(STATUS "  Graphics: D3D12=${REXGLUE_USE_D3D12} Vulkan=${REXGLUE_USE_VULKAN}")
+message(STATUS "  Graphics: D3D12=${REXGLUE_USE_D3D12} deko3d=${REXGLUE_SWITCH_DEKO3D}")
 message(STATUS "  FidelityFX: ${REXGLUE_ENABLE_FIDELITYFX}")
 message(STATUS "  Tracy: ${REXGLUE_ENABLE_TRACY}")
 message(STATUS "  Perf Counters: ${REXGLUE_ENABLE_PERF_COUNTERS}")

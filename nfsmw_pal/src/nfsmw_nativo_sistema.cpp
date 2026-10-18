@@ -52,16 +52,10 @@
 #include <rex/system/xvideo.h>
 #include <rex/thread.h>
 #include <rex/ui/presenter.h>
-#if NFSMW_DEKO3D
-// The deko3d build (docs/HowToDeko3d.md): the same ring, PM4 reading and shader identification, with the deko3d
-// provider, presenter and renderer backend instead of the Vulkan ones.
+// deko3d renderer (docs/HowToDeko3d.md): the ring, PM4 reading and shader identification, with the deko3d
+// provider, presenter and renderer backend.
 #include "nfsmw_dk_destinos.h"
 #include <rex/ui/deko3d/presentador.h>
-#else
-#include <rex/ui/vulkan/device.h>
-#include <rex/ui/vulkan/presenter.h>
-#include <rex/ui/vulkan/provider.h>
-#endif
 #include <rex/ui/windowed_app_context.h>
 
 #if defined(__aarch64__)
@@ -428,9 +422,6 @@ namespace {
 namespace xenos = rex::graphics::xenos;
 using rex::X_STATUS;  // X_STATUS_SUCCESS and X_STATUS_UNSUCCESSFUL need it too
 using Reloj = std::chrono::steady_clock;
-#if !NFSMW_DEKO3D
-using ContextoSalida = rex::ui::vulkan::VulkanPresenter::VulkanGuestOutputRefreshContext;
-#endif
 
 std::atomic<uint64_t> g_swaps_nativos{0};  // SwapsNativos(), for the watchdog
 
@@ -725,14 +716,7 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
     }
     app_context_ = app_context;
     if (!provider_) {
-#if NFSMW_DEKO3D
       provider_ = nfsmw::deko::ProveedorDeko3d::Crear();  // a deko3d failure ends the process, logged
-#else
-      // Steps C5c-C6: the XenosRecomp SPIR-V needs capabilities that the VkDevice only
-      // enables if they are requested before it is created.
-      rex::cvar::SetFlagByName("vulkan_native_shader_features", "true");
-      provider_ = rex::ui::vulkan::VulkanProvider::Create(true, true);
-#endif
       if (!provider_) {
         REXLOG_ERROR("[nativo] No se pudo crear el dispositivo grafico");
         return X_STATUS_UNSUCCESSFUL;
@@ -3553,189 +3537,9 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
         return;
       }
     }
-#if NFSMW_DEKO3D
     // The deko3d backend always refreshes the guest output itself: before it exists there is nothing to show.
     (void)swap;
   }
-#else
-    presenter_->RefreshGuestOutput(
-        kSalidaAncho, kSalidaAlto, kSalidaAncho, kSalidaAlto,
-        [this, swap](rex::ui::Presenter::GuestOutputRefreshContext& contexto) {
-          return LimpiarSalida(static_cast<ContextoSalida&>(contexto), swap);
-        });
-  }
-
-  bool LimpiarSalida(ContextoSalida& contexto, uint64_t swap) {
-    const rex::ui::vulkan::VulkanDevice* dispositivo = provider_->vulkan_device();
-    const auto& dfn = dispositivo->functions();
-    const VkDevice device = dispositivo->device();
-
-    if (render_pass_ == VK_NULL_HANDLE) {
-      VkAttachmentDescription adjunto{};
-      adjunto.format = rex::ui::vulkan::VulkanPresenter::kGuestOutputFormat;
-      adjunto.samples = VK_SAMPLE_COUNT_1_BIT;
-      adjunto.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-      adjunto.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      adjunto.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-      adjunto.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      adjunto.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      adjunto.finalLayout = rex::ui::vulkan::VulkanPresenter::kGuestOutputInternalLayout;
-      VkAttachmentReference referencia{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-      VkSubpassDescription subpase{};
-      subpase.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-      subpase.colorAttachmentCount = 1;
-      subpase.pColorAttachments = &referencia;
-      VkRenderPassCreateInfo info{};
-      info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-      info.attachmentCount = 1;
-      info.pAttachments = &adjunto;
-      info.subpassCount = 1;
-      info.pSubpasses = &subpase;
-      if (dfn.vkCreateRenderPass(device, &info, nullptr, &render_pass_) != VK_SUCCESS) {
-        render_pass_ = VK_NULL_HANDLE;
-        return false;
-      }
-    }
-
-    if (pool_ == VK_NULL_HANDLE) {
-      VkCommandPoolCreateInfo info{};
-      info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-      info.queueFamilyIndex = dispositivo->queue_family_graphics_compute();
-      if (dfn.vkCreateCommandPool(device, &info, nullptr, &pool_) != VK_SUCCESS) {
-        pool_ = VK_NULL_HANDLE;
-        return false;
-      }
-      VkCommandBufferAllocateInfo reserva{};
-      reserva.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-      reserva.commandPool = pool_;
-      reserva.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-      reserva.commandBufferCount = 1;
-      if (dfn.vkAllocateCommandBuffers(device, &reserva, &comandos_) != VK_SUCCESS) {
-        comandos_ = VK_NULL_HANDLE;
-      }
-      VkFenceCreateInfo info_fence{};
-      info_fence.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-      if (dfn.vkCreateFence(device, &info_fence, nullptr, &fence_) != VK_SUCCESS) {
-        fence_ = VK_NULL_HANDLE;
-      }
-    }
-    if (comandos_ == VK_NULL_HANDLE || fence_ == VK_NULL_HANDLE) {
-      return false;
-    }
-
-    // A single command buffer: wait for the previous one before reusing it.
-    if (fence_pendiente_) {
-      dfn.vkWaitForFences(device, 1, &fence_, VK_TRUE, UINT64_MAX);
-      dfn.vkResetFences(device, 1, &fence_);
-      fence_pendiente_ = false;
-    }
-    dfn.vkResetCommandPool(device, pool_, 0);
-
-    VkFramebuffer framebuffer = VK_NULL_HANDLE;
-    for (const Framebuffer& f : framebuffers_) {
-      if (f.framebuffer != VK_NULL_HANDLE && f.version == contexto.image_version()) {
-        framebuffer = f.framebuffer;
-      }
-    }
-    if (framebuffer == VK_NULL_HANDLE) {
-      Framebuffer& f = framebuffers_[siguiente_framebuffer_];
-      siguiente_framebuffer_ = (siguiente_framebuffer_ + 1) % framebuffers_.size();
-      if (f.framebuffer != VK_NULL_HANDLE) {
-        dfn.vkDestroyFramebuffer(device, f.framebuffer, nullptr);
-        f.framebuffer = VK_NULL_HANDLE;
-      }
-      VkImageView vista = contexto.image_view();
-      VkFramebufferCreateInfo info{};
-      info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-      info.renderPass = render_pass_;
-      info.attachmentCount = 1;
-      info.pAttachments = &vista;
-      info.width = kSalidaAncho;
-      info.height = kSalidaAlto;
-      info.layers = 1;
-      if (dfn.vkCreateFramebuffer(device, &info, nullptr, &f.framebuffer) != VK_SUCCESS) {
-        f.framebuffer = VK_NULL_HANDLE;
-        return false;
-      }
-      f.version = contexto.image_version();
-      framebuffer = f.framebuffer;
-    }
-
-    VkCommandBufferBeginInfo inicio{};
-    inicio.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    inicio.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (dfn.vkBeginCommandBuffer(comandos_, &inicio) != VK_SUCCESS) {
-      return false;
-    }
-    // Test color: green goes up and down with each Swap, so a capture
-    // tells a running game from a stalled one.
-    const float fase = float(swap % 240) / 239.0f;
-    VkClearValue color{};
-    color.color.float32[0] = 0.05f;
-    color.color.float32[1] = 0.10f + 0.40f * fase;
-    color.color.float32[2] = 0.35f;
-    color.color.float32[3] = 1.0f;
-    VkRenderPassBeginInfo pase{};
-    pase.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    pase.renderPass = render_pass_;
-    pase.framebuffer = framebuffer;
-    pase.renderArea.extent.width = kSalidaAncho;
-    pase.renderArea.extent.height = kSalidaAlto;
-    pase.clearValueCount = 1;
-    pase.pClearValues = &color;
-    dfn.vkCmdBeginRenderPass(comandos_, &pase, VK_SUBPASS_CONTENTS_INLINE);
-    dfn.vkCmdEndRenderPass(comandos_);
-    if (dfn.vkEndCommandBuffer(comandos_) != VK_SUCCESS) {
-      return false;
-    }
-    VkSubmitInfo envio{};
-    envio.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    envio.commandBufferCount = 1;
-    envio.pCommandBuffers = &comandos_;
-    {
-      const auto cola = dispositivo->AcquireQueue(dispositivo->queue_family_graphics_compute(), 0);
-      if (dfn.vkQueueSubmit(cola.queue(), 1, &envio, fence_) != VK_SUCCESS) {
-        return false;
-      }
-    }
-    fence_pendiente_ = true;
-    contexto.SetIs8bpc(true);
-    return true;
-  }
-
-  void DestruirVulkan() {
-    destinos_.reset();  // uses the device: before everything else
-    if (!provider_ || !provider_->vulkan_device()) {
-      return;
-    }
-    const rex::ui::vulkan::VulkanDevice* dispositivo = provider_->vulkan_device();
-    const auto& dfn = dispositivo->functions();
-    const VkDevice device = dispositivo->device();
-    if (fence_ != VK_NULL_HANDLE) {
-      if (fence_pendiente_) {
-        dfn.vkWaitForFences(device, 1, &fence_, VK_TRUE, UINT64_MAX);
-        fence_pendiente_ = false;
-      }
-      dfn.vkDestroyFence(device, fence_, nullptr);
-      fence_ = VK_NULL_HANDLE;
-    }
-    for (Framebuffer& f : framebuffers_) {
-      if (f.framebuffer != VK_NULL_HANDLE) {
-        dfn.vkDestroyFramebuffer(device, f.framebuffer, nullptr);
-        f = Framebuffer{};
-      }
-    }
-    if (pool_ != VK_NULL_HANDLE) {
-      dfn.vkDestroyCommandPool(device, pool_, nullptr);
-      pool_ = VK_NULL_HANDLE;
-      comandos_ = VK_NULL_HANDLE;
-    }
-    if (render_pass_ != VK_NULL_HANDLE) {
-      dfn.vkDestroyRenderPass(device, render_pass_, nullptr);
-      render_pass_ = VK_NULL_HANDLE;
-    }
-  }
-#endif
 
 #if NFSMW_DEKO3D
   void DestruirVulkan() { destinos_.reset(); }  // the backend uses the provider's device: before it
@@ -4544,11 +4348,7 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
 #endif
 
   rex::ui::WindowedAppContext* app_context_ = nullptr;
-#if NFSMW_DEKO3D
   std::unique_ptr<nfsmw::deko::ProveedorDeko3d> provider_;
-#else
-  std::unique_ptr<rex::ui::vulkan::VulkanProvider> provider_;
-#endif
   std::unique_ptr<rex::ui::Presenter> presenter_;
 
   rex::memory::Memory* memory_ = nullptr;
@@ -4904,17 +4704,6 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
   uint64_t huella_vs_generacion_ = UINT64_MAX;
   uint64_t dibujos_por_im_load_ = 0;
 
-#if !NFSMW_DEKO3D
-  // Vulkan objects for the test image: only the ring thread touches them.
-  VkRenderPass render_pass_ = VK_NULL_HANDLE;
-  VkCommandPool pool_ = VK_NULL_HANDLE;
-  VkCommandBuffer comandos_ = VK_NULL_HANDLE;
-  VkFence fence_ = VK_NULL_HANDLE;
-  bool fence_pendiente_ = false;
-  std::array<Framebuffer, rex::ui::vulkan::VulkanPresenter::kMaxActiveGuestOutputImageVersions>
-      framebuffers_{};
-  size_t siguiente_framebuffer_ = 0;
-#endif
 };
 
 }  // namespace

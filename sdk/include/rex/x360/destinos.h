@@ -21,10 +21,6 @@ class Memory;
 namespace rex::ui {
 class Presenter;
 }
-namespace rex::ui::vulkan {
-class VulkanDevice;
-}
-
 namespace rex::x360 {
 
 // Registers a copy needs, taken from the ring sink's register mirror.
@@ -55,9 +51,7 @@ struct TexturaSwap {
 
 class DestinosNativos {
  public:
-  // nullptr if the device is missing or presentation could not be set up.
-  static std::unique_ptr<DestinosNativos> Crear(const rex::ui::vulkan::VulkanDevice* dispositivo,
-                                                rex::memory::Memory* memoria);
+  // The deko3d backend is created by CrearDestinosDeko3d (nfsmw_dk_render.h / each game).
   virtual ~DestinosNativos() = default;
 
   // Resolve and/or clear. false if it could not be done (each cause is logged once).
