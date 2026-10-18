@@ -52,6 +52,7 @@
 #if HALO3_DEKO3D
 #include <rex/ui/deko3d/presentador.h>
 #include <rex/x360/deko/destinos.h>
+#include <rex/x360/decodificador.h>
 #endif
 
 namespace halo3::gpu {
@@ -730,7 +731,13 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       }
       case xenos::PM4_DRAW_INDX:
       case xenos::PM4_DRAW_INDX_2:
-        ++draws_;  // not drawn yet
+        ++draws_;
+        // A copy-mode draw is a resolve/clear and needs no shaders: route it to the renderer so the EDRAM is
+        // resolved to its target (the first thing that can appear on screen). Geometry draws still only count
+        // until the ring decoder builds PeticionDibujo for them.
+        if (EnsureRenderer() && rex::x360::EsCopia(registers_.data())) {
+          destinos_->Copiar(rex::x360::LeerRegistrosCopia(registers_.data()));
+        }
         break;
       default:
         // IM_LOAD, IM_LOAD_IMMEDIATE, INVALIDATE_STATE, NOP...: nothing the game waits for.
