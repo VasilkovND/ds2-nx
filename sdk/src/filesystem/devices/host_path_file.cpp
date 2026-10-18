@@ -413,12 +413,6 @@ std::atomic<uint64_t> g_rangos_sobre_techo{0};    // skipped for being too large
 std::atomic<uint64_t> g_rangos_secuenciales{0};   // rejected as part of the load sweep
 std::atomic<uint64_t> g_rangos_secuenciales_mb{0};
 
-// A running estimate (EMA) of the game's typical read size, so the cache floor adapts to the game instead of a
-// fixed NFS-tuned 256 KB. A game of large reads (NFS) keeps a high floor; one of small reads (Halo's 64 KB map
-// reads) gets a low floor so those reads are cached too. Clamped to [64 KB, the cvar floor] so it never caches
-// tiny reads (LRU churn) nor exceeds the tuned ceiling.
-std::atomic<uint64_t> g_lectura_tipica{0};
-
 // Last byte read for each file, to detect the sequential sweep. Guarded by g_rangos_mutex.
 std::unordered_map<uint32_t, uint64_t> g_rangos_ultimo_fin;
 
@@ -427,25 +421,12 @@ int64_t SueloBytes() {
   if (viejo_mb > 0) {
     return viejo_mb * 1024 * 1024;  // an old toml sets it: honor it
   }
-  const int64_t cvar = int64_t(REXCVAR_GET(nfsmw_io_rangos_min_kb)) * 1024;
-  // Adaptive: track the game's typical read, clamped to [64 KB, the cvar floor]. NFS's big reads keep ~cvar;
-  // Halo's 64 KB reads drop the floor so they are cached. "get cache sizing direct from the game."
-  const int64_t tipica = int64_t(g_lectura_tipica.load(std::memory_order_relaxed));
-  if (tipica <= 0) {
-    return cvar;
-  }
-  return std::clamp<int64_t>(tipica, int64_t(64) * 1024, cvar);
+  return int64_t(REXCVAR_GET(nfsmw_io_rangos_min_kb)) * 1024;
 }
 
 // Does this read go into the cache? Only the size decides; the constructor already took care of
 // the file being read-only when it gave (or did not give) it an id.
 bool RangoElegible(size_t pedido) {
-  // Track the game's typical read size (EMA over 16 reads) to size the cache floor from the game itself.
-  if (pedido) {
-    uint64_t prev = g_lectura_tipica.load(std::memory_order_relaxed);
-    const uint64_t next = prev ? (prev * 15 + pedido) / 16 : pedido;
-    g_lectura_tipica.store(next, std::memory_order_relaxed);
-  }
   const int64_t tope = int64_t(REXCVAR_GET(nfsmw_io_rangos_mb)) * 1024 * 1024;
   if (tope <= 0) {
     return false;
@@ -640,16 +621,7 @@ HostPathFile::HostPathFile(uint32_t file_access, HostPathEntry* entry,
   if (file_handle_ && kb > 0 && entry && entry->is_read_only() && !quiere_escribir) {
     const int64_t max = REXCVAR_GET(nfsmw_io_ventanas_max);
     if (g_ventanas_vivas.fetch_add(1, std::memory_order_relaxed) < max) {
-      // On this SD each read pays a large fixed overhead (~300 ms measured) almost regardless of size, so a game
-      // of small reads (Halo's 64 KB map reads) is far faster if one big read-ahead serves many of them. When the
-      // game's typical read is small, grow the window to amortise that overhead; a big-read game (NFS) keeps the
-      // cvar size. "get cache sizing direct from the game."
-      const uint64_t tipica = g_lectura_tipica.load(std::memory_order_relaxed);
-      size_t tam = static_cast<size_t>(kb) * 1024u;
-      if (tipica && tipica <= 128u * 1024u) {
-        tam = std::max<size_t>(tam, 2u * 1024u * 1024u);  // small-read game: 2 MB window
-      }
-      ventana_tam_ = tam;
+      ventana_tam_ = static_cast<size_t>(kb) * 1024u;
       ventana_activa_ = true;
       ventana_contada_ = true;
     } else {
@@ -803,10 +775,7 @@ X_STATUS HostPathFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offset,
      * sequentially and the window is pure cost: it is turned off for this file. This prevents a
      * repeat of the measured case where 4.1 MB of SD reads served 0.3 MB without anyone noticing.
      */
-    // Each fill is one slow SD read; each later hit saves another slow read. Because the per-read overhead dwarfs
-    // the cost of the extra bytes, read-ahead pays even at a low hit rate, so it is only dropped when a file shows
-    // essentially no locality (no hits over many fills), not merely fewer than one hit per fill.
-    if (ventana_activa_ && ventana_rellenos_ >= 64 && ventana_aciertos_ == 0) {
+    if (ventana_activa_ && ventana_rellenos_ >= 8 && ventana_aciertos_ < ventana_rellenos_) {
       ventana_activa_ = false;
       ventana_bytes_ = 0;
       ventana_.clear();
