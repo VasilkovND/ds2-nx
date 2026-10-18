@@ -22,7 +22,7 @@ game. To add a game, see [porting another game](docs/porting-another-game.md).
 | Folder | Contents |
 | --- | --- |
 | `<game>/` | One per game: manifest, codegen fixes, hooks, renderer glue, CMake project |
-| `sdk/` | ReXGlue SDK with the Horizon (Switch) layer, shared by every game |
+| `sdk/` | **Submodule** → [`rexglue-sdk-nx`](https://github.com/nx-mod/rexglue-sdk-nx) (`switch` branch): the ReXGlue SDK + Horizon (Switch) layer + deko3d renderer, shared by every game |
 | `shaders/` | Xenos shader translator and shader library tools |
 | `tools/` | Codegen and build scripts |
 | `docs/` | Documentation: start with [docs/README.md](docs/README.md) |
