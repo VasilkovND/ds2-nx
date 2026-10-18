@@ -22,6 +22,8 @@ the concrete record of one port.
 | 8 | Read of guest `0xE0` in `sub_82107DD8`, called from `sub_8231D8D0` on the main thread, ~14 s in, just after the game gave music control back (a transition) | A game object looked up by handle was missing (its slot in the per-thread object table was empty). Suspect: content signature checks failing, since `XeCryptBnQwNeRsaPubCrypt` wrote no result | [Kernel exports](#9-kernel-exports-that-only-worked-on-windows) |
 | 9 | Same place, same moment; the "pointer" is now `0x3F800020` (`0x3F800000` is the float 1.0) | Not RSA (its errors are gone). Wrong data, not missing data: suspect a translation bug | [Vector instructions](#10-vector-instructions-that-overwrite-their-input) |
 | 10 | Got past it: the main menu's scene drew (~2,300 draws a frame, ~1 frame/s), XMA audio decoded; then the same function, null + `0x20` | More translation bugs of the same kind; the ARM CPU also reorders memory between cores, and PowerPC's barriers were translated to nothing | [Upstream and fork fixes](#11-fixes-from-upstream-rexglue-and-its-forks) |
+| 11 | Same crash ~20 s into the menu, pointer `0x4B1E6BA0` | Not the barrier or fork fixes | Diagnostic hook on the object lookup |
+| 12 | First run with the deko3d presenter: froze before the game folder mount (log ends at "Too few processor cores", no crash report). Rerun: menu as in boot 10, same crash, `lvx128` from `0x4B1DA500` | The object lookup was fine (the hook never fired). The bad pointer is the node loop's orientation pointer, `r4 = r22 + 32 * node` for node `1 .. [r21 + 48]`: the loop walks past the object's node data | Diagnostic hook at both calls of the loop, see [How each crash was read](#how-each-crash-was-read) |
 
 ## 1. The game folder
 
@@ -204,6 +206,11 @@ nearest thing to haloce-nx's in-game text.
   is `x19`; `ctx.rN` is at offset `N * 8`).
 - **The guest code**: the generated C++ keeps every PowerPC instruction as a comment, so it doubles as a
   disassembly. Raw words come from the image dump (`REXGLUE_DUMP_IMAGE`).
+- **What a register held before the crash**: when the bad value is built well before the crash, a
+  `[[midasm_hook]]` with `registers = [...]` logs the inputs at the guest address where it is used. Boot 12: the
+  crash in `sub_82107DD8` (`imagen+0xf8408c`) is its first instruction, `lvx128 v0,r0,r4`. Its caller's loop
+  (`sub_8231D8D0`, from `0x8231DF7C`) steps `r4` by 32 and `r5` by 52 around the call, and the callee writes
+  neither, so the pointer came from the loop itself, not the call.
 - **The earlier port** (`~/switch/halo3-nx-xenonrecomp`, archived) already met several of these problems; its
   config and hooks say where (for example, which addresses it hooked for fibers).
 

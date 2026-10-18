@@ -69,10 +69,16 @@ labels = [0x822363F0, 0x822363F8, 0x82236408, 0x82236414]
 address = 0x821A85C4
 name = "Halo3WorkerPollYield"
 
-# Diagnostic while the object crash of boots 8-11 is chased (src/halo3_hooks.cpp): logs object lookups in
-# sub_8231D8D0 whose address is not readable. Remove once it is understood.
+# Diagnostic while the object crash of boots 8-12 is chased (src/halo3_hooks.cpp), at both calls of the node loop
+# in sub_8231D8D0: logs the node whose orientation pointer (r4 = r22 + 32 * node) is not readable, with the
+# object, its node count and offset, and points it at the game's default-orientation buffer so the menu goes on.
+# Remove once it is understood.
 [[midasm_hook]]
-address = 0x8231D910
-name = "Halo3ObjectLookupCheck"
-registers = ["r14", "r10", "r29"]
-after_instruction = true
+address = 0x8231DF8C
+name = "Halo3NodeLoopCheck"
+registers = ["r4", "r22", "r29", "r30", "r21", "r14"]
+
+[[midasm_hook]]
+address = 0x8231DFF8
+name = "Halo3NodeLoopCheck"
+registers = ["r4", "r22", "r29", "r30", "r21", "r14"]
