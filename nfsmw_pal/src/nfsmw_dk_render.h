@@ -20,6 +20,7 @@
 #pragma once
 
 #include <deko3d.h>
+#include <rex/x360/shader_entry.h>
 
 #include <array>
 #include <cstdint>
@@ -41,14 +42,17 @@ namespace rex::memory {
 class Memory;
 }
 
-namespace nfsmw::deko {
+// Forward-declare in the SDK namespace (rex::deko3d) and import, so these are the real SDK types, not phantoms
+// local to nfsmw::deko that would shadow them (as happened with Nucleo).
+namespace rex::deko3d {
 class ProveedorDeko3d;
 class Compilador;
-}  // namespace nfsmw::deko
+}
+namespace nfsmw::deko { using namespace ::rex::deko3d; }
 
 namespace nfsmw::nativo {
 
-struct EntradaShader;
+using ::rex::x360::EntradaShader;
 
 // An image of the renderer: a render target, a resolved texture or a game texture.
 struct ImagenDk {

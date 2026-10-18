@@ -12,11 +12,12 @@
 #pragma once
 
 #include <cstdint>
+#include <rex/x360/shader_entry.h>
 
 namespace nfsmw::nativo {
 
 class ShadersNativos;
-struct EntradaShader;
+using ::rex::x360::EntradaShader;
 
 enum class FuncionDibujo : uint8_t {
   kVertices,      // DrawVertices(dispositivo, tipo, inicio, cuenta)

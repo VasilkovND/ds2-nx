@@ -24,44 +24,12 @@ namespace nfsmw::native {
 struct Shader;
 }
 
+// ElementoVertice, SamplerShader and EntradaShader are the universal SDK descriptor (rex::x360). The game's library
+// fills spirv/huella/huella_contenedor and stashes its own Shader pointer in juego.
+#include <rex/x360/shader_entry.h>
+
 namespace nfsmw::nativo {
-
-// Vertex declaration element of the container (XenosRecomp shader.h).
-struct ElementoVertice {
-  uint16_t instruccion = 0;  // index of the fetch instruction in the microcode
-  uint8_t uso = 0;           // DeclUsage: 0 posicion, 3 normal, 5 texcoord, 10 color...
-  uint8_t indice_uso = 0;
-};
-
-// Sampler from the constant table: the register is the texture's fetch constant
-// in pixel shaders.
-struct SamplerShader {
-  uint16_t registro = 0;
-  uint16_t tipo = 0;  // D3DXPARAMETER_TYPE: 10-12 = 2D, 13 = 3D, 14 = cubo
-  // It is called SHADOWMAP_SAMPLER in the constant table: it is the shadow map sampling the library rewrites
-  // (tfetch2DSombra and tfetch2DSombraMin). nfsmw_nativo_sombra_minimo.
-  bool mapa_sombras = false;
-};
-
-struct EntradaShader {
-  const nfsmw::native::Shader* shader = nullptr;  // contenedor original y SPIR-V
-  bool vertices = false;
-  uint32_t numero = 0;  // position in the library, for the reports
-  std::vector<uint32_t> microcodigo;  // in host byte order, with the fetches masked
-  uint64_t huella = 0;                // XXH3 of that masked microcode
-  std::vector<ElementoVertice> elementos;
-  std::vector<SamplerShader> samplers;
-  uint32_t salidas = 0;  // pixel shader: bits COLOR0..3 y DEPTH (PixelShaderOutputs)
-  // OpKill in the SPIR-V. XenosRecomp puts one in every pixel shader for the alpha test (guarded by
-  // SPEC_CONSTANT_ALPHA_TEST), so it only really discards if there is more than one.
-  uint32_t kills = 0;
-  bool descarta = false;
-  // Its SPIR-V has tfetch2DSombraMin (the NFSMW_MARCA_SOMBRA_MINIMO constant from shader_common.h): with
-  // kSpecSombraMinimo it takes the minimum of the shadow map and its pair. nfsmw_nativo_sombra_minimo.
-  bool sombra_minimo = false;
-  // Bytes of its float constant buffer that the SPIR-V reads (16 per register).
-  uint32_t constantes_bytes = 256 * 16;
-};
+using namespace ::rex::x360;
 
 struct EstadisticasShaders {
   uint64_t cargas = 0;           // IM_LOAD recibidos

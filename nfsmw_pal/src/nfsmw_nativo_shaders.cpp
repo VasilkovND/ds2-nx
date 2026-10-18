@@ -174,7 +174,7 @@ struct HashClaveCruda {
 struct ShadersNativos::Datos {
   nfsmw::native::BibliotecaShaders biblioteca;
   std::vector<EntradaShader> entradas;
-  std::unordered_map<const nfsmw::native::Shader*, uint32_t> por_shader;
+  std::unordered_map<const void*, uint32_t> por_shader;
   // (vertices, palabras) -> entradas candidatas.
   std::map<std::pair<bool, uint32_t>, std::vector<uint32_t>> candidatos;
   std::unordered_map<ClaveCruda, const EntradaShader*, HashClaveCruda> cache;
@@ -270,7 +270,9 @@ bool ShadersNativos::Cargar(const std::filesystem::path& archivo) {
   uint32_t vertex = 0, pixel = 0;
   for (uint32_t i = 0; i < shaders.size(); ++i) {
     EntradaShader e;
-    e.shader = &shaders[i];
+    e.juego = &shaders[i];
+    e.spirv = shaders[i].spirv;
+    e.huella_contenedor = shaders[i].huella;
     e.numero = i;
     if (const char* motivo = Leer(shaders[i], e)) {
       REXLOG_WARN("[nativo] C5a: contenedor {} de la biblioteca ignorado: {}", i, motivo);
@@ -300,16 +302,17 @@ bool ShadersNativos::Cargar(const std::filesystem::path& archivo) {
     const EntradaShader& e = d.entradas[i];
     const uint32_t palabras = uint32_t(e.microcodigo.size());
     d.candidatos[{e.vertices, palabras}].push_back(i);
-    d.por_shader[e.shader] = i;
+    d.por_shader[e.juego] = i;
     grupos[{e.vertices, palabras, e.huella}].push_back(i);
   }
   uint32_t repetidos = 0, repetidos_distintos = 0;
   for (const auto& [clave, miembros] : grupos) {
     if (miembros.size() < 2) continue;
     ++repetidos;
-    const auto& spirv = d.entradas[miembros[0]].shader->spirv;
+    const auto& spirv = d.entradas[miembros[0]].spirv;
     for (uint32_t m : miembros) {
-      if (d.entradas[m].shader->spirv != spirv) {
+      const auto& otro = d.entradas[m].spirv;
+      if (otro.size() != spirv.size() || !std::equal(otro.begin(), otro.end(), spirv.begin())) {
         ++repetidos_distintos;
         break;
       }
@@ -402,7 +405,7 @@ const EntradaShader* ShadersNativos::Identificar(bool vertices,
       // length (incoming / container original, without the mask).
       for (size_t k = 0; c != d.candidatos.end() && k < c->second.size() && k < 2; ++k) {
         const EntradaShader& e = d.entradas[c->second[k]];
-        const auto& o = e.shader->original;
+        const auto& o = static_cast<const nfsmw::native::Shader*>(e.juego)->original;
         const size_t virtuales = size_t(o[4]) << 24 | size_t(o[5]) << 16 | size_t(o[6]) << 8 | o[7];
         std::string diferencias;
         uint32_t cuantas = 0;

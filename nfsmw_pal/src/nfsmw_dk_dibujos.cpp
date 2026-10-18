@@ -838,13 +838,13 @@ void RenderDk::CerrarFotogramaDeLaGuardiaDelCielo() {
 RenderDk::InfoShader& RenderDk::InfoDe(const EntradaShader& entrada) {
   InfoShader& info = info_shaders_[&entrada];
   if (!info.huella) {
-    const auto& espirv = entrada.shader->spirv;
+    const auto& espirv = entrada.spirv;
     info.huella = deko::HuellaSpirv(espirv);
     info.mascara = deko::MascaraEspecializacion(espirv);
   }
   if (!entrada.vertices && !info.interpoladores_listos) {
     // What the pixel shader reads: the vertex shader variant (the PC tool does the same, nfsmw_dksh.cpp).
-    info.interpoladores = deko::SpirvAGlsl(entrada.shader->spirv, 0).interpoladores;
+    info.interpoladores = deko::SpirvAGlsl(entrada.spirv, 0).interpoladores;
     info.interpoladores_listos = true;
   }
   return info;
@@ -855,7 +855,7 @@ const DkShader* RenderDk::ShaderDe(const EntradaShader& entrada, uint32_t especi
   InfoShader& info = InfoDe(entrada);
   // The SPIR-V: the library's, or the bright pass replaced by a glow variant (same inputs and constants, so the
   // library shader's mask applies).
-  std::span<const uint32_t> espirv(entrada.shader->spirv);
+  std::span<const uint32_t> espirv(entrada.spirv);
 #if NFSMW_DK_RESPLANDOR
   if (variante_ps & kVarianteResplandorNatural) {
     espirv = kSpirvDkResplandorNatural;
@@ -910,7 +910,7 @@ const DkShader* RenderDk::ShaderDe(const EntradaShader& entrada, uint32_t especi
     // compiles on the worker; it is not remembered here, so the next draw looks in the cache again.
     const uint64_t h = XXH3_64bits(&clave_cache, sizeof(clave_cache));
     if (en_fondo_.emplace(h, true).second) {
-      const deko::GlslDeko g = deko::SpirvAGlsl(entrada.shader->spirv, espec, variante);
+      const deko::GlslDeko g = deko::SpirvAGlsl(entrada.spirv, espec, variante);
       if (!g.glsl.empty()) {
         std::weak_ptr<Bandeja> bandeja = bandeja_;
         compilador_.Encolar(true, g.glsl, [bandeja, clave_cache](deko::Compilador::Resultado r) {
@@ -1002,7 +1002,7 @@ void RenderDk::RecogerCompilaciones() {
 
 bool RenderDk::Dibujar(const PeticionDibujo& p) {
   const uint32_t* r = p.registros;
-  if (!r || !p.vs || !p.vs->shader) {
+  if (!r || !p.vs || p.vs->spirv.empty()) {
     return false;
   }
   const uint64_t inicio_ns = deko::AhoraNs();
@@ -1031,7 +1031,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
   if (!ps && modo_edram == uint32_t(xenos::EdramMode::kColorDepth)) {
     return false;
   }
-  if (ps && !ps->shader) {
+  if (ps && ps->spirv.empty()) {
     return false;
   }
   const uint32_t iniciador = r[gr::XE_GPU_REG_VGT_DRAW_INITIATOR];
@@ -1486,7 +1486,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
   }
   // nfsmw_nativo_sin_desenfoque: the race's final composite without its radial blur (the Vulkan path's
   // composicion_sin_desenfoque; its texture side only feeds the lazy depth copies, which this backend has not).
-  const uint64_t huella_ps = ps ? ps->shader->huella : 0;
+  const uint64_t huella_ps = ps ? ps->huella_contenedor : 0;
   if (huella_ps == kHuellaComposicion && REXCVAR_GET(nfsmw_nativo_sin_desenfoque)) {
     especializacion |= kSpecSinDesenfoque;
   }

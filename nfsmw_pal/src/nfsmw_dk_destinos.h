@@ -13,9 +13,12 @@
 
 #include "nfsmw_nativo_destinos.h"
 
-namespace nfsmw::deko {
+// Forward-declare in the SDK namespace (rex::deko3d) and import, so this is the real SDK type, not a phantom
+// local to nfsmw::deko that would shadow it.
+namespace rex::deko3d {
 class ProveedorDeko3d;
 }
+namespace nfsmw::deko { using namespace ::rex::deko3d; }
 
 namespace nfsmw::nativo {
 
