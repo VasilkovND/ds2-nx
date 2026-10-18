@@ -23,6 +23,7 @@ keeps a thin layer on top (for example a hook table or a configuration).
 | Disc image extraction (streamed, resumable) | `sdk/src/filesystem/disc_image_extract.cpp` | Halo 3 |
 | `posix_memalign` for deko3d titles | `sdk/src/ui/switch_dk_libc.cpp` | `nfsmw_pal/src/nfsmw_dk_libc.cpp` |
 | Codegen fixes (barriers, atomics, vector, FP) | `sdk/src/codegen` | upstream ReXGlue and forks |
+| Shared Xbox 360 renderer types (per-draw request, backend interface, GPU arithmetic, vertex dedupe, microcode versions) | `sdk/include/rex/x360/*` (namespace `rex::x360`) | `nfsmw_pal/src/nfsmw_nativo_*` |
 
 The deko3d files keep their Spanish names and `nfsmw::deko` still works for NFS's code (a `using` in each
 header) until NFS's renderer is renamed.
@@ -52,3 +53,23 @@ Stays in `nfsmw_pal/`: the sound-engine hooks (`nfsmw_audio_*`), the native repl
 
 Controls and audio output are already in `sdk/` (`CreateDefaultInputSystem`, `SwitchAudioSystem`, the XMA
 decoder) and every game uses them.
+
+
+## The deko3d renderer backend (not moved yet)
+
+The deko3d backend `RenderDk` (`nfsmw_dk_destinos/dibujos/texturas/geometria`, ~5600 lines) is the next universal
+piece, but it is still in NFS. Its game couplings, measured:
+
+- **Optional effects**, easy to make per-game: the sky glow (`nfsmw_dk_resplandor_spirv.h`, already behind
+  `#if __has_include`), FXAA and post-process settings (`nfsmw::ajustes`, ~7 calls), a watchdog heartbeat
+  (`nfsmw::guardia30::Latir`).
+- **The shader descriptor `EntradaShader`** is the real work. The backend reads `spirv` and a hash from it, so it
+  looks moveable to `rex::x360` with a `spirv` span plus an opaque `juego` pointer. The trap: NFS's renderer also
+  identifies specific effect shaders (sky, bright pass, composition) by the **container** hash
+  (`native::Shader::huella`), which is a *different* value from the microcode hash `EntradaShader::huella`, and
+  these `->shader->huella` comparisons run across NFS's 12k-line Vulkan backend too. So decoupling `EntradaShader`
+  is an NFS-wide change (both backends + the shader library) that needs a full NFS deko build to verify, not a
+  quick lift. Keep the container hash reachable through `juego` for a game's own effect detection.
+
+For Halo 3, the path to frames is: this universal backend, plus the ring reader/draw decoder (from
+`nfsmw_nativo_sistema.cpp`), fed Halo's 508 translated shaders.
