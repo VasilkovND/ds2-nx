@@ -23,7 +23,9 @@ keeps a thin layer on top (for example a hook table or a configuration).
 | Disc image extraction (streamed, resumable) | `sdk/src/filesystem/disc_image_extract.cpp` | Halo 3 |
 | `posix_memalign` for deko3d titles | `sdk/src/ui/switch_dk_libc.cpp` | `nfsmw_pal/src/nfsmw_dk_libc.cpp` |
 | Codegen fixes (barriers, atomics, vector, FP) | `sdk/src/codegen` | upstream ReXGlue and forks |
+| Vulkan removed entirely; deko3d is the only renderer | (deleted) | — |
 | Shared Xbox 360 renderer types (per-draw request, backend interface, GPU arithmetic, vertex dedupe, microcode versions) | `sdk/include/rex/x360/*` (namespace `rex::x360`) | `nfsmw_pal/src/nfsmw_nativo_*` |
+| Universal shader descriptor (EntradaShader: SPIR-V, fingerprints, elements, samplers) | `sdk/include/rex/x360/shader_entry.h` | `nfsmw_nativo_shaders.h` |
 
 The deko3d files keep their Spanish names and `nfsmw::deko` still works for NFS's code (a `using` in each
 header) until NFS's renderer is renamed.
