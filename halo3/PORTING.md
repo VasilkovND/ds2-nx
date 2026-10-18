@@ -163,6 +163,9 @@ tool changed and reports every module up to date.
 
 ## 11. Fixes from upstream ReXGlue and its forks
 
+The SDK is now the [`rexglue-sdk-nx`](https://github.com/nx-mod/rexglue-sdk-nx) fork (`switch`
+branch) as a submodule at `sdk/`. It carries these fixes, plus `db16cyc` -> `simde_mm_pause`.
+
 Our SDK is ReXGlue 0.10.0. Upstream's `development` branch and its forks (all BSD-3, the same licence) had
 already fixed translation bugs that hit Halo 3. Applied, each credited in its commit:
 
@@ -221,7 +224,5 @@ nearest thing to haloce-nx's in-game text.
 - `cache0:` / `cache1:` (the 360's cache partition) are left unmounted, as upstream does; the game reads from the
   disc instead.
 - `XeKeysConsolePrivateKeySign` returns 0 (failure, as a BOOL); Halo 3 has not been seen calling it.
-- `db16cyc` (the 360's "pause for 16 cycles" hint, 12 sites in Halo 3) compiles to nothing, so loops built around
-  it spin flat out. A pause there would help every game; it needs a codegen change.
 - The cross-DLL import lookup tries the bare name before `.dll`, which floods the log with
   `'WavesLibDLL' -> [no device]`.

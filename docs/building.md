@@ -34,6 +34,9 @@ Only if you need them:
 
 ## 1. Get the missing libraries
 
+> **`sdk/` is a submodule.** After cloning, run `git submodule update --init sdk` (it tracks
+> `rexglue-sdk-nx@switch`). The SDK's own `thirdparty/` is then populated as below.
+
 **Why:** to keep the repository small, `sdk/thirdparty` only has the files this port changed. The rest comes from the
 [ReXGlue](glossary.md#rexglue) version this port is based on (v0.10.0).
 
