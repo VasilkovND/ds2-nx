@@ -1,8 +1,8 @@
 // deadspace2 - collects the game's shaders as it creates them, for the shader library.
 //
 // Why: the deko3d renderer draws with shaders translated ahead of time (XenosRecomp -> HLSL -> SPIR-V), found
-// by a fingerprint of each shader's container (docs/shaders.md). Dead Space 2 keeps its shaders inside the
-// RefPack-compressed entries of bigfile0/1.viv, so scanning the disc as NFS does finds almost none
+// by a fingerprint of each shader's container. Dead Space 2 keeps its shaders inside the
+// RefPack-compressed entries of bigfile0/1.viv, so scanning the disc for containers finds almost none
 // (129 raw container signatures in 6.6 GB). Every shader, however, goes through the XDK's
 // D3DDevice_CreateVertexShader / D3DDevice_CreatePixelShader with its container already decompressed in
 // guest memory (r3 = pFunction). Wrapping those two functions catches every shader the game really uses,
@@ -10,16 +10,23 @@
 //
 // Each new container is written once to <NRO folder>/shaders_dump/{vs,ps}_<xxh3>.bin (XXH3_64bits of the
 // whole container, the key XenosRecomp itself uses). Copy that folder back to the PC to build the library.
-// Turn it off with --ds2_shader_dump=false.
+// Off by default now that the set is collected (writing ~1,300 files to the SD card froze the first load for
+// ~40 s); turn it on with --ds2_shader_dump=true to collect shaders again.
+//
+// The same two hooks feed the shader library (ds2_shaders.h): before the call, which library entry the container
+// is; after it, where the new object keeps its microcode, so the ring can tell which shader an IM_LOAD is.
 //
 // Container layout (XenosRecomp's ShaderContainer, big-endian): flags (0x102A11xx), virtualSize,
 // physicalSize, ...; the container is virtualSize + physicalSize bytes.
 
 #include "ds2_rex_diagnostic_pch.h"
 
+#include "ds2_shaders.h"
+
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging.h>
+#include <rex/system/kernel_state.h>
 
 #include <xxhash.h>
 
@@ -30,7 +37,7 @@
 #include <string>
 #include <unordered_set>
 
-REXCVAR_DEFINE_BOOL(ds2_shader_dump, true, "DS2",
+REXCVAR_DEFINE_BOOL(ds2_shader_dump, false, "DS2",
                     "Write every shader container the game creates to shaders_dump/ next to the executable.");
 
 namespace {
@@ -79,16 +86,40 @@ void Dump(uint8_t* base, uint32_t address, const char* stage) {
   }
 }
 
+// The library entry of the container at `address` (r3 before the call), or nullptr.
+const rex::x360::EntradaShader* Entrada(uint8_t* base, uint32_t address) {
+  auto& biblioteca = ds2::shaders::Global();
+  if (!address || !biblioteca.cargada()) return nullptr;
+  const uint32_t flags = REX_LOAD_U32(address);
+  const uint64_t size = uint64_t(REX_LOAD_U32(address + 4)) + REX_LOAD_U32(address + 8);
+  if ((flags & 0xFFFF0000u) != 0x102A0000u || size < 36 || size > (4u << 20)) return nullptr;
+  return biblioteca.PorContenedor({REX_RAW_ADDR(address), size_t(size)});
+}
+
+// After the call r3 is the new object.
+void Registrar(PPCContext& ctx, uint32_t container, const rex::x360::EntradaShader* entrada) {
+  auto& biblioteca = ds2::shaders::Global();
+  if (container && biblioteca.cargada()) {
+    biblioteca.RegistrarObjeto(rex::system::kernel_memory(), ctx.r3.u32, entrada);
+  }
+}
+
 }  // namespace
 
 REX_EXTERN(__imp__D3DDevice_CreateVertexShader_82220568);
 REX_EXTERN(D3DDevice_CreateVertexShader_82220568) {
-  Dump(base, ctx.r3.u32, "vs");
+  const uint32_t container = ctx.r3.u32;
+  Dump(base, container, "vs");
+  const rex::x360::EntradaShader* entrada = Entrada(base, container);
   __imp__D3DDevice_CreateVertexShader_82220568(ctx, base);
+  Registrar(ctx, container, entrada);
 }
 
 REX_EXTERN(__imp__D3DDevice_CreatePixelShader_822201C0);
 REX_EXTERN(D3DDevice_CreatePixelShader_822201C0) {
-  Dump(base, ctx.r3.u32, "ps");
+  const uint32_t container = ctx.r3.u32;
+  Dump(base, container, "ps");
+  const rex::x360::EntradaShader* entrada = Entrada(base, container);
   __imp__D3DDevice_CreatePixelShader_822201C0(ctx, base);
+  Registrar(ctx, container, entrada);
 }

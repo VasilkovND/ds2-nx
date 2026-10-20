@@ -45,10 +45,14 @@ for p in "$ROOT"/deadspace2/sdk-patches/*.patch; do
   fi
 done
 
-echo "== configure"
-cmake -S deadspace2 -B deadspace2/out/sw -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/switch/cmake/switch-devkitA64.cmake" \
-  -DREXSDK_DIR="$ROOT/sdk" -DDS2_RECOMP_DIR="$DS2_RECOMP" -DREXGLUE_SWITCH_DEKO3D=ON
+# Configure only the first time (or with RECONFIGURE=1): afterwards Ninja re-runs CMake by itself when a CMake file
+# changes, and an incremental build of a change to deadspace2/src/ takes seconds instead of rebuilding the game.
+if [ ! -f deadspace2/out/sw/build.ninja ] || [ "${RECONFIGURE:-0}" = 1 ]; then
+  echo "== configure"
+  cmake -S deadspace2 -B deadspace2/out/sw -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/switch/cmake/switch-devkitA64.cmake" \
+    -DREXSDK_DIR="$ROOT/sdk" -DDS2_RECOMP_DIR="$DS2_RECOMP" -DREXGLUE_SWITCH_DEKO3D=ON
+fi
 
 echo "== build ($JOBS jobs)"
 cmake --build deadspace2/out/sw -j "$JOBS"

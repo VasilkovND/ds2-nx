@@ -11,14 +11,11 @@ rom/
 *.big
 *.bun
 *.viv
-*.nfsp
+*.dslib
+shaders_dump/
 
 # --- Generated from the game --------------------------------------------------
 generated/
-nfsmw*/generated/
-nfsmw*/src/copias_literales/
-nfsmw*/src/nfsmw_nativo_resplandor_*_spirv.h
-nfsmw*/src/nfsmw_dk_resplandor_spirv.h
 
 # --- Build output -------------------------------------------------------------
 out/
@@ -31,10 +28,10 @@ build/
 *.a
 *.log
 *.err
-shaders/wasm/out/
 
 # --- Tools --------------------------------------------------------------------
 __pycache__/
 *.pyc
 .vs/
 .vscode/
+.DS_Store

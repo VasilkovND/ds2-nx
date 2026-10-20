@@ -1,0 +1,961 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 4cffec3..1c47522 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -151,6 +151,7 @@ class RenderDk final : public DestinosNativos {
+   }
+   void EstadisticasOclusion(uint64_t valores[5]) const override;
+   bool Dibujar(const PeticionDibujo& peticion) override;  // nfsmw_dk_dibujos.cpp
++  void PedirVolcado() override { volcado_pedido_ = true; }
+   EstadisticasDibujos EstadisticasDeDibujos() const override;
+   void EsperarSubidas() override {}  // vertices are copied on the ring thread, before Dibujar returns
+   uint64_t CopiasProfundidad() const override { return copias_profundidad_; }
+@@ -206,13 +207,30 @@ class RenderDk final : public DestinosNativos {
+   // engine (0.78 ms per Mpixel), keeps compressed images compressed, and orders against draws with Fragments barriers
+   // instead of Full ones. rop_sin_barrera_: render target writes since the last barrier that made them visible to
+   // sampling; copia3d_pendiente_: a copy since then, which the next draw or clear waits for.
++  // modos_signo (4 ints, per destination channel): 0 copy, 1 signed 8-bit, 2 biased (2x - 1); nullptr: plain copy.
+   bool Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto, ImagenDk& destino,
+-                uint32_t dx, uint32_t dy);
++                uint32_t dx, uint32_t dy, const int32_t* modos_signo = nullptr);
+   bool rop_sin_barrera_ = true;
+   bool copia3d_pendiente_ = false;
+   uint64_t copias_3d_ = 0, barreras_fragmentos_ = 0;
+-  DkShader fs_copia_color_{}, fs_copia_profundidad_{};
+-  bool fs_copia_color_valido_ = false, fs_copia_profundidad_valido_ = false;
++  DkShader fs_copia_color_{}, fs_copia_profundidad_{}, fs_copia_signo_{};
++  bool fs_copia_color_valido_ = false, fs_copia_profundidad_valido_ = false, fs_copia_signo_valido_ = false;
++  // A resolved texture sampled with signed or biased components (TextureSign 1 or 2): the GPU applies them while
++  // fetching, the host image holds the unsigned values, so a converted copy is sampled instead (texturas.cpp).
++  struct ConvertidaSigno {
++    ImagenDk imagen;
++    uint64_t version = UINT64_MAX;
++  };
++  std::unordered_map<uint64_t, ConvertidaSigno> convertidas_signo_;
++  // A 3D texture whose slices are resolved textures (Dead Space 2's color grading LUT, Copiar): its host image and the
++  // version of each slice it holds.
++  struct VolumenResuelto {
++    ImagenDk imagen;
++    std::vector<uint64_t> versiones;
++    uint64_t fotograma = UINT64_MAX;
++  };
++  std::unordered_map<uint64_t, VolumenResuelto> volumenes_resueltos_;
++  const ImagenDk* ResueltaConSigno(const ImagenDk& resuelta, uint32_t signos);
+   deko::Subida Reservar(uint32_t bytes, uint32_t alineacion);
+ 
+   // ---- Render targets and resolved textures (nfsmw_dk_destinos.cpp)
+@@ -225,6 +243,20 @@ class RenderDk final : public DestinosNativos {
+     uint32_t formato_guest = 0;
+     bool escrita = false;
+   };
++  // The frame dump (PedirVolcado): from one Swap to the next, each resolved texture written is copied to a read-back
++  // block; at the next Swap the GPU is waited for and they are written as BMPs (destinos.cpp, TerminarVolcado).
++  struct EntradaVolcado {
++    uint32_t offset = 0, ancho = 0, alto = 0, bpp = 0, base = 0, formato_guest = 0;
++    DkImageFormat formato = DkImageFormat_None;
++  };
++  void VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest);
++  void TerminarVolcado();
++  bool volcado_pedido_ = false, volcando_ = false;
++  DkMemBlock volcado_bloque_ = nullptr;
++  uint8_t* volcado_cpu_ = nullptr;
++  DkGpuAddr volcado_gpu_ = 0;
++  uint32_t volcado_usados_ = 0, volcados_ = 0;
++  std::vector<EntradaVolcado> volcado_;
+   Resuelta* ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato, bool intercambio_rb,
+                             bool profundidad);
+   bool CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat formato, uint32_t ancho, uint32_t alto,
+@@ -393,7 +425,9 @@ class RenderDk final : public DestinosNativos {
+   // check; resolved textures and cubemaps, this frame only).
+   uint32_t PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint32_t& ancho, uint32_t& alto, bool& puntual,
+                            uint64_t& valido_hasta);
+-  uint32_t VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint16_t swizzle_host);
++  // formato_vista: DkImageFormat_None keeps the image's; a compatible one reinterprets it (signed, sRGB).
++  uint32_t VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint16_t swizzle_host,
++                   DkImageFormat formato_vista = DkImageFormat_None);
+   uint32_t SamplerDe(const uint32_t* f, bool puntual);
+   uint32_t VaciaDe(uint16_t tipo_shader) const;
+   bool LeerNivel(uint64_t direccion, bool mosaico, uint32_t pitch_bloques, uint64_t fila_bytes, const FormatoDk& tf,
+@@ -703,4 +737,8 @@ class RenderDk final : public DestinosNativos {
+ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
+                                                     rex::x360::RenderHooks& hooks);  // default in nfsmw_dk_destinos.h
+ 
++// Host formats of what the backend can draw into and resolve to (destinos.cpp). false: not handled yet.
++bool FormatoDestinoColorDk(uint32_t formato_destino, DkImageFormat& host);  // ColorRenderTargetFormat
++bool FormatoResueltaDk(uint32_t formato_copia, DkImageFormat& host);        // ColorFormat of RB_COPY_DEST_INFO
++
+ }  // namespace rex::x360
+diff --git a/include/rex/x360/destinos.h b/include/rex/x360/destinos.h
+index 643605a..fb2abd6 100644
+--- a/include/rex/x360/destinos.h
++++ b/include/rex/x360/destinos.h
+@@ -8,6 +8,8 @@
+ 
+ #pragma once
+ 
++#include <functional>
++
+ #include <rex/x360/peticion.h>
+ 
+ #include <rex/graphics/registers.h>
+@@ -56,6 +58,11 @@ struct TexturaSwap {
+ // swap.dword[1] (see RenderDk::Presentar / TexturaResuelta). Every game's ring reader does this on a Swap, so
+ // it lives here: pass the result to DestinosNativos::Presentar. An empty TexturaSwap leaves base=0 and the
+ // renderer finds no resolved texture (black screen).
++// Runs `escritura` on a background thread of its own (one, created on first use, in order): writing to the SD card takes
++// 10-50 ms per small operation and the ring thread must not wait for it. std::thread is not available on the Switch
++// (std::system_error, Function not implemented): this uses rex::thread. deko3d backend (destinos.cpp).
++void EncolarEscrituraSd(std::function<void()> escritura);
++
+ inline TexturaSwap LeerTexturaSwap(const uint32_t* registros) {
+   TexturaSwap t;
+   for (uint32_t i = 0; i < 6; ++i) {
+@@ -92,6 +99,8 @@ class DestinosNativos {
+ 
+   // Parts C3-C6: records a ring draw with its shaders. false if it could not.
+   virtual bool Dibujar(const PeticionDibujo& peticion) = 0;
++  // Debugging: every texture resolved during the next frame is written to the SD card as a BMP (a backend that can).
++  virtual void PedirVolcado() {}
+   virtual EstadisticasDibujos EstadisticasDeDibujos() const = 0;
+   // Deferred vertex copies finished: before returning the read pointer to the game.
+   virtual void EsperarSubidas() = 0;
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index dcd46c7..21087fa 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -8,12 +8,17 @@
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/xenos.h>
+ #include <rex/logging.h>
++#include <rex/thread.h>
+ #include <rex/memory/utils.h>
+ #include <rex/ui/presenter.h>
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdio>
+ #include <cstring>
++#include <mutex>
++#include <deque>
++#include <condition_variable>
+ #include <filesystem>
+ #include <fstream>
+ #include <thread>
+@@ -277,6 +282,22 @@ void main() {
+   color = texelFetch(origen, ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy, 0);
+ }
+ )";
++// The same copy with each channel's TextureSign applied: 1 reads the 8-bit value as signed, 2 as biased (2x - 1).
++constexpr const char* kFsCopiaSigno = R"(#version 460
++layout(binding = 0) uniform sampler2D origen;
++layout(std140, binding = 0) uniform Copia {
++  ivec4 desplazamiento;
++  ivec4 modos;
++} copia;
++layout(location = 0) out vec4 color;
++void main() {
++  vec4 t = texelFetch(origen, ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy, 0);
++  vec4 b = floor(t * 255.0 + 0.5);
++  vec4 firmado = max(mix(b, b - 256.0, greaterThanEqual(b, vec4(128.0))) / 127.0, vec4(-1.0));
++  color = mix(t, firmado, equal(copia.modos, ivec4(1)));
++  color = mix(color, t * 2.0 - 1.0, equal(copia.modos, ivec4(2)));
++}
++)";
+ constexpr const char* kFsCopiaProfundidad = R"(#version 460
+ layout(binding = 0) uniform sampler2D origen;
+ layout(std140, binding = 0) uniform Copia {
+@@ -290,6 +311,47 @@ void main() {
+ constexpr uint32_t kRampaExacta = 1, kRampaGraduacion = 2, kRampaFxaa = 4;
+ constexpr uint32_t kBytesUboRampa = 4 * 16;  // mezcla, efectos, desplazamiento, inverso (the ramp is a texture)
+ 
++constexpr uint32_t kBytesVolcado = 48u << 20;  // the frame dump's read-back block (PedirVolcado)
++
++float MedioAFloat(uint16_t h) {
++  const uint32_t signo = uint32_t(h >> 15) << 31, exponente = (h >> 10) & 0x1F, mantisa = h & 0x3FF;
++  if (exponente == 0) {
++    const float v = std::ldexp(float(mantisa), -24);
++    return signo ? -v : v;
++  }
++  const uint32_t f = exponente == 31 ? (signo | 0x7F800000u | (mantisa << 13))
++                                     : (signo | ((exponente + 112) << 23) | (mantisa << 13));
++  float v;
++  std::memcpy(&v, &f, 4);
++  return v;
++}
++
++// A 24-bit BMP of `bgr` (width * height * 3, top row first).
++void EscribirBmp(const std::filesystem::path& ruta, uint32_t ancho, uint32_t alto, const std::vector<uint8_t>& bgr) {
++  const uint32_t fila = (ancho * 3 + 3) & ~3u;
++  uint8_t cabecera[54] = {'B', 'M'};
++  auto u32 = [&](size_t at, uint32_t v) { std::memcpy(cabecera + at, &v, 4); };
++  u32(2, 54 + fila * alto);
++  u32(10, 54);
++  u32(14, 40);
++  u32(18, ancho);
++  u32(22, alto);
++  cabecera[26] = 1;
++  cabecera[28] = 24;
++  u32(34, fila * alto);
++  // The whole file in memory and one write: small writes to the SD card take 10-50 ms each (720 rows: seconds).
++  std::vector<uint8_t> archivo(sizeof(cabecera) + size_t(fila) * alto, 0);
++  std::memcpy(archivo.data(), cabecera, sizeof(cabecera));
++  for (uint32_t y = 0; y < alto; ++y) {
++    std::memcpy(archivo.data() + sizeof(cabecera) + size_t(y) * fila, bgr.data() + size_t(alto - 1 - y) * ancho * 3,
++                size_t(ancho) * 3);
++  }
++  if (FILE* f = std::fopen(ruta.string().c_str(), "wb")) {
++    std::fwrite(archivo.data(), 1, archivo.size(), f);
++    std::fclose(f);
++  }
++}
++
+ }  // namespace
+ 
+ // ---- Construction
+@@ -529,9 +591,10 @@ void RenderDk::AntesDe3D() {
+ }
+ 
+ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
+-                        ImagenDk& destino, uint32_t dx, uint32_t dy) {
++                        ImagenDk& destino, uint32_t dx, uint32_t dy, const int32_t* modos_signo) {
+   const bool z = destino.profundidad;
+-  if (!vs_salida_valido_ || !(z ? fs_copia_profundidad_valido_ : fs_copia_color_valido_)) {
++  if (!vs_salida_valido_ || !(z ? fs_copia_profundidad_valido_ : fs_copia_color_valido_) ||
++      (modos_signo && (z || !fs_copia_signo_valido_))) {
+     return false;
+   }
+   AsegurarTrabajo();
+@@ -542,6 +605,9 @@ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32
+   }
+   const int32_t desplazamiento[4] = {int32_t(x0) - int32_t(dx), int32_t(y0) - int32_t(dy), 0, 0};
+   std::memcpy(ubo.cpu, desplazamiento, sizeof(desplazamiento));
++  if (modos_signo) {
++    std::memcpy(ubo.cpu + sizeof(desplazamiento), modos_signo, 4 * sizeof(int32_t));
++  }
+   const uint32_t ranura = VistaDe(origen, 0x688, z ? 0 /* RRRR */ : 0x688);
+   DkCmdBuf cmd = nucleo_.comandos();
+   MarcarGpu(kGpuCopias);
+@@ -596,7 +662,8 @@ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32
+   dkCmdBufBindDepthStencilState(cmd, &ds);
+   dkCmdBufBindVtxAttribState(cmd, nullptr, 0);
+   dkCmdBufBindVtxBufferState(cmd, nullptr, 0);
+-  const DkShader* shaders[2] = {&vs_salida_, z ? &fs_copia_profundidad_ : &fs_copia_color_};
++  const DkShader* shaders[2] = {&vs_salida_,
++                                z ? &fs_copia_profundidad_ : modos_signo ? &fs_copia_signo_ : &fs_copia_color_};
+   dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);
+   dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo.gpu, 256);
+   dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura, 0));
+@@ -693,6 +760,69 @@ void RenderDk::PrepararDestino(ImagenDk& imagen) {
+   OlvidarEstado();
+ }
+ 
++// Render target formats: 8_8_8_8 (and its gamma form) as before; Dead Space 2 also draws into 32_FLOAT (its 64x8
++// exposure target) and the float and 10-bit formats are mapped the same way. 2_10_10_10_FLOAT has no host
++// equivalent with alpha: 16-bit float keeps its range.
++bool FormatoDestinoColorDk(uint32_t formato_destino, DkImageFormat& host) {
++  switch (formato_destino) {
++    case 0:   // k_8_8_8_8
++    case 1:   // k_8_8_8_8_GAMMA
++      host = DkImageFormat_RGBA8_Unorm;
++      return true;
++    case 2:   // k_2_10_10_10
++    case 10:  // k_2_10_10_10_AS_10_10_10_10
++      host = DkImageFormat_RGB10A2_Unorm;
++      return true;
++    case 3:   // k_2_10_10_10_FLOAT
++    case 12:  // k_2_10_10_10_FLOAT_AS_16_16_16_16
++    case 7:   // k_16_16_16_16_FLOAT
++      host = DkImageFormat_RGBA16_Float;
++      return true;
++    case 6:   // k_16_16_FLOAT
++      host = DkImageFormat_RG16_Float;
++      return true;
++    case 14:  // k_32_FLOAT
++      host = DkImageFormat_R32_Float;
++      return true;
++    case 15:  // k_32_32_FLOAT
++      host = DkImageFormat_RG32_Float;
++      return true;
++    default:
++      return false;
++  }
++}
++
++// Resolve (copy destination) formats. 5_6_5 is kept as RGBA8: a resolved texture is sampled from its host image, not
++// from guest memory, so only the values matter (Dead Space 2 resolves into 5_6_5 and samples it back).
++bool FormatoResueltaDk(uint32_t formato_copia, DkImageFormat& host) {
++  switch (formato_copia) {
++    case 6:   // k_8_8_8_8
++    case 8:   // k_8_8_8_8_A
++    case 50:  // k_8_8_8_8_AS_16_16_16_16
++    case 4:   // k_5_6_5
++      host = DkImageFormat_RGBA8_Unorm;
++      return true;
++    case 7:   // k_2_10_10_10
++    case 54:  // k_2_10_10_10_AS_16_16_16_16
++      host = DkImageFormat_RGB10A2_Unorm;
++      return true;
++    case 31:  // k_16_16_FLOAT
++      host = DkImageFormat_RG16_Float;
++      return true;
++    case 32:  // k_16_16_16_16_FLOAT
++      host = DkImageFormat_RGBA16_Float;
++      return true;
++    case 36:  // k_32_FLOAT
++      host = DkImageFormat_R32_Float;
++      return true;
++    case 37:  // k_32_32_FLOAT
++      host = DkImageFormat_RG32_Float;
++      return true;
++    default:
++      return false;
++  }
++}
++
+ ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch) {
+   if (!pitch) {
+     Rechazar(7, "destino de render con pitch 0");
+@@ -705,11 +835,16 @@ ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch
+   // The height from the pitch, as the Vulkan path (nfsmw_nativo_destinos.cpp, ObtenerDestino explains why).
+   const uint32_t alto = std::min(kAltoMaximoDestino, std::max<uint32_t>(720, (pitch + 15) & ~15u));
+   ImagenDk imagen;
++  DkImageFormat formato_host = DkImageFormat_RGBA8_Unorm;
++  if (!FormatoDestinoColorDk(formato, formato_host)) {
++    Rechazar(100 + formato, "formato de destino de render todavia no soportado");
++    return nullptr;
++  }
+   uint32_t flags = DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine;
+-  if (REXCVAR_GET(nfsmw_dk_compresion_color)) {
++  if (REXCVAR_GET(nfsmw_dk_compresion_color) && formato_host == DkImageFormat_RGBA8_Unorm) {
+     flags |= DkImageFlags_HwCompression;
+   }
+-  if (!CrearImagen(imagen, DkImageType_2D, DkImageFormat_RGBA8_Unorm, pitch, alto, 1, 1, flags, "destino de color")) {
++  if (!CrearImagen(imagen, DkImageType_2D, formato_host, pitch, alto, 1, 1, flags, "destino de color")) {
+     Rechazar(8, "no se pudo crear un destino de render");
+     return nullptr;
+   }
+@@ -750,7 +885,10 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
+     Rechazar(9, "copia a una textura de tamano 0");
+     return nullptr;
+   }
+-  const DkImageFormat formato_host = profundidad ? DkImageFormat_Z24S8 : DkImageFormat_RGBA8_Unorm;
++  DkImageFormat formato_host = DkImageFormat_Z24S8;
++  if (!profundidad && !FormatoResueltaDk(formato, formato_host)) {
++    formato_host = DkImageFormat_RGBA8_Unorm;  // a depth copy's or an unknown guest format: as before
++  }
+   if (auto it = resueltas_.find(base); it != resueltas_.end()) {
+     Resuelta& r = it->second;
+     if (r.imagen.ancho == ancho && r.imagen.alto == alto && r.imagen.formato == formato_host) {
+@@ -906,8 +1044,8 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+   }
+   const uint32_t info_color = reg.rb_color_info[origen];
+   const uint32_t formato_color = (info_color >> 16) & 0xF;
+-  if (formato_color != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
+-      formato_color != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA)) {
++  DkImageFormat formato_color_host;
++  if (!FormatoDestinoColorDk(formato_color, formato_color_host)) {
+     return Rechazar(100 + formato_color, "formato de destino de render todavia no soportado");
+   }
+   int32_t x0, y0, x1, y1;
+@@ -925,11 +1063,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     Resuelta* resuelta = nullptr;
+     uint32_t dx = 0, dy = 0;
+     uint32_t base_resuelta = 0;
+-    if ((info_destino >> 3) & 0x1) {
+-      Rechazar(3, "copia a textura 3D o array: todavia no");
+-    } else if (formato_destino != uint32_t(xenos::ColorFormat::k_8_8_8_8) &&
+-               formato_destino != uint32_t(xenos::ColorFormat::k_8_8_8_8_A) &&
+-               formato_destino != uint32_t(xenos::ColorFormat::k_8_8_8_8_AS_16_16_16_16)) {
++    // A copy into one slice of a 3D or array texture (copy_dest_array, the slice in bits 4-6): Dead Space 2 builds its
++    // 32x32x32 color grading LUT that way every frame, 8 slices per destination base. Each slice is kept as a
++    // resolved texture at base + slice * slice size, so the volume's slices have consecutive keys (texturas.cpp puts
++    // them together as a 3D image). Only whole slices from the origin.
++    const bool capa = (info_destino >> 3) & 0x1;
++    if (capa && ((x0 & 31) || (y0 & 31))) {
++      Rechazar(3, "copia a una capa de textura 3D o array desde un rectangulo desplazado: todavia no");
++    } else if (DkImageFormat formato_copia; !FormatoResueltaDk(formato_destino, formato_copia)) {
+       Rechazar(200 + formato_destino, "formato de copia todavia no soportado");
+     } else {
+       const uint32_t pitch_destino = reg.rb_copy_dest_pitch & 0x3FFF;
+@@ -937,8 +1078,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // 4 bytes per texel: the base in multiples of 32 texels (GetResolveInfo).
+       const uint32_t base_x = uint32_t(x0) & ~uint32_t(31);
+       const uint32_t base_y = uint32_t(y0) & ~uint32_t(31);
+-      const uint32_t base = reg.rb_copy_dest_base + uint32_t(DesplazamientoMosaico2D(int32_t(base_x), int32_t(base_y),
+-                                                                                     pitch_destino, 2));
++      uint32_t base = reg.rb_copy_dest_base + uint32_t(DesplazamientoMosaico2D(int32_t(base_x), int32_t(base_y),
++                                                                               pitch_destino, 2));
++      if (capa) {
++        base += ((info_destino >> 4) & 0x7) * pitch_destino * alto_destino * 4;
++      }
+       dx = uint32_t(x0) - base_x;
+       dy = uint32_t(y0) - base_y;
+       base_resuelta = base & 0x1FFFFFFF;
+@@ -1011,6 +1155,9 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+         ++resuelta->imagen.version;
+         SombraMinimoResueltaEscrita(base_resuelta);
+         ++copias_;
++        if (volcando_) {
++          VolcarResuelta(resuelta->imagen, base_resuelta, resuelta->formato_guest);
++        }
+         if (encoger) {
+           LeerResuelta(reg, resuelta->imagen, x0, y0, dx, dy, cabe_ancho, cabe_alto);
+         } else {
+@@ -1302,6 +1449,9 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
+   ++resuelta->imagen.version;
+   SombraMinimoResueltaEscrita(base);
+   ++copias_;
++  if (volcando_) {
++    VolcarResuelta(resuelta->imagen, base, resuelta->formato_guest);
++  }
+   OlvidarEstado();
+ }
+ 
+@@ -1516,7 +1666,12 @@ const ImagenDk* RenderDk::CompaneraSombraCoches(bool capaz, uint32_t ps) {
+ void RenderDk::LeerResuelta(const RegistrosCopia& reg, const ImagenDk& imagen, int32_t x0, int32_t y0, uint32_t dx,
+                             uint32_t dy, uint32_t ancho, uint32_t alto) {
+   const int32_t maximo = REXCVAR_GET(nfsmw_nativo_leer_resueltas_texels);
+-  if (maximo <= 0 || uint64_t(ancho) * alto > uint64_t(maximo) || imagen.formato != DkImageFormat_RGBA8_Unorm) {
++  // Any 4-byte texel: written back as whole words (GpuSwap), the R/B swap only for 8_8_8_8 (EscribirLecturas). Dead
++  // Space 2's exposure reads a 64x8 32_FLOAT resolve; without it the game computed its exposure from stale memory and
++  // dark scenes came out white.
++  if (maximo <= 0 || uint64_t(ancho) * alto > uint64_t(maximo) ||
++      (imagen.formato != DkImageFormat_RGBA8_Unorm && imagen.formato != DkImageFormat_R32_Float &&
++       imagen.formato != DkImageFormat_RGB10A2_Unorm && imagen.formato != DkImageFormat_RG16_Float)) {
+     return;
+   }
+   LecturasRanura& l = lecturas_[trabajo_ % kRanuras];
+@@ -1558,7 +1713,10 @@ void RenderDk::EscribirLecturas(uint32_t ranura) {
+   for (const LecturaDk& p : l.pendientes) {
+     dkMemBlockFlushCpuCache(lectura_bloque_, p.offset, p.ancho * p.alto * 4);  // what the GPU wrote, not the cache
+     const uint8_t* const datos = lectura_cpu_ + p.offset;
+-    const bool intercambio = (p.info >> 24) & 0x1;
++    // copy_dest_swap exchanges red and blue of 8-bit channels; a 32-bit float (or 10-bit) texel is one word.
++    const uint32_t formato_copia = (p.info >> 7) & 0x3F;
++    const bool ocho_bits = formato_copia == 6 || formato_copia == 8 || formato_copia == 50 || formato_copia == 4;
++    const bool intercambio = ocho_bits && ((p.info >> 24) & 0x1);
+     const uint32_t orden_copia = p.info & 0x7;  // Endian128: 0-3 as xenos::Endian
+     const auto orden = orden_copia <= 3 ? static_cast<xenos::Endian>(orden_copia) : xenos::Endian::k8in32;
+     // Each texel is a permutation of its 4 bytes (R/B swap plus GpuSwap), computed once with marked bytes.
+@@ -1670,6 +1828,11 @@ bool RenderDk::CrearShadersSalida() {
+   }
+   const deko::Compilador::Resultado color = compilador_.Compilar(false, kFsCopiaColor);
+   fs_copia_color_valido_ = color.ok && nucleo_.CargarShader(fs_copia_color_, color.dksh, "copia de color");
++  const deko::Compilador::Resultado signo = compilador_.Compilar(false, kFsCopiaSigno);
++  fs_copia_signo_valido_ = signo.ok && nucleo_.CargarShader(fs_copia_signo_, signo.dksh, "copia con signo");
++  if (!fs_copia_signo_valido_) {
++    REXLOG_ERROR("[deko3d] no se pudo compilar la copia con signo: {}", signo.log);
++  }
+   const deko::Compilador::Resultado z = compilador_.Compilar(false, kFsCopiaProfundidad);
+   fs_copia_profundidad_valido_ = z.ok && nucleo_.CargarShader(fs_copia_profundidad_, z.dksh, "copia de profundidad");
+   if (!fs_copia_color_valido_ || !fs_copia_profundidad_valido_) {
+@@ -1803,6 +1966,24 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
+ }
+ 
+ bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) {
++  if (volcando_) {
++    TerminarVolcado();
++  }
++  if (volcado_pedido_) {
++    volcado_pedido_ = false;
++    if (!volcado_bloque_) {
++      volcado_bloque_ = nucleo_.CrearBloqueLectura(kBytesVolcado, "volcado de un fotograma");
++      volcado_cpu_ = static_cast<uint8_t*>(dkMemBlockGetCpuAddr(volcado_bloque_));
++      volcado_gpu_ = dkMemBlockGetGpuAddr(volcado_bloque_);
++    }
++    if (volcado_bloque_) {
++      dkMemBlockFlushCpuCache(volcado_bloque_, 0, kBytesVolcado);  // nothing of it stays in the CPU's cache
++      volcando_ = true;
++      volcado_usados_ = 0;
++      volcado_.clear();
++      REXLOG_INFO("[deko3d] volcado: el proximo fotograma, cada textura resuelta a la SD");
++    }
++  }
+   RexSwitchPerfCount(0);  // the profiler's "juego N fps"
+   const uint64_t ahora = deko::AhoraNs();
+   if (ultimo_swap_ns_) {
+@@ -2286,4 +2467,186 @@ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* prov
+   return std::make_unique<RenderDk>(*proveedor, memoria, hooks);
+ }
+ 
++
++// ---- The frame dump (PedirVolcado)
++
++void RenderDk::VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest) {
++  uint32_t bpp = 0;
++  switch (imagen.formato) {
++    case DkImageFormat_RGBA8_Unorm:
++    case DkImageFormat_RGB10A2_Unorm:
++    case DkImageFormat_R32_Float:
++    case DkImageFormat_RG16_Float:
++    case DkImageFormat_Z24S8:
++      bpp = 4;
++      break;
++    case DkImageFormat_RGBA16_Float:
++    case DkImageFormat_RG32_Float:
++      bpp = 8;
++      break;
++    default:
++      return;
++  }
++  const uint32_t bytes = imagen.ancho * imagen.alto * bpp;
++  if (volcado_.size() >= 64 || volcado_usados_ + bytes > kBytesVolcado) {
++    return;
++  }
++  AntesDeTransferir();
++  const DkImageView vista = VistaCompleta(imagen.imagen);
++  const DkImageRect rect = {0, 0, 0, imagen.ancho, imagen.alto, 1};
++  const DkCopyBuf destino = {volcado_gpu_ + volcado_usados_, imagen.ancho * bpp, bytes};
++  dkCmdBufCopyImageToBuffer(nucleo_.comandos(), &vista, &rect, &destino, 0);
++  volcado_.push_back({volcado_usados_, imagen.ancho, imagen.alto, bpp, base, formato_guest, imagen.formato});
++  volcado_usados_ += (bytes + 255) & ~255u;
++}
++
++void RenderDk::TerminarVolcado() {
++  volcando_ = false;
++  CerrarTrabajo();
++  proveedor_.dispositivo().EsperarInactiva();
++  dkMemBlockFlushCpuCache(volcado_bloque_, 0, std::max<uint32_t>(volcado_usados_, 256));  // what the GPU wrote
++  char nombre[128];
++  std::snprintf(nombre, sizeof(nombre), "volcado_%02u", volcados_++);
++  const std::filesystem::path carpeta = rex::filesystem::GetExecutableFolder() / nombre;
++  std::error_code ec;
++  std::filesystem::create_directories(carpeta, ec);
++  // The bytes are copied out here (the block is reused by the next dump); converting and writing them go to a thread of
++  // their own, so the ring thread (and the game waiting on it) does not stop for the SD card.
++  std::vector<std::vector<uint8_t>> copias(volcado_.size());
++  for (size_t n = 0; n < volcado_.size(); ++n) {
++    const EntradaVolcado& e = volcado_[n];
++    copias[n].assign(volcado_cpu_ + e.offset, volcado_cpu_ + e.offset + size_t(e.ancho) * e.alto * e.bpp);
++  }
++  REXLOG_INFO("[deko3d] volcado: {} texturas resueltas copiadas, se escriben en {}", volcado_.size(), carpeta.string());
++  EncolarEscrituraSd([entradas = std::move(volcado_), copias = std::move(copias), carpeta]() {
++  char nombre[128];
++  for (size_t n = 0; n < entradas.size(); ++n) {
++    const EntradaVolcado& e = entradas[n];
++    const uint8_t* datos = copias[n].data();
++    const size_t texels = size_t(e.ancho) * e.alto;
++    std::vector<float> c(texels * 4, 0.0f);
++    bool alfa = false;
++    for (size_t i = 0; i < texels; ++i) {
++      float* t = &c[i * 4];
++      uint32_t v = 0;
++      std::memcpy(&v, datos + i * e.bpp, 4);
++      switch (e.formato) {
++        case DkImageFormat_RGBA8_Unorm:
++          for (int k = 0; k < 4; ++k) t[k] = float((v >> (8 * k)) & 0xFF) / 255.0f;
++          alfa = true;
++          break;
++        case DkImageFormat_RGB10A2_Unorm:
++          for (int k = 0; k < 3; ++k) t[k] = float((v >> (10 * k)) & 0x3FF) / 1023.0f;
++          t[3] = float(v >> 30) / 3.0f;
++          alfa = true;
++          break;
++        case DkImageFormat_R32_Float:
++          std::memcpy(&t[0], &v, 4);
++          t[1] = t[2] = t[0];
++          break;
++        case DkImageFormat_RG16_Float:
++          t[0] = MedioAFloat(uint16_t(v));
++          t[1] = MedioAFloat(uint16_t(v >> 16));
++          break;
++        case DkImageFormat_RGBA16_Float: {
++          uint16_t h[4];
++          std::memcpy(h, datos + i * 8, 8);
++          for (int k = 0; k < 4; ++k) t[k] = MedioAFloat(h[k]);
++          alfa = true;
++          break;
++        }
++        case DkImageFormat_RG32_Float:
++          std::memcpy(&t[0], datos + i * 8, 4);
++          std::memcpy(&t[1], datos + i * 8 + 4, 4);
++          break;
++        case DkImageFormat_Z24S8:
++          t[0] = float(v & 0xFFFFFF);  // normalized below by the image's range
++          t[3] = float(v >> 24) / 255.0f;
++          break;
++        default:
++          break;
++      }
++    }
++    // Floats and depth are scaled by the image's range, written in the name.
++    const bool profundidad = e.formato == DkImageFormat_Z24S8;
++    const bool flotante = e.formato == DkImageFormat_R32_Float || e.formato == DkImageFormat_RG16_Float ||
++                          e.formato == DkImageFormat_RGBA16_Float || e.formato == DkImageFormat_RG32_Float;
++    float minimo = 0.0f, maximo = 1.0f;
++    if (profundidad || flotante) {
++      minimo = profundidad ? c[0] : 0.0f;
++      maximo = profundidad ? c[0] : 1.0f;
++      for (size_t i = 0; i < texels; ++i) {
++        for (int k = 0; k < (profundidad ? 1 : 3); ++k) {
++          const float x = c[i * 4 + k];
++          if (std::isfinite(x)) {
++            minimo = std::min(minimo, x);
++            maximo = std::max(maximo, x);
++          }
++        }
++      }
++      if (profundidad) {
++        for (size_t i = 0; i < texels; ++i) c[i * 4 + 1] = c[i * 4 + 2] = c[i * 4];
++      }
++    }
++    const float escala = maximo > minimo ? 1.0f / (maximo - minimo) : 1.0f;
++    std::vector<uint8_t> bgr(texels * 3), a(texels * 3);
++    for (size_t i = 0; i < texels; ++i) {
++      for (int k = 0; k < 3; ++k) {
++        const float x = std::clamp((c[i * 4 + k] - minimo) * escala, 0.0f, 1.0f);
++        bgr[i * 3 + (2 - k)] = uint8_t(x * 255.0f + 0.5f);
++      }
++      const uint8_t al = uint8_t(std::clamp(c[i * 4 + 3], 0.0f, 1.0f) * 255.0f + 0.5f);
++      a[i * 3] = a[i * 3 + 1] = a[i * 3 + 2] = al;
++    }
++    std::snprintf(nombre, sizeof(nombre), "%02u_%08X_%ux%u_g%u%s_rango_%g_%g", unsigned(n), e.base, e.ancho, e.alto,
++                  e.formato_guest, profundidad ? "_z" : "", double(minimo), double(maximo));
++    EscribirBmp(carpeta / (std::string(nombre) + ".bmp"), e.ancho, e.alto, bgr);
++    if (alfa) {
++      EscribirBmp(carpeta / (std::string(nombre) + "_alfa.bmp"), e.ancho, e.alto, a);
++    }
++  }
++  REXLOG_INFO("[deko3d] volcado: {} texturas escritas en {}", entradas.size(), carpeta.string());
++  });
++  volcado_.clear();
++}
++
++
++// ---- Background writes to the SD card (EncolarEscrituraSd)
++
++void EncolarEscrituraSd(std::function<void()> escritura) {
++  struct Escritor {
++    std::mutex candado;
++    std::condition_variable hay;
++    std::deque<std::function<void()>> cola;
++    std::unique_ptr<rex::thread::Thread> hilo;
++  };
++  static Escritor* e = new Escritor();  // never destroyed: its thread lives as long as the process
++  {
++    std::lock_guard<std::mutex> l(e->candado);
++    e->cola.push_back(std::move(escritura));
++    if (!e->hilo) {
++      e->hilo = rex::thread::Thread::Create({}, [] {
++        for (;;) {
++          std::function<void()> tarea;
++          {
++            std::unique_lock<std::mutex> l(e->candado);
++            e->hay.wait(l, [] { return !e->cola.empty(); });
++            tarea = std::move(e->cola.front());
++            e->cola.pop_front();
++          }
++          tarea();
++        }
++      });
++      if (!e->hilo) {
++        // No thread: done here, as before.
++        auto tarea = std::move(e->cola.back());
++        e->cola.pop_back();
++        tarea();
++        return;
++      }
++    }
++  }
++  e->hay.notify_one();
++}
++
+ }  // namespace rex::x360
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index e3fb6f1..614b21a 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1059,6 +1059,11 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     case 13:
+       primitiva = DkPrimitive_Quads;  // native (the Vulkan backend makes triangle lists of them)
+       break;
++    case 1:
++      // Point list: Dead Space 2 reduces the scene's luminance into its 64x8 exposure target with points. Their size
++      // is set before the draw (PA_SU_POINT_SIZE).
++      primitiva = DkPrimitive_Points;
++      break;
+     default:
+       return Rechazar(100 + tipo, "tipo de primitiva todavia no soportado");
+   }
+@@ -1093,8 +1098,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     }
+     const uint32_t info = r[kInfoColor[i]];
+     const uint32_t formato = (info >> 16) & 0xF;
+-    if (formato != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
+-        formato != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA)) {
++    if (DkImageFormat host; !FormatoDestinoColorDk(formato, host)) {
+       return Rechazar(200 + formato, "formato de destino de color todavia no soportado");
+     }
+     claves[i] = (uint64_t(1) << 63) | (uint64_t(info & 0xFFF) << 24) | (uint64_t(formato) << 16) | pitch;
+@@ -1987,6 +1991,12 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+         }
+         dkCmdBufReportCounter(cmd, DkCounter_Timestamp, marca_vez);
+       }
++      if (primitiva == DkPrimitive_Points) {
++        // PA_SU_POINT_SIZE: half height (bits 0-15) and half width (16-31) in 12.4 fixed point.
++        const uint32_t tam = r[gr::XE_GPU_REG_PA_SU_POINT_SIZE];
++        const float lado = float(std::max(tam & 0xFFFF, tam >> 16)) * (2.0f / 16.0f);
++        dkCmdBufSetPointSize(cmd, lado > 0.0f ? lado : 1.0f);
++      }
+       if (con_indices) {
+         dkCmdBufDrawIndexed(cmd, primitiva, n_indices, 1, 0, -int32_t(vmin), 0);
+       } else {
+diff --git a/src/x360/deko/texturas.cpp b/src/x360/deko/texturas.cpp
+index 8118904..3786428 100644
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -93,6 +93,35 @@ void LeerNivelMosaicoDeSiempre(const uint8_t* origen, uint32_t pitch_bloques, ui
+   }
+ }
+ 
++// The view format for a fetch constant's TextureSign (bits 2-9 of its first word, two per component), or None to keep
++// the image's. All four components signed: the Snorm form. Red, green and blue gamma (alpha gamma or unsigned): the
++// sRGB form (the Xbox 360's piecewise curve, approximated by sRGB). Anything else: None (read unsigned).
++DkImageFormat FormatoVistaSigno(DkImageFormat formato, uint32_t signos) {
++  if (signos == 0x55) {  // 1, 1, 1, 1
++    switch (formato) {
++      case DkImageFormat_R8_Unorm: return DkImageFormat_R8_Snorm;
++      case DkImageFormat_RG8_Unorm: return DkImageFormat_RG8_Snorm;
++      case DkImageFormat_RGBA8_Unorm: return DkImageFormat_RGBA8_Snorm;
++      case DkImageFormat_R16_Unorm: return DkImageFormat_R16_Snorm;
++      case DkImageFormat_RG16_Unorm: return DkImageFormat_RG16_Snorm;
++      case DkImageFormat_RGBA16_Unorm: return DkImageFormat_RGBA16_Snorm;
++      case DkImageFormat_R_BC4_Unorm: return DkImageFormat_R_BC4_Snorm;
++      case DkImageFormat_RG_BC5_Unorm: return DkImageFormat_RG_BC5_Snorm;
++      default: return DkImageFormat_None;
++    }
++  }
++  if ((signos & 0x3F) == 0x3F && ((signos >> 6) == 0 || (signos >> 6) == 3)) {
++    switch (formato) {
++      case DkImageFormat_RGBA8_Unorm: return DkImageFormat_RGBA8_Unorm_sRGB;
++      case DkImageFormat_RGBA_BC1: return DkImageFormat_RGBA_BC1_sRGB;
++      case DkImageFormat_RGBA_BC2: return DkImageFormat_RGBA_BC2_sRGB;
++      case DkImageFormat_RGBA_BC3: return DkImageFormat_RGBA_BC3_sRGB;
++      default: return DkImageFormat_None;
++    }
++  }
++  return DkImageFormat_None;
++}
++
+ }  // namespace
+ 
+ // Same host formats as the Vulkan backend (FormatoTexturaDe), as deko3d formats.
+@@ -105,6 +134,9 @@ bool RenderDk::FormatoDe(uint32_t formato, FormatoDk& f) {
+     case 10:  // k_8_8
+       f = {DkImageFormat_RG8_Unorm, 1, 2, 2, kSwizzleRGGG};
+       return true;
++    case 4:  // k_5_6_5 (red in the high bits, as the host's)
++      f = {DkImageFormat_RGB565_Unorm, 1, 2, 2, kSwizzleRGBA};
++      return true;
+     case 6:   // k_8_8_8_8
+     case 50:  // k_8_8_8_8_AS_16_16_16_16
+       f = {DkImageFormat_RGBA8_Unorm, 1, 4, 4, kSwizzleRGBA};
+@@ -202,8 +234,10 @@ void RenderDk::EscribirDescriptorImagen(uint32_t ranura, const DkImageView& vist
+                    sizeof(d));
+ }
+ 
+-uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint16_t swizzle_host) {
+-  const uint64_t clave = (imagen.serie << 24) ^ (uint64_t(swizzle_guest & 0xFFF) << 12) ^ swizzle_host;
++uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint16_t swizzle_host,
++                           DkImageFormat formato_vista) {
++  const uint64_t clave = (imagen.serie << 24) ^ (uint64_t(swizzle_guest & 0xFFF) << 12) ^ swizzle_host ^
++                         (uint64_t(formato_vista) << 56);
+   if (const auto it = vistas_.find(clave); it != vistas_.end()) {
+     return it->second;
+   }
+@@ -215,6 +249,9 @@ uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint1
+   DkImageView v;
+   dkImageViewDefaults(&v, &imagen.imagen);
+   Swizzle(swizzle_guest, swizzle_host, v.swizzle);
++  if (formato_vista != DkImageFormat_None) {
++    v.format = formato_vista;
++  }
+   if (imagen.profundidad) {
+     v.dsSource = DkDsSource_Depth;
+   }
+@@ -224,6 +261,47 @@ uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint1
+   return ranura;
+ }
+ 
++const ImagenDk* RenderDk::ResueltaConSigno(const ImagenDk& resuelta, uint32_t signos) {
++  // Per host channel: the guest's X..W are R..A, or B, G, R, A with the red/blue swap of the resolve.
++  int32_t modos[4] = {};
++  bool alguno = false, firmado = false;
++  for (uint32_t i = 0; i < 4; ++i) {
++    const uint32_t modo = (signos >> (2 * i)) & 0x3;
++    if (modo != 1 && modo != 2) continue;
++    const uint32_t h = resuelta.intercambio_rb && (i == 0 || i == 2) ? 2 - i : i;
++    modos[h] = int32_t(modo);
++    alguno = true;
++    firmado |= modo == 1;
++  }
++  if (!alguno || (firmado && resuelta.formato != DkImageFormat_RGBA8_Unorm)) {
++    return nullptr;
++  }
++  if (convertidas_signo_.size() > 64) {  // resolves recreated at other sizes leave theirs behind
++    for (auto& [clave, c] : convertidas_signo_) {
++      DestruirImagen(c.imagen);
++    }
++    convertidas_signo_.clear();
++  }
++  ConvertidaSigno& c = convertidas_signo_[(resuelta.serie << 8) | (signos & 0xFF)];
++  if (!c.imagen.viva) {
++    if (!CrearImagen(c.imagen, DkImageType_2D, DkImageFormat_RGBA16_Float, resuelta.ancho, resuelta.alto, 1, 1,
++                     DkImageFlags_UsageRender, "resuelta con signo")) {
++      return nullptr;
++    }
++    REXLOG_INFO("[deko3d] resuelta {}x{} leida con signo {:02X}: copia convertida", resuelta.ancho, resuelta.alto,
++                signos);
++  }
++  if (c.version != resuelta.version) {
++    if (!Copiar3D(resuelta, 0, 0, resuelta.ancho, resuelta.alto, c.imagen, 0, 0, modos)) {
++      return nullptr;
++    }
++    OlvidarEstado();  // the copy bound its own target and shaders; the draw binds its pass again
++    c.version = resuelta.version;
++    ++c.imagen.version;
++  }
++  return &c.imagen;
++}
++
+ uint32_t RenderDk::VaciaDe(uint16_t tipo_shader) const {
+   return TipoVolumen(tipo_shader) ? 1 : TipoCubo(tipo_shader) ? 2 : 0;
+ }
+@@ -402,11 +480,20 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+   }
+   if (TipoVolumen(tipo_shader) != volumen || TipoCubo(tipo_shader) != cubo) {
+     Avisar(29, "la dimension de la textura no es la que declara el shader: se usa una vacia");
++    // Which ones (the warning above is once): a few distinct ones with what the texture and the shader say.
++    static uint32_t detalles = 0;
++    if (detalles < 16) {
++      ++detalles;
++      REXLOG_WARN("[deko3d] causa 29: textura {:08X} dimension {} ({}x{}, formato {}), el shader declara tipo {}",
++                  (f[1] >> 12) << 12, dimension, (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1, f[1] & 0x3F,
++                  tipo_shader);
++    }
+     return VaciaDe(tipo_shader);
+   }
+-  if ((f[0] >> 2) & 0xFF) {
+-    Avisar(31, "texturas con signo o gamma: se leen sin signo");
+-  }
++  // TextureSign of each component (x, y, z, w at bits 2, 4, 6, 8): 0 unsigned, 1 signed, 2 unsigned biased (2x - 1),
++  // 3 gamma. All signed, or all gamma, is done with a view in the matching host format (FormatoVistaSigno); other mixes
++  // are read unsigned, as before.
++  const uint32_t signos = (f[0] >> 2) & 0xFF;
+   const uint32_t swizzle = (f[3] >> 1) & 0xFFF;
+   const uint32_t base = (f[1] >> 12) << 12;
+   if (!cubo && !volumen) {
+@@ -421,7 +508,16 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+       }
+       // The emulation's copy swaps channels in memory (copy_dest_swap) and the fetch swizzle undoes it; here the copy
+       // is image to image, so the swap goes into the host channels.
+-      return VistaDe(*resuelta, swizzle, resuelta->intercambio_rb ? kSwizzleBGRA : kSwizzleRGBA);
++      const uint16_t host = resuelta->intercambio_rb ? kSwizzleBGRA : kSwizzleRGBA;
++      if (signos) {
++        // Signed or biased channels: a converted copy (Dead Space 2's normal buffer is written as n * 0.5 + 0.5 into an
++        // 8_8_8_8 target and read back biased, so its lights had every normal positive). All gamma: an sRGB view.
++        if (const ImagenDk* convertida = ResueltaConSigno(*resuelta, signos)) {
++          return VistaDe(*convertida, swizzle, host);
++        }
++        return VistaDe(*resuelta, swizzle, host, FormatoVistaSigno(resuelta->formato, signos));
++      }
++      return VistaDe(*resuelta, swizzle, host);
+     }
+   }
+   const uint32_t formato = f[1] & 0x3F;
+@@ -430,6 +526,10 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+     Avisar(400 + formato, "formato de textura todavia no soportado: se usa una vacia");
+     return VaciaDe(tipo_shader);
+   }
++  const DkImageFormat formato_vista = FormatoVistaSigno(tf.formato, signos);
++  if (signos && formato_vista == DkImageFormat_None) {
++    Avisar(31, "texturas con signo o gamma mezclados o sesgados: se leen sin signo");
++  }
+   // size_2d: 13 + 13 bits; size_3d: 11 + 11 + 10 bits (xenos.h).
+   const uint32_t ancho = volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1;
+   const uint32_t alto = volumen ? ((f[2] >> 11) & 0x7FF) + 1 : ((f[2] >> 13) & 0x1FFF) + 1;
+@@ -573,6 +673,75 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+     }
+   }
+ 
++  // A volume whose slices were resolved (Copiar keeps slice z at base + z * width * height * 4): its 3D image is made
++  // from them, each changed slice copied into its layer once per frame, as the cubemaps of resolved faces above.
++  if (volumen) {
++    // What the 3D fetches look like, a few distinct ones: to see whether they are the volumes resolved by slices.
++    static std::vector<uint64_t> vistos;
++    const uint64_t firma = dir_base ^ (uint64_t(ancho) << 32) ^ (uint64_t(alto) << 44) ^ (uint64_t(fondo) << 54);
++    if (vistos.size() < 16 && std::find(vistos.begin(), vistos.end(), firma) == vistos.end()) {
++      vistos.push_back(firma);
++      uint32_t encontradas = 0;
++      for (uint32_t z = 0; z < fondo && z < 64; ++z) {
++        encontradas += TexturaResuelta(uint32_t((dir_base + uint64_t(z) * ancho * alto * 4) & 0x1FFFFFFF)) != nullptr;
++      }
++      REXLOG_INFO("[deko3d] volumen muestreado {:08X} {}x{}x{} formato {} {}, mips {:08X}; capas resueltas en "
++                  "base + z * {}: {} de {}",
++                  base, ancho, alto, fondo, formato, mosaico ? "en mosaico" : "lineal", uint32_t(dir_mips),
++                  ancho * alto * 4, encontradas, fondo);
++    }
++  }
++  if (volumen && fondo > 1 && fondo <= 64) {
++    std::vector<const ImagenDk*> capas(fondo);
++    bool resueltas = true;
++    for (uint32_t z = 0; z < fondo && resueltas; ++z) {
++      capas[z] = TexturaResuelta(uint32_t((dir_base + uint64_t(z) * ancho * alto * 4) & 0x1FFFFFFF));
++      resueltas = capas[z] && !capas[z]->profundidad && capas[z]->formato == DkImageFormat_RGBA8_Unorm &&
++                  capas[z]->ancho >= ancho && capas[z]->alto >= alto;
++    }
++    if (resueltas) {
++      VolumenResuelto& v = volumenes_resueltos_[clave];
++      if (!v.imagen.viva) {
++        if (!CrearImagen(v.imagen, DkImageType_3D, DkImageFormat_RGBA8_Unorm, ancho, alto, fondo, 1, 0,
++                         "volumen de capas resueltas")) {
++          volumenes_resueltos_.erase(clave);
++          Avisar(32, "no se pudo crear una textura");
++          return VaciaDe(tipo_shader);
++        }
++        v.versiones.assign(fondo, 0);
++        REXLOG_INFO("[deko3d] volumen {:08X} {}x{}x{} con sus capas resueltas", base, ancho, alto, fondo);
++      }
++      if (v.fotograma != fotograma_) {
++        v.fotograma = fotograma_;
++        bool alguna = false;
++        DkImageView destino;
++        dkImageViewDefaults(&destino, &v.imagen.imagen);
++        for (uint32_t z = 0; z < fondo; ++z) {
++          if (v.versiones[z] == capas[z]->version + 1) {
++            continue;  // stored as version + 1, so a new volume copies every slice
++          }
++          v.versiones[z] = capas[z]->version + 1;
++          if (!alguna) {
++            alguna = true;
++            MarcarGpu(kGpuCopias);
++            AntesDeTransferir();
++          }
++          DkImageView origen;
++          dkImageViewDefaults(&origen, &capas[z]->imagen);
++          const DkImageRect a = {0, 0, 0, ancho, alto, 1};
++          const DkImageRect b = {0, 0, z, ancho, alto, 1};
++          dkCmdBufCopyImage(nucleo_.comandos(), &origen, &a, &destino, &b, 0);
++        }
++        if (alguna && g_.pase_valido) {
++          MarcarGpu(categoria_pase_);
++        }
++      }
++      ancho_out = ancho;
++      alto_out = alto;
++      return VistaDe(v.imagen, swizzle, capas[0]->intercambio_rb ? kSwizzleBGRA : kSwizzleRGBA);
++    }
++  }
++
+   TexturaDk& textura = texturas_[clave];
+   if (!textura.imagen.viva) {
+     // BC: the size in whole blocks, as the Vulkan backend (the shaders' 1/size is the host size).
+@@ -598,7 +767,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+                   ((f[0] >> 22) & 0x1FF) << 5, swizzle, cubo ? " (cubo)" : volumen ? " (3D)" : "", niveles);
+     }
+   }
+-  const uint32_t ranura = VistaDe(textura.imagen, swizzle, tf.swizzle_host);
++  const uint32_t ranura = VistaDe(textura.imagen, swizzle, tf.swizzle_host, formato_vista);
+   // Until its next check nothing about it changes: the draws' per-fetch cache keeps the answer that long.
+   auto listo = [&]() {
+     valido_hasta = textura.siguiente > fotograma_ ? textura.siguiente - 1 : fotograma_;

@@ -1,63 +1,86 @@
-# xbox360-nx
+# ds2-nx
 
-Xbox 360 games running natively on the Nintendo Switch. It's not an emulator: each game's PowerPC code is
-statically recompiled to C++ with [ReXGlue](https://github.com/rexglue/rexglue-sdk) and built for the Switch, and
-frames are drawn by a native renderer.
+Dead Space 2 (Xbox 360, Title Update 2) running natively on the Nintendo Switch. It's not an emulator: the game's
+PowerPC code is statically recompiled to C++ with [ReXGlue](https://github.com/rexglue/rexglue-sdk) (the recompiled
+tree comes from [Dead-Space-2-Recomp](https://github.com/bifftannen1/Dead-Space-2-Recomp)), built for the Switch as
+a homebrew NRO, and frames are drawn by a native deko3d renderer from the game's translated shaders.
 
 > [!NOTE]
-> You need your own copy of each game. This repository contains no game data or game code.
+> You need your own copy of the game (both discs and Title Update 2). This repository contains no game data or
+> game code.
 
-## Games
-
-| Game | Folder | Status |
-| --- | --- | --- |
-| Need for Speed: Most Wanted (2005) | [`nfsmw_pal/`](nfsmw_pal) | Playable, about 30 FPS ([details](README.nfsmw.md)). PAL Spanish; other editions (`nfsmw_usa/`, ...) are made from it and committed beside it ([editions](docs/editions.md)) |
-| Halo 3 | [`halo3/`](halo3) | In progress, not playable yet |
-| Dead Space 2 (TU2) | [`deadspace2/`](deadspace2) | Started: recompiled code from [Dead-Space-2-Recomp](https://github.com/bifftannen1/Dead-Space-2-Recomp) builds for ARM64; not run on the console yet ([notes](deadspace2/PORTING.md)) |
-
-Every game is its own folder with its own NRO, and they all build on one shared SDK. A fix in `sdk/` reaches every
-game. To add a game, see [porting another game](docs/porting-another-game.md).
+Status: menus and gameplay run with audio; the deko3d renderer is in progress. Details, boot history and
+measurements are in [deadspace2/PORTING.md](deadspace2/PORTING.md).
 
 ## Layout
 
 | Folder | Contents |
 | --- | --- |
-| `<game>/` | One per game: manifest, codegen fixes, hooks, renderer glue, CMake project |
-| `sdk/` | **Submodule** → [`rexglue-sdk-nx`](https://github.com/nx-mod/rexglue-sdk-nx) (`switch` branch): the ReXGlue SDK + Horizon (Switch) layer + deko3d renderer, shared by every game |
-| `shaders/` | Xenos shader translator and shader library tools |
-| `tools/` | Codegen and build scripts |
-| `docs/` | Documentation: start with [docs/README.md](docs/README.md) |
+| `deadspace2/` | The game project: CMake, Switch glue (`src/`: app, disc swap, GPU ring reader and renderer glue, shader dump and library), build and SD staging scripts (`tools/`), and our SDK patches (`sdk-patches/`) |
+| `shaders/` | Shader toolchain: Xenos microcode -> HLSL -> SPIR-V -> shader library and DKSH cache ([shaders/README.md](shaders/README.md)) |
+| `sdk/` | **Submodule** -> [`rexglue-sdk-nx`](https://github.com/nx-mod/rexglue-sdk-nx) (`switch` branch): the ReXGlue SDK + Horizon (Switch) layer + deko3d renderer. Our changes to it live as patches in `deadspace2/sdk-patches/`, applied by the build script |
+| `tools/switch/cmake/` | `switch-devkitA64.cmake`, the CMake toolchain file for devkitA64 |
 
-## Build
+## Build the NRO
 
-devkitA64 and libnx from [devkitPro](https://devkitpro.org), CMake, Ninja, Python, and your own copy of the game.
-The steps are in [docs/building.md](docs/building.md).
+devkitA64, libnx and deko3d from [devkitPro](https://devkitpro.org) (`sudo dkp-pacman -S switch-dev deko3d`),
+CMake, Ninja, Python 3. On a Mac, from the repository root:
+
+```sh
+deadspace2/tools/build_mac.sh [path/to/Dead-Space-2-Recomp]
+```
+
+It clones Dead-Space-2-Recomp if needed, initializes `sdk/`, applies `deadspace2/sdk-patches/`, configures the deko3d
+build and writes `deadspace2/out/sw/deadspace2.nro`. Copy it to the SD card as `ds2-nx.nro`.
+
+## Build the shader library
+
+The game's shaders are dumped on the console (`shaders_dump/`, by `deadspace2/src/ds2_shader_dump.cpp`) and
+translated on the PC (needs clang, and `dxc` and `spirv-val` from the Vulkan SDK):
+
+```sh
+shaders/build_library.sh <shaders_dump> <out>          # -> <out>/ds2_shaders.dslib
+DKSH=1 shaders/build_library.sh <shaders_dump> <out>   # also <out>/shadercache_dksh.bin
+```
+
+The DKSH cache holds every shader precompiled for deko3d, so the console never runs the shader compiler.
+
+## SD card
+
+```
+sdmc:/switch/ds2-nx/
+    ds2-nx.nro
+    ds2_shaders.dslib         shader library (shaders/build_library.sh)
+    shadercache_dksh.bin      DKSH cache (DKSH=1)
+    tu/                       default.xex (Disc 1) + default.xexp (Title Update 2)
+    disc1/                    extracted Disc 1
+    disc2/                    extracted Disc 2
+    telemetria.flag           optional, debugging only
+```
+
+`deadspace2/tools/stage_sd.py` makes `tu/`, `disc1/` and `disc2/` from your ISOs and title update and checks the
+hashes. An empty `telemetria.flag` turns on automatic screenshots every 5 s, frame dumps and a 1 ms CPU stack sampler;
+it costs performance, so only use it for debugging.
 
 ## Credits
 
-- **[StevensND](https://github.com/StevensND/nfsmw-nx)**: nfsmw-nx, the Switch port this repository is forked from:
-  its Switch layer, renderer and documentation.
-- **[madelrandel-blip](https://github.com/madelrandel-blip/NFSMW-Recompiled)**: NFSMW Recompiled.
+- **[bifftannen1](https://github.com/bifftannen1/Dead-Space-2-Recomp)**: Dead-Space-2-Recomp, the recompiled TU2
+  code this port builds.
+- **[StevensND](https://github.com/StevensND/nfsmw-nx)**: NFSMW-NX, the Switch port this repository was forked from:
+  its Switch layer, deko3d renderer and shader tools.
 - **[Tom Clay](https://github.com/rexglue/rexglue-sdk)**: the ReXGlue SDK, built on the work of the
   **[Xenia](https://xenia.jp)** team.
-- ReXGlue forks whose codegen fixes are applied here, with credit in each commit:
-  **[stuken](https://github.com/stuken/rexglue-sdk)** (D3D pack/unpack, vmsum, fctid/fres, FPSCR) and
-  **[furqanagwan](https://github.com/furqanagwan/rexglue-sdk)** (stwcx. reservations, mffs, vsl).
-- **[haloce-nx](https://github.com/nx-mod/haloce-nx)** (CC0): the first-launch copy of the game out of a disc image.
-- **[summers-aaron](https://github.com/summers-aaron/xenon-pc-comp)**: xenon-pc-comp, Halo 3 on ReXGlue for Linux.
-  Used as a reference for what Halo 3 needs; none of its code is copied.
 - **[hedge-dev](https://github.com/hedge-dev/XenosRecomp)**: XenosRecomp.
-- **[danfromtico](https://github.com/danfromtico/mesa-switch)** and **[NaGaa95](https://github.com/NaGaa95/mesa-switch)**:
-  mesa-switch.
 - **[centollOS](https://github.com/centollOS/SwitchWakerHD)**: the uam shader compiler patches.
-- **[devkitPro](https://devkitpro.org) and [switchbrew](https://github.com/switchbrew/libnx)**: devkitA64 and libnx.
+- **[devkitPro](https://devkitpro.org) and [switchbrew](https://github.com/switchbrew/libnx)**: devkitA64, libnx
+  and deko3d.
 - The other libraries listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Legal
 
-Unofficial fan ports with no affiliation to Microsoft, Bungie, Electronic Arts or EA Black Box. "Halo" is a trademark
-of Microsoft; "Need for Speed" is a trademark of Electronic Arts. You provide your own legally obtained copy of each
-game. Running homebrew requires custom firmware, which violates Nintendo's terms and can get a console banned.
+Unofficial fan port with no affiliation to Electronic Arts or Visceral Games. "Dead Space" is a trademark of
+Electronic Arts. You provide your own legally obtained copy of the game. Running homebrew requires custom firmware,
+which violates Nintendo's terms and can get a console banned.
 
-Source code is under the GPL-3.0 license (see [LICENSE](LICENSE)), inherited from nfsmw-nx. The SDK changes are under
-the SDK's BSD-3-Clause license, and the shader translator and Mesa changes under MIT.
+Source code is under the GPL-3.0 license (see [LICENSE](LICENSE)). The SDK changes are under the SDK's BSD-3-Clause
+license, and the shader translator changes under MIT.

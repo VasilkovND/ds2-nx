@@ -1,0 +1,277 @@
+diff --git a/src/input/switch/switch_input_driver.cpp b/src/input/switch/switch_input_driver.cpp
+index ccf5e2a..9c35897 100644
+--- a/src/input/switch/switch_input_driver.cpp
++++ b/src/input/switch/switch_input_driver.cpp
+@@ -18,6 +18,23 @@
+ #include <rex/cvar.h>
+ #include <rex/logging.h>
+ #include <rex/ui/keybinds.h>
++
++// The deko3d presenter's FPS counter (rex/ui/deko3d presentador.cpp reads it on every paint), defined here so that a
++// build without the deko3d presenter still links.
++REXCVAR_DEFINE_BOOL(switch_contador_fps, true, "UI/Switch",
++                    "Contador de FPS y del peor hueco entre imagenes, arriba a la izquierda (presentador deko3d)");
++REXCVAR_DEFINE_BOOL(switch_atajo_captura, true, "UI/Switch",
++                    "L + R + abajo pide una captura de la salida del juego (la guarda el sistema grafico del juego) en "
++                    "vez de abrir la consola (tecla `), que pasa todo el pintado al hilo de la interfaz");
++REXCVAR_DEFINE_BOOL(switch_atajo_volcado, true, "UI/Switch",
++                    "L + R + izquierda pide un volcado de las texturas resueltas del proximo fotograma (depuracion del "
++                    "renderizador) en vez de abrir los ajustes (F7), que pasan todo el pintado al hilo de la interfaz");
++REXCVAR_DEFINE_BOOL(switch_volcado_pedido, false, "UI/Switch", "Volcado pedido (lo limpia quien lo hace)");
++// Set by L + R + Down, taken (and cleared) by the game's graphics system at its next Swap.
++REXCVAR_DEFINE_BOOL(switch_captura_pedida, false, "UI/Switch", "Captura pedida (la limpia quien la hace)");
++REXCVAR_DEFINE_BOOL(switch_atajo_contador_fps, true, "UI/Switch",
++                    "L + R + arriba enciende y apaga el contador de FPS en vez de abrir el menu de depuracion (F3), "
++                    "que pasa todo el pintado al hilo de la interfaz");
+ #include <rex/ui/ui_event.h>
+ #include <rex/ui/virtual_key.h>
+ 
+@@ -380,7 +397,17 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+     const uint64_t bit = uint64_t(1) << i;
+     const bool ahora = modificador && (held & kAtajos[i].boton) != 0;
+     const bool antes = (slot.menu_shortcuts & bit) != 0;
+-    if (ahora && !antes) {
++    if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kF7 && REXCVAR_GET(switch_atajo_volcado)) {
++      REXCVAR_SET(switch_volcado_pedido, true);
++      REXLOG_INFO("atajo de menu: volcado pedido");
++    } else if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kOem3 && REXCVAR_GET(switch_atajo_captura)) {
++      REXCVAR_SET(switch_captura_pedida, true);
++      REXLOG_INFO("atajo de menu: captura pedida");
++    } else if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kF3 &&
++               REXCVAR_GET(switch_atajo_contador_fps)) {
++      REXCVAR_SET(switch_contador_fps, !REXCVAR_GET(switch_contador_fps));
++      REXLOG_INFO("atajo de menu: contador de FPS {}", REXCVAR_GET(switch_contador_fps) ? "encendido" : "apagado");
++    } else if (ahora && !antes) {
+       /*
+        * Each shortcut creates or destroys an ImGui menu, and the UI thread
+        * draws them continuously while any is open. From this game thread a
+diff --git a/src/ui/deko3d/presentador.cpp b/src/ui/deko3d/presentador.cpp
+index cdf084b..a9d421c 100644
+--- a/src/ui/deko3d/presentador.cpp
++++ b/src/ui/deko3d/presentador.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <rex/ui/deko3d/presentador.h>
+ 
++#include <rex/cvar.h>
+ #include <rex/logging.h>
+ #include <rex/logging/api.h>
+ #include <rex/ui/surface_switch.h>
+@@ -9,10 +10,15 @@
+ #include <switch.h>
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cstddef>
++#include <cstdio>
+ #include <cstring>
+ #include <vector>
+ 
++// Defined with the input driver, which toggles it with L + R + Up (switch_input_driver.cpp).
++REXCVAR_DECLARE(bool, switch_contador_fps);
++
+ namespace rex::deko3d {
+ namespace {
+ 
+@@ -120,6 +126,60 @@ class ContextoUIDeko3d final : public rex::ui::UIDrawContext {
+   DkImage& destino;
+ };
+ 
++// ---- The FPS counter (switch_contador_fps)
++//
++// Painted by the presenter over the guest output, so it needs neither ImGui nor the UI thread (opening the ImGui
++// debug overlay moves every paint to the UI thread). Images presented per second and the longest gap between two
++// of them in the last half second, in a 5x7 dot font, scaled up with nearest filtering.
++
++constexpr uint32_t kContadorCaracteres = 16;
++constexpr uint32_t kContadorAncho = kContadorCaracteres * 6;  // 5 columns and a space per character
++constexpr uint32_t kContadorAlto = 9;                         // 7 rows and a margin above and below
++constexpr uint32_t kContadorEscala = 3;
++
++// Each glyph: 7 rows, the 5 low bits of each from left (bit 4) to right (bit 0).
++const uint8_t* GlifoContador(char c) {
++  static const uint8_t kDigitos[10][7] = {
++      {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
++      {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1E, 0x01, 0x01, 0x0E, 0x01, 0x01, 0x1E},
++      {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
++      {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
++      {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}};
++  static const uint8_t kPunto[7] = {0, 0, 0, 0, 0, 0x0C, 0x0C};
++  static const uint8_t kF[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10};
++  static const uint8_t kP[7] = {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10};
++  static const uint8_t kS[7] = {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E};
++  static const uint8_t kM[7] = {0, 0, 0x1A, 0x15, 0x15, 0x11, 0x11};
++  static const uint8_t kSMinuscula[7] = {0, 0, 0x0E, 0x10, 0x0E, 0x01, 0x1E};
++  static const uint8_t kEspacio[7] = {};
++  if (c >= '0' && c <= '9') return kDigitos[c - '0'];
++  switch (c) {
++    case '.': return kPunto;
++    case 'F': return kF;
++    case 'P': return kP;
++    case 'S': return kS;
++    case 'm': return kM;
++    case 's': return kSMinuscula;
++    default: return kEspacio;
++  }
++}
++
++// The text as RGBA8 texels: white on black.
++void RasterizarContador(const char* texto, uint8_t* destino) {
++  std::memset(destino, 0, kContadorAncho * kContadorAlto * 4);
++  for (uint32_t i = 0; i < kContadorCaracteres && texto[i]; ++i) {
++    const uint8_t* glifo = GlifoContador(texto[i]);
++    for (uint32_t fila = 0; fila < 7; ++fila) {
++      for (uint32_t columna = 0; columna < 5; ++columna) {
++        if (!((glifo[fila] >> (4 - columna)) & 1)) continue;
++        uint8_t* t = destino + ((fila + 1) * kContadorAncho + i * 6 + columna) * 4;
++        t[0] = t[1] = t[2] = 0xFF;
++        t[3] = 0xFF;
++      }
++    }
++  }
++}
++
+ // ---- The presenter
+ 
+ class PresentadorDeko3d final : public Presenter {
+@@ -135,6 +195,8 @@ class PresentadorDeko3d final : public Presenter {
+     }
+     cadena_.Destruir();
+     proveedor_.dispositivo().EsperarInactiva();
++    proveedor_.dispositivo().DestruirBloque(contador_memoria_);
++    contador_memoria_ = nullptr;
+     for (ImagenSalida& s : salidas_) {
+       proveedor_.dispositivo().DestruirBloque(s.memoria);
+       s.memoria = nullptr;
+@@ -149,8 +211,8 @@ class PresentadorDeko3d final : public Presenter {
+     config.kb_comandos = 256;
+     config.mb_codigo = 1;
+     config.mb_trozo_imagenes = 1;
+-    config.descriptores_imagen = kGuestOutputMailboxSize;
+-    config.descriptores_sampler = 1;
++    config.descriptores_imagen = kGuestOutputMailboxSize + 1;  // + the FPS counter's
++    config.descriptores_sampler = 2;                          // linear (the output) and nearest (the counter)
+     config.kb_consultas = 4;
+     nucleo_.Crear(proveedor_.dispositivo(), config);
+     if (!CompilarPropio(proveedor_, nucleo_, vs_, true, kVsCopia, "presentador_vs") ||
+@@ -161,6 +223,28 @@ class PresentadorDeko3d final : public Presenter {
+     nucleo_.EmpezarTrabajo(++trabajo_);
+     const DkSamplerDescriptor sampler = DescriptorSampler(DkFilter_Linear, DkWrapMode_ClampToEdge);
+     dkCmdBufPushData(nucleo_.comandos(), nucleo_.DescriptoresSampler(), &sampler, sizeof(sampler));
++    const DkSamplerDescriptor cercano = DescriptorSampler(DkFilter_Nearest, DkWrapMode_ClampToEdge);
++    dkCmdBufPushData(nucleo_.comandos(), nucleo_.DescriptoresSampler() + sizeof(sampler), &cercano, sizeof(cercano));
++    // The FPS counter's image and its descriptor, after the guest outputs'.
++    {
++      Dispositivo& d = proveedor_.dispositivo();
++      DkImageLayoutMaker m;
++      dkImageLayoutMakerDefaults(&m, d.dispositivo());
++      m.format = DkImageFormat_RGBA8_Unorm;
++      m.dimensions[0] = kContadorAncho;
++      m.dimensions[1] = kContadorAlto;
++      DkImageLayout disposicion;
++      dkImageLayoutInitialize(&disposicion, &m);
++      contador_memoria_ = d.CrearBloque(uint32_t(dkImageLayoutGetSize(&disposicion)),
++                                        DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image, "contador de fps");
++      dkImageInitialize(&contador_imagen_, &disposicion, contador_memoria_, 0);
++      DkImageView v;
++      dkImageViewDefaults(&v, &contador_imagen_);
++      DkImageDescriptor descriptor;
++      dkImageDescriptorInitialize(&descriptor, &v, false, false);
++      dkCmdBufPushData(nucleo_.comandos(), nucleo_.DescriptoresImagen() + kGuestOutputMailboxSize * sizeof(descriptor),
++                       &descriptor, sizeof(descriptor));
++    }
+     nucleo_.TerminarTrabajo();
+     return InitializeCommonSurfaceIndependent();
+   }
+@@ -299,6 +383,10 @@ class PresentadorDeko3d final : public Presenter {
+     DkCmdBuf c = nucleo_.comandos();
+     nucleo_.BindDescriptores();
+     nucleo_.InvalidarCodigoSiHaceFalta();
++    const bool contador = REXCVAR_GET(switch_contador_fps) && contador_memoria_;
++    if (contador) {
++      ActualizarContador(c);
++    }
+     DkImageView vista;
+     dkImageViewDefaults(&vista, &cadena_.Imagen(imagen));
+     dkCmdBufBindRenderTarget(c, &vista, nullptr);
+@@ -353,6 +441,9 @@ class PresentadorDeko3d final : public Presenter {
+         }
+       }
+     }
++    if (contador) {
++      PintarContador(c, ancho, alto);
++    }
+     nucleo_.TerminarTrabajo();
+ 
+     if (execute_ui_drawers) {
+@@ -364,6 +455,70 @@ class PresentadorDeko3d final : public Presenter {
+   }
+ 
+  private:
++  // Counts this image and, twice a second, writes the new text into the counter's image.
++  void ActualizarContador(DkCmdBuf c) {
++    const auto ahora = std::chrono::steady_clock::now();
++    if (contador_ultimo_ != std::chrono::steady_clock::time_point{}) {
++      contador_hueco_max_ = std::max(contador_hueco_max_, std::chrono::duration<double, std::milli>(ahora - contador_ultimo_).count());
++    }
++    contador_ultimo_ = ahora;
++    ++contador_imagenes_;
++    if (contador_desde_ == std::chrono::steady_clock::time_point{}) {
++      contador_desde_ = ahora;
++    }
++    const double segundos = std::chrono::duration<double>(ahora - contador_desde_).count();
++    if (segundos < 0.5 && contador_escrito_) {
++      return;
++    }
++    char texto[kContadorCaracteres + 1];
++    const double fps = segundos > 0 ? double(contador_imagenes_ - 1) / segundos : 0.0;
++    std::snprintf(texto, sizeof(texto), "%4.1f FPS %4.1fms", std::min(fps, 999.9), std::min(contador_hueco_max_, 999.9));
++    contador_desde_ = ahora;
++    contador_imagenes_ = 1;
++    contador_hueco_max_ = 0;
++    const Subida subida = nucleo_.Reservar(kContadorAncho * kContadorAlto * 4, 256);
++    if (!subida) {
++      return;
++    }
++    RasterizarContador(texto, subida.cpu);
++    DkImageView v;
++    dkImageViewDefaults(&v, &contador_imagen_);
++    const DkCopyBuf origen = {subida.gpu, 0, 0};
++    const DkImageRect rect = {0, 0, 0, kContadorAncho, kContadorAlto, 1};
++    dkCmdBufCopyBufferToImage(c, &origen, &v, &rect, 0);
++    dkCmdBufBarrier(c, DkBarrier_Full, DkInvalidateFlags_Image);
++    contador_escrito_ = true;
++  }
++
++  // The counter at the top left, scaled up, over whatever was painted.
++  void PintarContador(DkCmdBuf c, uint32_t ancho, uint32_t alto) {
++    if (!contador_escrito_) return;
++    const float x0 = float(16) / float(ancho) * 2 - 1;
++    const float y0 = 1 - float(16) / float(alto) * 2;
++    const float x1 = x0 + float(kContadorAncho * kContadorEscala) / float(ancho) * 2;
++    const float y1 = y0 - float(kContadorAlto * kContadorEscala) / float(alto) * 2;
++    const float datos[8] = {x0, y0, x1, y1, 0, 0, 1, 1};
++    const Subida ubo = nucleo_.Reservar(sizeof(datos), DK_UNIFORM_BUF_ALIGNMENT);
++    if (!ubo) return;
++    std::memcpy(ubo.cpu, datos, sizeof(datos));
++    EstadoSinProfundidad(c, false);
++    dkCmdBufBindVtxAttribState(c, nullptr, 0);
++    dkCmdBufBindVtxBufferState(c, nullptr, 0);
++    const DkShader* par[] = {&vs_, &fs_};
++    dkCmdBufBindShaders(c, DkStageFlag_GraphicsMask, par, 2);
++    dkCmdBufBindUniformBuffer(c, DkStage_Vertex, 0, ubo.gpu, sizeof(datos));
++    const DkResHandle h = dkMakeTextureHandle(kGuestOutputMailboxSize, 1);  // its image, the nearest sampler
++    dkCmdBufBindTextures(c, DkStage_Fragment, 0, &h, 1);
++    dkCmdBufDraw(c, DkPrimitive_TriangleStrip, 4, 1, 0, 0);
++  }
++
++  DkMemBlock contador_memoria_ = nullptr;
++  DkImage contador_imagen_{};
++  bool contador_escrito_ = false;
++  uint64_t contador_imagenes_ = 0;
++  double contador_hueco_max_ = 0;
++  std::chrono::steady_clock::time_point contador_desde_{}, contador_ultimo_{};
++
+   struct ImagenSalida {
+     DkMemBlock memoria = nullptr;
+     DkImage imagen{};
