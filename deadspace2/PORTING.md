@@ -71,6 +71,9 @@ a handler that re-points `d:` and signals the game's event.
 
 ## 4. Build
 
+On a Mac: `deadspace2/tools/build_mac.sh` does every step below (devkitPro from its macOS installer, then
+`sudo dkp-pacman -S switch-dev deko3d`).
+
 Same toolchain as the other games ([docs/building.md](../docs/building.md)): devkitA64, libnx, CMake,
 Ninja, Python 3.10+. No host codegen step.
 
