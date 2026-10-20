@@ -75,18 +75,21 @@
  *   - the helpers below take the texture and the sampler.
  */
 
-// The blocks of the upload buffer, as dynamic UBOs in set 4. With
+// The blocks of the upload buffer, as dynamic UBOs in set 4. The struct names (NfsmwBloque*, from the NFS port this
+// renderer came from) stay as they are on purpose: they are in the SPIR-V's debug names, the DKSH cache keys hash
+// the whole SPIR-V, and renaming them invalidates every cache the console has accumulated (each miss is a shader
+// compiled during play, a freeze). With
 // -fvk-use-dx-layout each float4 takes 16 contiguous bytes, so any 4-byte word of the shared block is
 // a component: v[B / 16][(B % 16) / 4], and asuint reads it without changing a bit.
-struct DsBloqueVs { float4 v[256]; };
-struct DsBloquePs { float4 v[224]; };
+struct NfsmwBloqueVs { float4 v[256]; };
+struct NfsmwBloquePs { float4 v[224]; };
 // The 1/size pairs of the 16 sampler registers end at byte 360 + 16 * 8 = 488, past the 23 float4 below: NVK reads
 // beyond the declared array, Mesa's GLSL front end in uam rejects a constant index past it. 31 float4 = 496 bytes,
 // the size the deko3d renderer binds.
-struct DsBloqueCompartidas { float4 v[31]; };
-[[vk::binding(0, 4)]] ConstantBuffer<DsBloqueVs> g_UboVertex;
-[[vk::binding(1, 4)]] ConstantBuffer<DsBloquePs> g_UboPixel;
-[[vk::binding(2, 4)]] ConstantBuffer<DsBloqueCompartidas> g_UboCompartidas;
+struct NfsmwBloqueCompartidas { float4 v[31]; };
+[[vk::binding(0, 4)]] ConstantBuffer<NfsmwBloqueVs> g_UboVertex;
+[[vk::binding(1, 4)]] ConstantBuffer<NfsmwBloquePs> g_UboPixel;
+[[vk::binding(2, 4)]] ConstantBuffer<NfsmwBloqueCompartidas> g_UboCompartidas;
 #define DS_COMPARTIDA_UINT(B)  asuint(g_UboCompartidas.v[(B) / 16][((B) % 16) / 4])
 #define DS_COMPARTIDA_FLOAT(B) g_UboCompartidas.v[(B) / 16][((B) % 16) / 4]
 

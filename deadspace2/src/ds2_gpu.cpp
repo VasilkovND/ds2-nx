@@ -83,12 +83,9 @@ REXCVAR_DECLARE(bool, switch_volcado_pedido);  // L + R + Left: every resolved t
 // drop colorless draws that alpha-test or discard, which here are ordinary depth-only draws. Off for Dead Space 2.
 REXCVAR_DECLARE(bool, nfsmw_sombras_sin_vegetacion);
 REXCVAR_DECLARE(bool, nfsmw_nativo_ps_solo_alfa);
-// The renderer's sampled change checks (made for static geometry and textures): a range or texture that changes only in
-// lines the sample did not read stays stale for up to 8 frames. Dead Space 2 rewrites vertex buffers (particles,
-// effects) and textures (the interface's) every frame: the stale vertices were the streaks across the screen.
-REXCVAR_DECLARE(bool, nfsmw_dk_geometria_muestreo);
-REXCVAR_DECLARE(int32_t, nfsmw_nativo_huellas_muestreo);
-REXCVAR_DECLARE(int32_t, nfsmw_nativo_huellas_kb_fotograma);
+// The renderer's sampled change checks (nfsmw_dk_geometria_muestreo, nfsmw_nativo_huellas_*) stay at the SDK's
+// defaults: turning them off (full fingerprints every frame) did not remove the streaks and tripled the ring thread's
+// CPU time, which the game's main and audio threads need on 3 cores.
 
 // Automatic data collection while the renderer is being brought up: nothing to press on the console.
 REXCVAR_DEFINE_INT32(ds2_auto_captura_s, 5, "DS2",
@@ -227,9 +224,6 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 #if DS2_DEKO3D
     REXCVAR_SET(nfsmw_sombras_sin_vegetacion, false);
     REXCVAR_SET(nfsmw_nativo_ps_solo_alfa, false);
-    REXCVAR_SET(nfsmw_dk_geometria_muestreo, false);
-    REXCVAR_SET(nfsmw_nativo_huellas_muestreo, 0);
-    REXCVAR_SET(nfsmw_nativo_huellas_kb_fotograma, 0);
     // Telemetry (automatic captures, frame dumps, per-draw traces of light frames, CPU stack sampling) only with
     // telemetria.flag next to the NRO: it costs frames (the stack sampler stops every thread each millisecond).
     {
@@ -244,6 +238,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         std::filesystem::remove(stack_flag, ec);  // left by an earlier telemetry run
       }
       REXLOG_INFO("[gpu] telemetry {}", telemetry_ ? "on (telemetria.flag)" : "off");
+      hide_glow_ = std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "sin_resplandor.flag", ec);
+      if (hide_glow_) REXLOG_INFO("[gpu] sin_resplandor.flag: lamp glows and coronas are not drawn");
     }
     // Before the game creates its shaders (the create hooks look the containers up in it).
     ds2::shaders::Global().Cargar(rex::filesystem::GetExecutableFolder() / "ds2_shaders.dslib");
@@ -964,6 +960,31 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
            index == 0x2302;
   }
 
+  // The lamp glow (gVFGlowInfo) and corona (modulate_by_corona_info_vs) vertex shaders: both read the lamp's
+  // visibility from a texture in the vertex shader (tfetch2DVertice) and build their quads from it. Suspects for the
+  // streaks next to flickering lamps; sin_resplandor.flag next to the NRO leaves them out to tell.
+  static bool IsGlowShader(const rex::x360::EntradaShader* entry) {
+    return entry && (entry->huella_contenedor == UINT64_C(0x36929751F8A50138) ||
+                     entry->huella_contenedor == UINT64_C(0xC94E83E0DB28EA74));
+  }
+
+  // Once per patched variant: the vertex fetches D3D wrote for the declaration (format, stride, offset), which the
+  // container does not have.
+  void LogGlowFetches(const rex::x360::EntradaShader* entry) {
+    const uint64_t key = XXH3_64bits(microcode_.data(), microcode_.size() * sizeof(uint32_t));
+    if (glow_logged_.size() >= 16 || !glow_logged_.insert(key).second) return;
+    std::string fetches;
+    for (size_t i = 0; i + 2 < microcode_.size(); i += 3) {
+      const uint32_t w0 = microcode_[i], w1 = microcode_[i + 1], w2 = microcode_[i + 2];
+      if ((w0 & 0x1F) != 0 || !((w0 >> 19) & 1)) continue;  // vertex fetch: opcode 0, must-be-one bit
+      fetches += fmt::format(" [slot {} r{} const {}.{} format {} signed {} int {} stride {} offset {} swz {:03X}]",
+                             i / 3, (w0 >> 12) & 0x3F, (w0 >> 20) & 0x1F, (w0 >> 25) & 3, (w1 >> 16) & 0x3F,
+                             (w1 >> 14) & 1, (w1 >> 13) & 1, w2 & 0xFF, (w2 >> 8) & 0x7FFFFF, w1 & 0xFFF);
+    }
+    REXLOG_INFO("[gpu] glow VS {:016X} (n{}): {} words, fetches:{}", entry->huella_contenedor, entry->numero,
+                microcode_.size(), fetches);
+  }
+
   // An IM_LOAD / IM_LOAD_IMMEDIATE of type 0 (VS) or 1 (PS), its microcode in microcode_ (host order).
   void ShaderLoaded(uint32_t type, uint32_t physical) {
     const rex::x360::EntradaShader* entry = ds2::shaders::Global().Identificar(type == 0, physical, microcode_);
@@ -973,6 +994,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
     vs_ = entry;
     vs_microcode_ = microcode_;  // patched by D3D: the vertex input is read from here
+    if (IsGlowShader(entry)) LogGlowFetches(entry);
     // The same microcode keeps its generation, so the renderer's per-generation caches stay valid.
     const uint64_t key = XXH3_64bits(vs_microcode_.data(), vs_microcode_.size() * sizeof(uint32_t)) ^
                          vs_microcode_.size();
@@ -1009,6 +1031,21 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (!ps_ && !depth_only) {
       ++sin_ps_;
       return;
+    }
+    if (IsGlowShader(vs_)) {
+      if (glow_draws_logged_ < 12) {
+        ++glow_draws_logged_;
+        // Fetch constant 17 (vertex texture register 1): the visibility texture the shader reads.
+        const uint32_t f = 0x4800 + 17 * 6;
+        // Vertex fetch constants 31.0-31.2 (where the containers point their fetches) share fetch slot 31's words.
+        const uint32_t v = 0x4800 + 31 * 6;
+        REXLOG_INFO("[gpu] glow draw (VS n{}, PS n{}): texture fetch 17 {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}; "
+                    "vertex fetch 31.x {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+                    vs_->numero, ps_ ? ps_->numero : 0, Register(f), Register(f + 1), Register(f + 2),
+                    Register(f + 3), Register(f + 4), Register(f + 5), Register(v), Register(v + 1), Register(v + 2),
+                    Register(v + 3), Register(v + 4), Register(v + 5));
+      }
+      if (hide_glow_) return;
     }
     // Diagnostics (Report): formats and primitive types of what is sent.
     const uint32_t mask = Register(rex::graphics::XE_GPU_REG_RB_COLOR_MASK);
@@ -1322,6 +1359,24 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                 Register(g::XE_GPU_REG_RB_STENCILREFMASK), Register(g::XE_GPU_REG_RB_MODECONTROL) & 0x7,
                 Register(g::XE_GPU_REG_RB_SURFACE_INFO) & 0x3FFF, (Register(g::XE_GPU_REG_RB_SURFACE_INFO) >> 16) & 0x3,
                 why ? why : drawn ? "drawn" : "REJECTED by the renderer");
+    // The vertex input as D3D patched it: each fetch's format, swizzle and the raw bytes of the first two vertices
+    // (guest memory, big-endian), to see what the colors and alphas really are.
+    for (size_t i = 0; i + 2 < vs_microcode_.size() && vs_; i += 3) {
+      const uint32_t w0 = vs_microcode_[i], w1 = vs_microcode_[i + 1], w2 = vs_microcode_[i + 2];
+      if ((w0 & 0x1F) != 0 || !((w0 >> 19) & 1)) continue;
+      const uint32_t slot = ((w0 >> 20) & 0x1F) * 3 + ((w0 >> 25) & 3);
+      const uint32_t base = registers_[0x4800 + slot * 2] & ~uint32_t(3);
+      const uint32_t stride = (w2 & 0xFF) * 4, offset = ((w2 >> 8) & 0x7FFFFF) * 4;
+      std::string bytes;
+      for (uint32_t v = 0; v < 2 && base; ++v) {
+        const uint8_t* m = memory_->TranslatePhysical(base + v * stride + offset);
+        bytes += v ? " |" : "";
+        for (uint32_t k = 0; k < 16 && m; ++k) bytes += fmt::format(" {:02X}", m[k]);
+      }
+      REXLOG_INFO("[draws]       vfetch r{} format {} swz {:03X} signed {} int {} stride {} offset {}:{}",
+                  (w0 >> 12) & 0x3F, (w1 >> 16) & 0x3F, w1 & 0xFFF, (w1 >> 14) & 1, (w1 >> 13) & 1, stride, offset,
+                  bytes);
+    }
     // The pixel shader's textures: fetch constant of each sampler (base, format, size, dimension, swizzle, signs).
     for (size_t i = 0; ps_ && i < ps_->samplers.size() && i < 4; ++i) {
       const uint32_t reg = ps_->samplers[i].registro;
@@ -1566,6 +1621,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint64_t depth_greater_ = 0, depth_less_ = 0, clears_ = 0, clears_logged_ = 0, msaa_draws_ = 0;
   FrameState frame_;
   bool telemetry_ = false;
+  bool hide_glow_ = false;  // sin_resplandor.flag
+  std::unordered_set<uint64_t> glow_logged_;
+  uint32_t glow_draws_logged_ = 0;
   bool draw_tracing_ = false;
   uint32_t draw_traces_ = 0, draw_trace_n_ = 0;
   Clock::time_point next_draw_trace_{};
