@@ -13,6 +13,7 @@ frames are drawn by a native renderer.
 | --- | --- | --- |
 | Need for Speed: Most Wanted (2005) | [`nfsmw_pal/`](nfsmw_pal) | Playable, about 30 FPS ([details](README.nfsmw.md)). PAL Spanish; other editions (`nfsmw_usa/`, ...) are made from it and committed beside it ([editions](docs/editions.md)) |
 | Halo 3 | [`halo3/`](halo3) | In progress, not playable yet |
+| Dead Space 2 (TU2) | [`deadspace2/`](deadspace2) | Started: recompiled code from [Dead-Space-2-Recomp](https://github.com/bifftannen1/Dead-Space-2-Recomp) builds for ARM64; not run on the console yet ([notes](deadspace2/PORTING.md)) |
 
 Every game is its own folder with its own NRO, and they all build on one shared SDK. A fix in `sdk/` reaches every
 game. To add a game, see [porting another game](docs/porting-another-game.md).
