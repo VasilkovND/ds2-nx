@@ -25,6 +25,7 @@ include(cmake/ds2_switch.cmake)
 set(DS2_SOURCES
     src/main.cpp
     src/ds2_disc_swap.cpp
+    src/ds2_shader_dump.cpp
 )
 if(REXGLUE_SWITCH_DEKO3D)
     list(APPEND DS2_SOURCES src/ds2_gpu.cpp)

@@ -23,6 +23,26 @@ specific to this game, in the order it was done.
 Boot 1 also confirmed: TU2 applied (`0.0.0.3 -> 0.0.2.3`), both disc folders identified and mounted, deko3d
 presenter and ring reader up.
 
+## Renderer: the plan
+
+What other Xbox 360 -> Switch ports do (checked October 2026): NFS: Most Wanted (this repo), GTA IV
+(kabba536, on LibertyRecompAndroid), Mushihimesama Futari (ChanseyIsTheBest, from masseffect-nx) all draw
+the game's PM4 ring with a native renderer, Vulkan on NVK or (here) deko3d, and none runs Xenos emulation.
+Their shaders are always translated ahead of time from the user's disc (XenosRecomp -> DXC -> SPIR-V).
+The renderers themselves are game-specific on top of a common core (GTA IV's is ~70,000 lines of RAGE
+knowledge); the reusable core here is the SDK's `rex::x360` deko3d backend, fed by a ring reader
+(`nfsmw_pal/src/nfsmw_nativo_sistema.cpp` is the working example).
+
+1. **Shaders** (`src/ds2_shader_dump.cpp`). DS2 keeps them in RefPack-compressed entries of the VIVs, so
+   the NFS disc scan finds 129 container signatures in 6.6 GB. Instead the XDK's
+   `D3DDevice_CreateVertexShader` (0x82220568) / `D3DDevice_CreatePixelShader` (0x822201C0) are wrapped:
+   every container the game creates is written to `shaders_dump/`, keyed by XXH3 like XenosRecomp. Play
+   through menus and a few chapters, then build the library from that folder.
+2. **Ring decoder** for DS2, from `nfsmw_nativo_sistema.cpp` without its NFS hooks: register mirror,
+   IM_LOAD, draws -> `PeticionDibujo` for `RenderDk`.
+3. **Render targets and formats** the backend does not handle yet (boot 2: "formato de destino de render
+   todavia no soportado", causa 114).
+
 ## 1. Where the code comes from
 
 Unlike `nfsmw_pal/` and `halo3/`, this folder does not run codegen. Dead-Space-2-Recomp already did
