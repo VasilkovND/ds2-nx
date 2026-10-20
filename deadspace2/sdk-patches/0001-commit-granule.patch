@@ -1,0 +1,39 @@
+diff --git a/src/core/guest_memory_switch.cpp b/src/core/guest_memory_switch.cpp
+index 34cd4ed..c1e56bd 100644
+--- a/src/core/guest_memory_switch.cpp
++++ b/src/core/guest_memory_switch.cpp
+@@ -8,6 +8,8 @@
+ #include <string.h>
+ #include <switch.h>
+ 
++#include <algorithm>
++#include <cstdint>
+ #include <map>
+ #include <set>
+ #include <atomic>
+@@ -478,8 +480,23 @@ bool RexGmCommit(size_t offset, size_t length, RexGmAccess access) {
+     std::lock_guard<std::mutex> lock(s.mutex);
+     if (!s.base) return false;
+ 
+-    const size_t begin = AlignDown(offset, kPageSize);
+-    const size_t end   = AlignUp(offset + length, kPageSize);
++    /*
++     * Commit granule. Every chunk is one svcMapProcessCodeMemory plus one mapping per view that
++     * touches it, and Horizon has a fixed number of memory blocks per process (kernel 2001-0103,
++     * 0xCE01, when they run out). A game that commits guest memory 4 KB at a time therefore runs
++     * out of blocks long before memory: Dead Space 2 stopped at 465 MB backed, committing physical
++     * memory page by page from the top (XPhysicalAlloc). Physical memory is committed in the same
++     * 4 MB chunks as the fault path (exception_handler_switch.cpp, step 3); virtual memory in the
++     * 360's 64 KB pages. The extra pages committed this way are zeroed, and a decommit only frees
++     * whole chunks anyway (RexGmDecommit), so the guest sees no difference.
++     */
++    constexpr size_t kFisicaIni = 0x100000000ull;
++    constexpr size_t kFisicaFin = 0x120000000ull;
++    const bool fisica = offset >= kFisicaIni && offset < kFisicaFin;
++    const size_t granule = fisica ? 0x400000 : 0x10000;
++    const size_t limit = fisica ? kFisicaFin : SIZE_MAX;
++    const size_t begin = AlignDown(offset, granule);
++    const size_t end   = std::min(AlignUp(offset + length, granule), limit);
+ 
+     size_t cur = begin;
+     while (cur < end) {

@@ -34,6 +34,17 @@ if [ ! -f sdk/thirdparty/uam/uam_api.h ]; then
   (cd sdk && python3 tools/switch_setup.py)
 fi
 
+# Fixes to the SDK that this game needs and that are not upstream yet (deadspace2/sdk-patches/).
+for p in "$ROOT"/deadspace2/sdk-patches/*.patch; do
+  [ -f "$p" ] || continue
+  if git -C sdk apply --reverse --check "$p" 2>/dev/null; then
+    echo "== sdk patch already applied: $(basename "$p")"
+  else
+    echo "== sdk patch: $(basename "$p")"
+    git -C sdk apply "$p"
+  fi
+done
+
 echo "== configure"
 cmake -S deadspace2 -B deadspace2/out/sw -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/switch/cmake/switch-devkitA64.cmake" \
