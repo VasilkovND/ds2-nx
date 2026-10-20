@@ -18,6 +18,7 @@ specific to this game, in the order it was done.
 | Boot | Where it stopped | Cause | Fix |
 |---|---|---|---|
 | 1 | ~2 s in, right after the GPU ring started: `AllocFixed: no se pudo confirmar 0x1000 bytes ... Fallo 0x0000CE01; respaldo 465 MB` repeated, then the game hung | The game commits physical memory 4 KB at a time (from the top). Each commit was its own chunk, i.e. its own code-memory mapping, and Horizon ran out of memory blocks (2001-0103) long before memory | `sdk-patches/0001-commit-granule.patch`: commit physical memory in 4 MB chunks (as the fault path does) and virtual memory in 64 KB |
+| 2 | Not stopped: menus and gameplay run (music, menu and in-game sounds), 28-30 swaps/s, up to ~820 draws per frame, XMA audio decoding, saves listed. Screen black in menus, white in game | Expected with the deko3d stand-in: only resolves/clears reach the renderer (4-9 copies per frame), geometry draws are counted but not decoded (`ds2_gpu.cpp`, PM4_DRAW_INDX), so what is presented is a cleared target | Next: the renderer (see below) |
 
 Boot 1 also confirmed: TU2 applied (`0.0.0.3 -> 0.0.2.3`), both disc folders identified and mounted, deko3d
 presenter and ring reader up.
