@@ -2,7 +2,7 @@
 //
 // Based on Dead-Space-2-Recomp's src/app/ds2_app.h (PC) and halo3/src/halo3_app.h (Switch).
 //
-// Where the game is, next to the NRO (sdmc:/ds2-nx/ on the console):
+// Where the game is, next to the NRO (sdmc:/switch/ds2-nx/ on the console):
 //   tu/       default.xex of disc 1 and default.xexp of Title Update 2   (game:, and game_data_root)
 //   disc1/    the extracted Disc 1 (default.xex, bigfile0.viv, bigfile1.viv, disc1_info.txt, ...)
 //   disc2/    the extracted Disc 2 (optional until chapter 4)

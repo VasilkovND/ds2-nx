@@ -152,7 +152,7 @@ def main() -> None:
     tu.mkdir(parents=True, exist_ok=True)
     (tu / "default.xex").write_bytes(xex)
     (tu / "default.xexp").write_bytes(xexp)
-    print(f"Ready: copy {a.out} to sdmc:/ds2-nx/ and put ds2-nx.nro in it.")
+    print(f"Ready: copy {a.out} to sdmc:/switch/ds2-nx/ and put ds2-nx.nro in it.")
 
 
 if __name__ == "__main__":

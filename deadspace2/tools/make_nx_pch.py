@@ -44,5 +44,14 @@ if "REX_RAW_ADDR_W" not in text:
 #define REX_RAW_ADDR_W(x, n) REX_RAW_ADDR(x)
 #endif
 '''
-open(dst, "w", encoding="utf-8").write(text)
-print("wrote", dst)
+# Only when it changes: every unit of the recompiled tree depends on this header through the PCH, so rewriting it
+# with the same text on each configure made the next build recompile all of them (~11 minutes on a Mac).
+try:
+    previous = open(dst, encoding="utf-8").read()
+except OSError:
+    previous = None
+if previous == text:
+    print("unchanged", dst)
+else:
+    open(dst, "w", encoding="utf-8").write(text)
+    print("wrote", dst)

@@ -3,8 +3,7 @@
 
 #define SPEC_CONSTANT_R11G11B10_NORMAL  (1 << 0)
 #define SPEC_CONSTANT_ALPHA_TEST        (1 << 1)
-// NFSMW: constants arrive through a dynamic UBO (a constant bank on Maxwell) instead of being read
-// through a 64-bit pointer. High bit so as not to clash with the UNLEASHED_RECOMP ones.
+// Constants arrive through a dynamic UBO (a constant bank on Maxwell). The renderer still sets this bit.
 #define SPEC_CONSTANT_CONSTANTES_UBO    (1 << 8)
 // The tfetch offset is scaled with 1/size taken from the shared constants instead of querying the
 // texture for its size. A size query is another texture unit operation, and the library has 160 of
@@ -41,7 +40,7 @@
  */
 #define SPEC_CONSTANT_SIN_DESENFOQUE    (1 << 19)
 /*
- * The world shadow map as the minimum of two textures (nfsmw_nativo_sombra_minimo).
+ * The world shadow map as the minimum of two textures (inherited from the NFS Most Wanted renderer).
  *
  * The game resolves the same 1600x1600 map twice: without cars (sampled by the car body) and with the
  * cars drawn on top (sampled by the world). With this option the renderer draws the cars onto a
@@ -57,124 +56,58 @@
  * shaders that use it (OpConstant) and nowhere else. The specialization constant never reaches this
  * value (bits 24-30).
  */
-#define NFSMW_MARCA_SOMBRA_MINIMO       0x5E3B1A84u
+#define DS_MARCA_SOMBRA_MINIMO       0x5E3B1A84u
 #define SPEC_CONSTANT_ALPHA_FUNC_SHIFT  16
 #define SPEC_CONSTANT_ALPHA_FUNC_MASK   (7 << 16)
-
-#ifdef UNLEASHED_RECOMP
-    #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)
-    #define SPEC_CONSTANT_ALPHA_TO_COVERAGE (1 << 3)
-    #define SPEC_CONSTANT_REVERSE_Z         (1 << 4)
-#endif
 
 #if !defined(__cplusplus) || defined(__INTELLISENSE__)
 
 #define FLT_MIN asfloat(0xff7fffff)
 #define FLT_MAX asfloat(0x7f7fffff)
 
-#ifdef __spirv__
 
 /*
- * NFSMW_DEKO3D: the same HLSL compiled for deko3d (DXC with -DNFSMW_DEKO3D, without -fvk-invert-y), whose
- * SPIR-V nfsmw_dk_glsl.cpp turns into GLSL for uam. uam's GLSL front end has no buffer references and
- * deko3d has no bindless heaps, so in that mode:
- *   - the constants only come from the three UBOs (no push constants, no RawBufferLoad);
+ * The HLSL is compiled for deko3d only (DXC -spirv, without -fvk-invert-y); its SPIR-V rex::deko3d (SDK glsl.cpp)
+ * turns into GLSL for uam. uam's GLSL front end has no buffer references and deko3d has no bindless heaps, so:
+ *   - the constants only come from the three UBOs;
  *   - each Xenos sampler register R is one texture at binding R and one sampler at binding R, declared by
  *     the translator; the 2D ones also get their pair (tfetch2DSombraMin) at binding 16 + R;
- *   - the helpers below take the texture and the sampler instead of their heap indices.
- * Without the define the preprocessed text is the same as before it existed. docs/HowToDeko3d.md, 3.1.
+ *   - the helpers below take the texture and the sampler.
  */
-#ifndef NFSMW_DEKO3D
-struct PushConstants
-{
-    uint64_t VertexShaderConstants;
-    uint64_t PixelShaderConstants;
-    uint64_t SharedConstants;
-};
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
-#endif
-
-// NFSMW: the same blocks of the upload buffer, also as dynamic UBOs in set 4. With
+// The blocks of the upload buffer, as dynamic UBOs in set 4. With
 // -fvk-use-dx-layout each float4 takes 16 contiguous bytes, so any 4-byte word of the shared block is
 // a component: v[B / 16][(B % 16) / 4], and asuint reads it without changing a bit.
-struct NfsmwBloqueVs { float4 v[256]; };
-struct NfsmwBloquePs { float4 v[224]; };
-#ifdef NFSMW_DEKO3D
+struct DsBloqueVs { float4 v[256]; };
+struct DsBloquePs { float4 v[224]; };
 // The 1/size pairs of the 16 sampler registers end at byte 360 + 16 * 8 = 488, past the 23 float4 below: NVK reads
 // beyond the declared array, Mesa's GLSL front end in uam rejects a constant index past it. 31 float4 = 496 bytes,
 // the size the deko3d renderer binds.
-struct NfsmwBloqueCompartidas { float4 v[31]; };
-#else
-struct NfsmwBloqueCompartidas { float4 v[23]; };
-#endif
-[[vk::binding(0, 4)]] ConstantBuffer<NfsmwBloqueVs> g_UboVertex;
-[[vk::binding(1, 4)]] ConstantBuffer<NfsmwBloquePs> g_UboPixel;
-[[vk::binding(2, 4)]] ConstantBuffer<NfsmwBloqueCompartidas> g_UboCompartidas;
-#ifndef NFSMW_DEKO3D
-#define NFSMW_UBO ((g_SpecConstants & SPEC_CONSTANT_CONSTANTES_UBO) != 0)
-#endif
-#define NFSMW_COMPARTIDA_UINT(B)  asuint(g_UboCompartidas.v[(B) / 16][((B) % 16) / 4])
-#define NFSMW_COMPARTIDA_FLOAT(B) g_UboCompartidas.v[(B) / 16][((B) % 16) / 4]
+struct DsBloqueCompartidas { float4 v[31]; };
+[[vk::binding(0, 4)]] ConstantBuffer<DsBloqueVs> g_UboVertex;
+[[vk::binding(1, 4)]] ConstantBuffer<DsBloquePs> g_UboPixel;
+[[vk::binding(2, 4)]] ConstantBuffer<DsBloqueCompartidas> g_UboCompartidas;
+#define DS_COMPARTIDA_UINT(B)  asuint(g_UboCompartidas.v[(B) / 16][((B) % 16) / 4])
+#define DS_COMPARTIDA_FLOAT(B) g_UboCompartidas.v[(B) / 16][((B) % 16) / 4]
 
-#ifdef NFSMW_DEKO3D
-// B is always a constant here: uam loses a dynamic component index into a UBO vector (HowToDeko3d.md,
-// section 6, item 12), and g_InputRemap is only called with constant locations.
-#define g_Booleans                 NFSMW_COMPARTIDA_UINT(256)
-#define g_SwappedTexcoords         NFSMW_COMPARTIDA_UINT(260)
-#define g_HalfPixelOffset          float2(NFSMW_COMPARTIDA_FLOAT(264), NFSMW_COMPARTIDA_FLOAT(268))
-#define g_AlphaThreshold           NFSMW_COMPARTIDA_FLOAT(272)
-#define g_AlphaFunction            NFSMW_COMPARTIDA_UINT(276)
-#define g_NdcScale                 float2(NFSMW_COMPARTIDA_FLOAT(280), NFSMW_COMPARTIDA_FLOAT(284))
-#define g_NdcOffset                float2(NFSMW_COMPARTIDA_FLOAT(288), NFSMW_COMPARTIDA_FLOAT(292))
-#define g_InputRemap(LOC)          NFSMW_COMPARTIDA_UINT(296 + (LOC) * 4)
-#else
-#define g_Booleans                 (NFSMW_UBO ? NFSMW_COMPARTIDA_UINT(256) : vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256))
-#define g_SwappedTexcoords         (NFSMW_UBO ? NFSMW_COMPARTIDA_UINT(260) : vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260))
-#define g_HalfPixelOffset          (NFSMW_UBO ? float2(NFSMW_COMPARTIDA_FLOAT(264), NFSMW_COMPARTIDA_FLOAT(268)) : vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 264))
-#define g_AlphaThreshold           (NFSMW_UBO ? NFSMW_COMPARTIDA_FLOAT(272) : vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 272))
-// NFSMW: alpha test function (RB_COLORCONTROL.alpha_func): 0 never, 1 <, 2 ==, 3 <=,
-// 4 >, 5 !=, 6 >=, 7 always.
-#define g_AlphaFunction            (NFSMW_UBO ? NFSMW_COMPARTIDA_UINT(276) : vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 276))
-// NFSMW: position to host clip space, like ndc_scale/ndc_offset in the
-// emulation (graphics/util/draw.cpp). (1, 1) and (0, 0) for normal draws;
-// with Xenos clipping disabled it converts from pixels to NDC.
-#define g_NdcScale                 (NFSMW_UBO ? float2(NFSMW_COMPARTIDA_FLOAT(280), NFSMW_COMPARTIDA_FLOAT(284)) : vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 280))
-#define g_NdcOffset                (NFSMW_UBO ? float2(NFSMW_COMPARTIDA_FLOAT(288), NFSMW_COMPARTIDA_FLOAT(292)) : vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 288))
-// NFSMW: where each component of the vertex input at that location comes from
-// (D3D patches the fetch swizzle according to the declaration). 0xFFF = as is.
-#define g_InputRemap(LOC)          (NFSMW_UBO ? NFSMW_COMPARTIDA_UINT(296 + (LOC) * 4) : vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 296 + (LOC) * 4))
-#endif
+// B is always a constant here: uam loses a dynamic component index into a UBO vector, and g_InputRemap is only
+// called with constant locations.
+#define g_Booleans                 DS_COMPARTIDA_UINT(256)
+#define g_SwappedTexcoords         DS_COMPARTIDA_UINT(260)
+#define g_HalfPixelOffset          float2(DS_COMPARTIDA_FLOAT(264), DS_COMPARTIDA_FLOAT(268))
+#define g_AlphaThreshold           DS_COMPARTIDA_FLOAT(272)
+#define g_AlphaFunction            DS_COMPARTIDA_UINT(276)
+#define g_NdcScale                 float2(DS_COMPARTIDA_FLOAT(280), DS_COMPARTIDA_FLOAT(284))
+#define g_NdcOffset                float2(DS_COMPARTIDA_FLOAT(288), DS_COMPARTIDA_FLOAT(292))
+#define g_InputRemap(LOC)          DS_COMPARTIDA_UINT(296 + (LOC) * 4)
 
-// deko3d: there is no specialization at bind time; nfsmw_dk_glsl.cpp gives this constant its value before
+// deko3d: there is no specialization at bind time; the SDK (rex::deko3d::SpirvAGlsl) gives this constant its value before
 // uam compiles, and one DKSH is made per (shader, value).
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
 
 #define g_SpecConstants() g_SpecConstants
 
-#else
 
-#define DEFINE_SHARED_CONSTANTS() \
-    uint g_Booleans : packoffset(c16.x); \
-    uint g_SwappedTexcoords : packoffset(c16.y); \
-    float2 g_HalfPixelOffset : packoffset(c16.z); \
-    float g_AlphaThreshold : packoffset(c17.x); \
-    uint g_AlphaFunction : packoffset(c17.y); \
-    float2 g_NdcScale : packoffset(c17.z); \
-    float2 g_NdcOffset : packoffset(c18.x);
-
-uint g_SpecConstants();
-
-#define g_InputRemap(LOC) 0xFFF
-
-#endif
-
-#ifndef NFSMW_DEKO3D
-Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
-TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
-SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
-#endif
 
 uint2 getTexture2DDimensions(Texture2D<float4> texture)
 {
@@ -183,9 +116,8 @@ uint2 getTexture2DDimensions(Texture2D<float4> texture)
     return dimensions;
 }
 
-#ifdef NFSMW_DEKO3D
-// The same helpers with the register's texture and sampler (the translator's NAME_Texture2DDescriptorIndex and
-// NAME_SamplerDescriptorIndex are those objects in this mode). Same arithmetic as the heap versions.
+// The helpers take the register's texture and sampler (the translator's NAME_Texture2DDescriptorIndex and
+// NAME_SamplerDescriptorIndex are those objects).
 float4 tfetch2D(Texture2D<float4> texture, SamplerState samplerState, float2 texCoord, float2 offset, float2 invSize)
 {
     float2 desplazamiento;
@@ -200,28 +132,6 @@ float2 getWeights2D(Texture2D<float4> texture, SamplerState samplerState, float2
 {
     return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
 }
-#else
-float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset, float2 invSize)
-{
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    // With the bit set, the size comes from a constant and the texture does not have to be queried. It
-    // is the same computation with the same number: the renderer writes 1/size of the host image. With a
-    // ternary, DXC evaluates both branches and the size query stays: an if with [branch] is needed for
-    // the dead branch to disappear when the pipeline is specialized.
-    float2 desplazamiento;
-    [branch] if (g_SpecConstants() & SPEC_CONSTANT_INV_TAMANO_TEX)
-        desplazamiento = offset * invSize;
-    else
-        desplazamiento = offset / getTexture2DDimensions(texture);
-    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + desplazamiento);
-}
-
-float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
-{
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
-}
-#endif
 
 float w0(float a)
 {
@@ -263,10 +173,7 @@ float h1(float a)
     return 1.0f + w3(a) / (w2(a) + w3(a)) + 0.5f;
 }
 
-#ifdef NFSMW_DEKO3D
-// tfetch2DSombra, tfetch2DSombraMin, tfetch3D and tfetchCube of the heap path below, with objects. The pair of
-// tfetch2DSombraMin is the register's NAME_Texture3DDescriptorIndex, a 2D texture at binding 16 + R in this
-// mode. There is no tfetch2DBicubic: only UNLEASHED_RECOMP emits it.
+// The pair of tfetch2DSombraMin is the register's NAME_Texture3DDescriptorIndex, a 2D texture at binding 16 + R.
 float4 tfetch2DSombra(Texture2D<float4> texture, SamplerState samplerState, float2 texCoord, float2 offset, float2 invSize)
 {
     [branch] if (g_SpecConstants() & SPEC_CONSTANT_PCF_BARATO)
@@ -276,7 +183,7 @@ float4 tfetch2DSombra(Texture2D<float4> texture, SamplerState samplerState, floa
 
 float4 tfetch2DSombraMin(Texture2D<float4> texture, Texture2D<float4> pareja, SamplerState samplerState, float2 texCoord, float2 offset, float2 invSize)
 {
-    [branch] if (g_SpecConstants() == NFSMW_MARCA_SOMBRA_MINIMO)
+    [branch] if (g_SpecConstants() == DS_MARCA_SOMBRA_MINIMO)
         return float4(0.0, 0.0, 0.0, 0.0);
     float4 valor = tfetch2DSombra(texture, samplerState, texCoord, offset, invSize);
     [branch] if (g_SpecConstants() & SPEC_CONSTANT_SOMBRA_MINIMO)
@@ -299,82 +206,6 @@ float4 tfetchCube(TextureCube<float4> texture, SamplerState samplerState, float3
 {
     return texture.Sample(samplerState, cubeMapData.cubeMapDirections[texCoord.z]);
 }
-#else
-// Shadow map sampling. The translator emits tfetch2D for everything; the library rewrite step
-// changes the calls whose sampler is SHADOWMAP_SAMPLER to this function, since those are the only
-// ones meant to be made cheaper. With the bit set, all the 3x3 samples land on the same texel and
-// the compiler keeps only one.
-float4 tfetch2DSombra(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset, float2 invSize)
-{
-    [branch] if (g_SpecConstants() & SPEC_CONSTANT_PCF_BARATO)
-        return tfetch2D(resourceDescriptorIndex, samplerDescriptorIndex, texCoord, float2(0.0, 0.0), invSize);
-    return tfetch2D(resourceDescriptorIndex, samplerDescriptorIndex, texCoord, offset, invSize);
-}
-
-// The shadow map with the minimum of its pair (nfsmw_nativo_sombra_minimo). The library step changes
-// all shadow map calls to this function and passes it the 3D index of that same register, which is
-// where the app puts the pair: the world map (or the texture itself, which gives the same texel, while
-// the app is checking). Both are sampled the same way (same point sampler, same coordinates and
-// offsets), so the minimum is per texel. The first comparison is the library marker: it is never
-// true and the driver removes it when specializing.
-float4 tfetch2DSombraMin(uint resourceDescriptorIndex, uint parejaDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset, float2 invSize)
-{
-    [branch] if (g_SpecConstants() == NFSMW_MARCA_SOMBRA_MINIMO)
-        return float4(0.0, 0.0, 0.0, 0.0);
-    float4 valor = tfetch2DSombra(resourceDescriptorIndex, samplerDescriptorIndex, texCoord, offset, invSize);
-    [branch] if (g_SpecConstants() & SPEC_CONSTANT_SOMBRA_MINIMO)
-        valor = min(valor, tfetch2DSombra(parejaDescriptorIndex, samplerDescriptorIndex, texCoord, offset, invSize));
-    return valor;
-}
-
-float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
-{
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    SamplerState samplerState = g_SamplerDescriptorHeap[samplerDescriptorIndex];
-    uint2 dimensions = getTexture2DDimensions(texture);
-    
-    float x = texCoord.x * dimensions.x + offset.x;
-    float y = texCoord.y * dimensions.y + offset.y;
-
-    x -= 0.5f;
-    y -= 0.5f;
-    float px = floor(x);
-    float py = floor(y);
-    float fx = x - px;
-    float fy = y - py;
-
-    float g0x = g0(fx);
-    float g1x = g1(fx);
-    float h0x = h0(fx);
-    float h1x = h1(fx);
-    float h0y = h0(fy);
-    float h1y = h1(fy);
-
-    float4 r =
-        g0(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h0y) / float2(dimensions)) +
-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h0y) / float2(dimensions))) +
-        g1(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h1y) / float2(dimensions)) +
-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h1y) / float2(dimensions)));
-
-    return r;
-}
-
-float4 tfetch3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
-{
-    return g_Texture3DDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
-}
-
-struct CubeMapData
-{
-    float3 cubeMapDirections[2];
-    uint cubeMapIndex;
-};
-
-float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
-{
-    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
-}
-#endif
 
 float4 tfetchR11G11B10(uint4 value)
 {
@@ -394,15 +225,11 @@ float4 tfetchR11G11B10(uint4 value)
 
 float4 tfetchTexcoord(uint swappedTexcoords, float4 value, uint semanticIndex)
 {
-#ifdef NFSMW_DEKO3D
     // 32 bits: a 64-bit shift needs int64, which uam does not take. semanticIndex is below 16.
     return (swappedTexcoords & (1u << semanticIndex)) != 0 ? value.yxwz : value;
-#else
-    return (swappedTexcoords & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
-#endif
 }
 
-// NFSMW: 3 bits per component: 0-3 = data component, 4 = 0, 5 = 1, 7 = unchanged.
+// 3 bits per component: 0-3 = data component, 4 = 0, 5 = 1, 7 = unchanged.
 float4 remapInput(float4 value, uint code)
 {
     if (code == 0xFFF)
@@ -422,7 +249,7 @@ float4 remapInput(float4 value, uint code)
     return result;
 }
 
-// NFSMW: Xenos alpha test with its comparison function. Positive if the pixel passes.
+// Xenos alpha test with its comparison function. Positive if the pixel passes.
 float alphaTestValue(float alpha)
 {
     bool pass = true;
@@ -464,12 +291,6 @@ float4 max4(float4 src0)
     return max(max(src0.x, src0.y), max(src0.z, src0.w));
 }
 
-#ifndef NFSMW_DEKO3D
-float2 getPixelCoord(uint resourceDescriptorIndex, float2 texCoord)
-{
-    return getTexture2DDimensions(g_Texture2DDescriptorHeap[resourceDescriptorIndex]) * texCoord;
-}
-#endif
 
 float computeMipLevel(float2 pixelCoord)
 {

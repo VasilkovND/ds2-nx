@@ -31,13 +31,15 @@ struct ShaderRecompiler : StringBuffer
     std::unordered_map<uint32_t, const ConstantInfo*> float4Constants;
     std::unordered_map<uint32_t, const char*> boolConstants;
     std::unordered_map<uint32_t, const char*> samplers;
+    // Dimensions each sampler is fetched with (bit 1 << TextureDimension), to fix its deko3d binding at the end.
+    std::unordered_map<std::string, uint32_t> dimensionesBuscadas;
+    bool usaTfetchVertice = false;
+    // Forward-only jumps as `if (pc <= N)` blocks instead of `while (true) switch (pc)` (recompile()). Turned on by
+    // ds_hlsl --saltos-lineales (needed so uam can compile the jump-heavy shaders).
+    bool saltosLineales = false;
     std::unordered_map<uint32_t, uint32_t> ifEndLabels;
     uint32_t specConstantsMask = 0;
 
-#ifdef UNLEASHED_RECOMP
-    bool hasMtxProjection = false;
-    bool hasMtxPrevInvViewProjection = false;
-#endif
 
     void indent()
     {
@@ -230,10 +232,7 @@ struct ShaderRecompiler : StringBuffer
 
     void recompile(const uint8_t* shaderData, const std::string_view& include);
 
-#ifdef NFSMW_RECOMP
-    // The #else of the constants block under NFSMW_DEKO3D: the float constants from the UBOs only, and each
-    // sampler register as a texture and a sampler at fixed bindings (shader_common.h). Text only: the maps
-    // above are filled by the Vulkan block.
+    // The constants block: the float constants from the UBOs, and each sampler register as a texture and a
+    // sampler at fixed bindings (shader_common.h). Text only: recompile() fills the maps above.
     void printDeko3dConstants(const ConstantTableContainer* constantTableContainer);
-#endif
 };
