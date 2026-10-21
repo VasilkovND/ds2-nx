@@ -49,8 +49,9 @@ std::filesystem::path g_dir;
 std::atomic<uint32_t> g_written{0};
 std::atomic<uint32_t> g_rejected{0};
 
-// `missing`: the library is loaded and has no entry for it. Those are always written (a handful, and the renderer skips
-// every draw that uses them), the rest only with ds2_shader_dump.
+// `missing`: the library has no entry for it, or there is no library at all. Those are always written: without
+// ds2_shaders.dslib next to the NRO the first start dumps the game's whole set (it creates every shader at startup),
+// which is how a player makes the library from their own copy (INSTALL.md). The rest only with ds2_shader_dump.
 void Dump(uint8_t* base, uint32_t address, const char* stage, bool missing) {
   if (!address || !(missing || REXCVAR_GET(ds2_shader_dump))) return;
   const uint32_t flags = REX_LOAD_U32(address);
@@ -83,7 +84,7 @@ void Dump(uint8_t* base, uint32_t address, const char* stage, bool missing) {
     std::fwrite(data, 1, size_t(size), f);
     std::fclose(f);
     const uint32_t n = g_written.fetch_add(1) + 1;
-    if (missing) {
+    if (missing && ds2::shaders::Global().cargada()) {
       REXLOG_WARN("[shaders] {} not in the library: written to shaders_dump/{} ({} bytes)", stage, name, size);
     } else if (n <= 4 || n % 100 == 0) {
       REXLOG_INFO("[shaders] {} new containers written (last: {} {} bytes, flags {:08X})", n, name, size, flags);
@@ -115,7 +116,7 @@ REX_EXTERN(__imp__D3DDevice_CreateVertexShader_82220568);
 REX_EXTERN(D3DDevice_CreateVertexShader_82220568) {
   const uint32_t container = ctx.r3.u32;
   const rex::x360::EntradaShader* entrada = Entrada(base, container);
-  Dump(base, container, "vs", !entrada && ds2::shaders::Global().cargada());
+  Dump(base, container, "vs", !entrada);
   __imp__D3DDevice_CreateVertexShader_82220568(ctx, base);
   Registrar(ctx, container, entrada);
 }
@@ -124,7 +125,7 @@ REX_EXTERN(__imp__D3DDevice_CreatePixelShader_822201C0);
 REX_EXTERN(D3DDevice_CreatePixelShader_822201C0) {
   const uint32_t container = ctx.r3.u32;
   const rex::x360::EntradaShader* entrada = Entrada(base, container);
-  Dump(base, container, "ps", !entrada && ds2::shaders::Global().cargada());
+  Dump(base, container, "ps", !entrada);
   __imp__D3DDevice_CreatePixelShader_822201C0(ctx, base);
   Registrar(ctx, container, entrada);
 }

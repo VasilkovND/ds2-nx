@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3 (TU2) — 2026-10-21
+
+The public release: nothing from the game is distributed or committed any more.
+
+- **No prebuilt files.** The shader library and its cache are made by each player from their own copy: without
+  `ds2_shaders.dslib` next to it, the first start writes every shader the game creates to `shaders_dump/`, and
+  `shaders/build_library.sh` turns them into the library on the computer ([INSTALL.md](INSTALL.md), step 3).
+- The Homebrew Menu icon is ours again; a build from your own disc can use the game's (`tools/make_icon.py`,
+  `-DDS2_ICON_DEL_DISCO=ON`).
+
 ## 1.0.2 (TU2) — 2026-10-21
 
 - The Homebrew Menu icon is the game's again (Isaac's helmet from the disc's dashboard art, `deadspace2/res/icon.jpg`).

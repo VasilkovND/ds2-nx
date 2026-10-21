@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Draw the neutral Homebrew Menu icon (deadspace2/res/icon_neutral.jpg, 256x256 JPEG): "DS2" and "NX" in block
-letters on a dark background, nothing from the game. The build uses it with -DDS2_ICON_NEUTRAL=ON (by default it
-uses the game's, res/icon.jpg from make_icon.py). Uses macOS's sips to write the JPEG.
+"""Draw the Homebrew Menu icon (deadspace2/res/icon.jpg, 256x256 JPEG): "DS2" and "NX" in block letters on a dark
+background, nothing from the game. A build from your own disc can use its art instead (make_icon.py,
+-DDS2_ICON_DEL_DISCO=ON). Uses macOS's sips to write the JPEG.
 
 Usage: make_release_icon.py [<out.jpg>]
 """
@@ -38,7 +38,7 @@ def draw(pixels, text, scale, top, color):
 
 
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "res", "icon_neutral.jpg")
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "res", "icon.jpg")
     pixels = [[BACKGROUND] * SIZE for _ in range(SIZE)]
     draw(pixels, "DS2", 12, 44, TEXT)
     for y in range(140, 146):  # a thin accent line between the two words

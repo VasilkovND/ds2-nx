@@ -57,7 +57,7 @@ target_include_directories(deadspace2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sha
 
 # The version (Homebrew Menu and the first lines of the log) and the commit it was built from, so a log a player sends
 # says which build made it. The commit is read when CMake configures (build_mac.sh RECONFIGURE=1 refreshes it).
-set(DS2_VERSION "1.0.2 (TU2)")
+set(DS2_VERSION "1.0.3 (TU2)")
 execute_process(COMMAND git rev-parse --short=10 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
                 OUTPUT_VARIABLE DS2_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND git status --porcelain --untracked-files=no --ignore-submodules=all WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -75,13 +75,13 @@ target_compile_definitions(deadspace2 PRIVATE DS2_TARGET_TU2=1)
 # Nintendo Switch: deadspace2.nro. On the SD card: sdmc:/switch/ds2-nx/ds2-nx.nro, with disc1/, disc2/ and tu/ beside it
 # (src/ds2_app.h finds them there).
 if(REXGLUE_PLATFORM_SWITCH)
-    # Homebrew menu icon: the game's own (res/icon.jpg, Isaac's helmet from the disc's dashboard art, made with
-    # tools/make_icon.py). -DDS2_ICON_NEUTRAL=ON uses ours instead, with no art from the game (res/icon_neutral.jpg,
-    # tools/make_release_icon.py).
-    option(DS2_ICON_NEUTRAL "Homebrew menu icon without art from the game (res/icon_neutral.jpg)" OFF)
+    # Homebrew menu icon: ours (res/icon.jpg, tools/make_release_icon.py), with no art from the game. Your own build can
+    # use the game's (Isaac's helmet from your disc's dashboard art; assets/ is not committed):
+    #   python3 tools/make_icon.py <disc1/nxeart>   and configure with -DDS2_ICON_DEL_DISCO=ON
+    option(DS2_ICON_DEL_DISCO "Homebrew menu icon from your own disc (assets/icon.jpg)" OFF)
     set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/icon.jpg")
-    if(DS2_ICON_NEUTRAL)
-        set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/icon_neutral.jpg")
+    if(DS2_ICON_DEL_DISCO AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
+        set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
     endif()
     set(DS2_ICON_ARG ICON "${DS2_ICON}")
     rexglue_switch_add_nro(deadspace2

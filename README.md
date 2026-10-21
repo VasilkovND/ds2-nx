@@ -9,7 +9,7 @@ a homebrew NRO, and frames are drawn by a native deko3d renderer from the game's
 > You need your own copy of the game (both discs and Title Update 2). This repository contains no game data or
 > game code.
 
-Status: **1.0.2** — playable. Installation: [INSTALL.md](INSTALL.md). Comfortable when overclocked; about 20-30 fps at stock clocks,
+Status: **1.0.3** — playable. Installation: [INSTALL.md](INSTALL.md). Comfortable when overclocked; about 20-30 fps at stock clocks,
 with drops in the heaviest fights. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
 details, boot history and measurements in [deadspace2/PORTING.md](deadspace2/PORTING.md).
 
@@ -88,8 +88,9 @@ it costs performance, so only use it for debugging.
 ## Legal
 
 Unofficial fan port with no affiliation to Electronic Arts or Visceral Games. "Dead Space" is a trademark of
-Electronic Arts. You provide your own legally obtained copy of the game. No prebuilt NRO is distributed: it contains
-code recompiled from the game, so it is built from source on your own computer ([INSTALL.md](INSTALL.md)). Running homebrew requires custom firmware,
+Electronic Arts. You provide your own legally obtained copy of the game. No prebuilt files are distributed: the NRO
+contains code recompiled from the game and the shader library the game's own shaders, so both are made on your own
+computer from your copy ([INSTALL.md](INSTALL.md)). Running homebrew requires custom firmware,
 which violates Nintendo's terms and can get a console banned.
 
 Source code is under the GPL-3.0 license (see [LICENSE](LICENSE)). The SDK changes are under the SDK's BSD-3-Clause
