@@ -45,10 +45,11 @@ REX_EXTERN(rw__audio__core__Compressor1__Process) {
 }
 
 // ---- Where the mixer's time goes: inclusive time of each stage of rwaudiocore, logged every 10 s. Two reads of the
-// system counter per call (a register read on the Switch, no system call), so it stays on: the numbers decide what to
-// lighten next. The stages nest (Dac::Process runs the Mixer, which runs the plug-ins), so they do not add up.
+// system counter per call (a register read on the Switch, no system call), but some 200 thousand calls a second in a
+// fight: off by default, for profiling runs. The stages nest (Dac::Process runs the Mixer, which runs the plug-ins),
+// so they do not add up.
 
-REXCVAR_DEFINE_BOOL(ds2_audio_tiempos, true, "DS2",
+REXCVAR_DEFINE_BOOL(ds2_audio_tiempos, false, "DS2",
                     "Cada 10 s, el tiempo de CPU de cada etapa del audio del juego (rwaudiocore) en el log");
 
 namespace {
