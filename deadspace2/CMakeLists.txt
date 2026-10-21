@@ -61,13 +61,15 @@ target_compile_definitions(deadspace2 PRIVATE DS2_TARGET_TU2=1)
 # Nintendo Switch: deadspace2.nro. On the SD card: sdmc:/switch/ds2-nx/ds2-nx.nro, with disc1/, disc2/ and tu/ beside it
 # (src/ds2_app.h finds them there).
 if(REXGLUE_PLATFORM_SWITCH)
-    # Homebrew menu icon: a 256x256 JPEG made from your own disc (assets/ is ignored):
-    #   python3 tools/make_icon.py <disc1/nxeart>
-    set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
-    set(DS2_ICON_ARG)
-    if(EXISTS "${DS2_ICON}")
-        set(DS2_ICON_ARG ICON "${DS2_ICON}")
+    # Homebrew menu icon: our own (res/icon.jpg, tools/make_release_icon.py), so a build that is shared carries no art
+    # from the game. A personal build can use the disc's instead (assets/ is ignored):
+    #   python3 tools/make_icon.py <disc1/nxeart>   and configure with -DDS2_ICON_DEL_DISCO=ON
+    option(DS2_ICON_DEL_DISCO "Homebrew menu icon from your own disc (assets/icon.jpg)" OFF)
+    set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/icon.jpg")
+    if(DS2_ICON_DEL_DISCO AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
+        set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
     endif()
+    set(DS2_ICON_ARG ICON "${DS2_ICON}")
     rexglue_switch_add_nro(deadspace2
         NAME "Dead Space 2"
         AUTHOR "VasilkovND"

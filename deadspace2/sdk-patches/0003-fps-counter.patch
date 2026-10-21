@@ -1,16 +1,20 @@
 diff --git a/src/input/switch/switch_input_driver.cpp b/src/input/switch/switch_input_driver.cpp
-index ccf5e2a..6992a9a 100644
+index ccf5e2a..ef1c632 100644
 --- a/src/input/switch/switch_input_driver.cpp
 +++ b/src/input/switch/switch_input_driver.cpp
-@@ -18,6 +18,27 @@
+@@ -18,6 +18,31 @@
  #include <rex/cvar.h>
  #include <rex/logging.h>
  #include <rex/ui/keybinds.h>
 +
 +// The deko3d presenter's FPS counter (rex/ui/deko3d presentador.cpp reads it on every paint), defined here so that a
 +// build without the deko3d presenter still links.
-+REXCVAR_DEFINE_BOOL(switch_contador_fps, true, "UI/Switch",
-+                    "Contador de FPS y del peor hueco entre imagenes, arriba a la izquierda (presentador deko3d)");
++REXCVAR_DEFINE_BOOL(switch_contador_fps, false, "UI/Switch",
++                    "Contador de FPS y del peor hueco entre imagenes, arriba a la izquierda (presentador deko3d); "
++                    "ZL + ZR + arriba lo enciende y apaga");
++REXCVAR_DEFINE_BOOL(switch_atajos_depuracion, false, "UI/Switch",
++                    "Los atajos de depuracion con ZL + ZR (capturas, volcados, modos de omision, menus del SDK, "
++                    "muestreo de pilas, vuelta A/B). false = solo ZL + ZR + arriba, el contador de FPS");
 +REXCVAR_DEFINE_BOOL(switch_atajo_captura, true, "UI/Switch",
 +                    "ZL + ZR + abajo pide una captura de la salida del juego (la guarda el sistema grafico del juego) en "
 +                    "vez de abrir la consola (tecla `), que pasa todo el pintado al hilo de la interfaz");
@@ -30,7 +34,7 @@ index ccf5e2a..6992a9a 100644
  #include <rex/ui/ui_event.h>
  #include <rex/ui/virtual_key.h>
  
-@@ -321,15 +342,15 @@ void SwitchInputDriver::Poll(size_t index) {
+@@ -321,15 +346,15 @@ void SwitchInputDriver::Poll(size_t index) {
    gamepad.thumb_rx = ClampStickAxis(right.x);
    gamepad.thumb_ry = ClampStickAxis(right.y);
    /*
@@ -52,7 +56,7 @@ index ccf5e2a..6992a9a 100644
      gamepad.thumb_rx = static_cast<int16_t>(0);
      gamepad.thumb_ry = static_cast<int16_t>(0);
    }
-@@ -343,20 +364,23 @@ void SwitchInputDriver::Poll(size_t index) {
+@@ -343,22 +368,27 @@ void SwitchInputDriver::Poll(size_t index) {
  
  /* From the profiler (switch_perf.cpp): turns the GPU A/B test lap on and off. */
  extern "C" void RexSwitchPerfToggleAb(void);
@@ -83,8 +87,12 @@ index ccf5e2a..6992a9a 100644
 + *   ZL + ZR + right stick -> moves the debug overlay if it is open
   *                          (its position is saved; see Poll and debug_overlay.cpp)
   *
++ * All but ZL + ZR + Up only with switch_atajos_depuracion (off by default: release builds keep the FPS counter).
++ *
   * It fires once per press, not while held: each shortcut stores its bit in
-@@ -367,7 +391,7 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+  * slot.menu_shortcuts with the state from the previous poll.
+  */
+@@ -367,7 +397,7 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
      uint64_t boton;
      rex::ui::VirtualKey tecla;
    };
@@ -93,9 +101,17 @@ index ccf5e2a..6992a9a 100644
    static const Atajo kAtajos[] = {
        {HidNpadButton_Up, rex::ui::VirtualKey::kF3},
        {HidNpadButton_Right, rex::ui::VirtualKey::kF4},
-@@ -380,7 +404,20 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -376,11 +406,27 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+   };
+ 
+   const bool modificador = (held & kModificador) == kModificador;
++  // Without switch_atajos_depuracion (a release build) only the FPS counter answers.
++  const bool depuracion = REXCVAR_GET(switch_atajos_depuracion);
+   for (size_t i = 0; i < std::size(kAtajos); ++i) {
      const uint64_t bit = uint64_t(1) << i;
-     const bool ahora = modificador && (held & kAtajos[i].boton) != 0;
+-    const bool ahora = modificador && (held & kAtajos[i].boton) != 0;
++    const bool ahora = modificador && (held & kAtajos[i].boton) != 0 &&
++                       (depuracion || kAtajos[i].tecla == rex::ui::VirtualKey::kF3);
      const bool antes = (slot.menu_shortcuts & bit) != 0;
 -    if (ahora && !antes) {
 +    if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kF4 && REXCVAR_GET(switch_atajo_omitir)) {
@@ -115,7 +131,7 @@ index ccf5e2a..6992a9a 100644
        /*
         * Each shortcut creates or destroys an ImGui menu, and the UI thread
         * draws them continuously while any is open. From this game thread a
-@@ -402,12 +439,12 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -402,12 +448,12 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
    }
  
    /*
@@ -126,18 +142,18 @@ index ccf5e2a..6992a9a 100644
     */
    const uint64_t kBitAb = uint64_t(1) << 8;
 -  const bool ab_ahora = modificador && (held & HidNpadButton_ZL) != 0;
-+  const bool ab_ahora = modificador && (held & HidNpadButton_L) != 0;
++  const bool ab_ahora = depuracion && modificador && (held & HidNpadButton_L) != 0;
    const bool ab_antes = (slot.menu_shortcuts & kBitAb) != 0;
    if (ab_ahora && !ab_antes) {
      RexSwitchPerfToggleAb();
-@@ -415,6 +452,16 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -415,6 +461,16 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
    }
    slot.menu_shortcuts = ab_ahora ? (slot.menu_shortcuts | kBitAb)
                                   : (slot.menu_shortcuts & ~kBitAb);
 +
 +  // ZL+ZR+R: the profiler's stack sampling, as perfil_pilas.flag but during play.
 +  const uint64_t kBitPilas = uint64_t(1) << 9;
-+  const bool pilas_ahora = modificador && (held & HidNpadButton_R) != 0;
++  const bool pilas_ahora = depuracion && modificador && (held & HidNpadButton_R) != 0;
 +  const bool pilas_antes = (slot.menu_shortcuts & kBitPilas) != 0;
 +  if (pilas_ahora && !pilas_antes) {
 +    const bool activo = RexSwitchPerfToggleStacks();

@@ -26,16 +26,15 @@ the decompression scene, a space walk and a boss fight; a full playthrough has n
 
 ### Controls
 
-The game uses the controller as on the Xbox 360. Debug shortcuts hold both rear triggers (ZL + ZR):
+The game uses the controller as on the Xbox 360. **ZL + ZR + D-pad Up** shows or hides the FPS counter (hidden at
+start). The debugging shortcuts (screenshots, frame dumps, draw-skipping modes, the SDK menus, CPU stack sampling) are
+off; `switch_atajos_depuracion=true` in the configuration turns them back on.
 
-| Shortcut | Action |
-| --- | --- |
-| ZL + ZR + Up | FPS counter on/off |
-| ZL + ZR + Down | Screenshot to `capturas/` |
-| ZL + ZR + Left | Dump of the next frame's resolved textures (`volcado_NN/`) and a trace in the log |
-| ZL + ZR + Right | Next draw-skipping mode (debugging; mode 1 = safe mode) |
-| ZL + ZR + R | CPU stack sampling on/off (`logs/rex/rex_perfil.log`; the counter shows PRF; costs frames) |
-| ZL + ZR + L | GPU A/B test lap (measuring only) |
+### Other
+
+- The Homebrew Menu icon is our own, with no art from the game (a personal build can use your disc's with
+  `-DDS2_ICON_DEL_DISCO=ON`).
+- `tools/stage_sd.py` reads the title update package itself: only Python and your own files are needed.
 
 ### Known issues
 
