@@ -1,4 +1,4 @@
-# Установка ds2-nx 1.0.1 (Dead Space 2 для Nintendo Switch)
+# Установка ds2-nx 1.0.2 (Dead Space 2 для Nintendo Switch)
 
 ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в виде homebrew-программы. **Готовый `.nro` не
 распространяется.** Программа собирается у вас на компьютере из исходников и перекомпилированного кода игры, а
@@ -16,7 +16,7 @@ ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в в
 | Образы ваших дисков | Dead Space 2 для Xbox 360, **Disc 1** и **Disc 2**, `.iso`, издание World (En/Fr/Es) |
 | Title Update 2 | **`TU_12K226V_000000C000000.00000000000G3`** (Media ID 2915C8F8). На накопителе Xbox 360 лежит в `Content/0000000000000000/454108DF/000B0000/` |
 | Компьютер | **macOS** (проверено) или Linux (не проверялось), ~20 ГБ свободного места, интернет для загрузки инструментов |
-| Архив релиза | `ds2-nx-1.0.1.zip`: шейдеры, кэш шейдеров, `tools/stage_sd.py` |
+| Архив релиза | `ds2-nx-1.0.2.zip`: шейдеры, кэш шейдеров, `tools/stage_sd.py` |
 
 Принимаются только эти версии: каждый файл проверяется по контрольной сумме. Перекомпилированный код сделан из
 именно этого издания, с другим он не совпадёт. TU2 других регионов (другой Media ID) несут другой исполняемый файл.
@@ -25,8 +25,8 @@ ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в в
 
 1. Установите **Python 3**: на macOS он ставится вместе с инструментами шага 2 (`brew install python`); на Linux —
    из пакетов дистрибутива.
-2. Распакуйте `ds2-nx-1.0.1.zip`, положите рядом образы дисков и файл TU2 и откройте терминал в папке
-   `ds2-nx-1.0.1`.
+2. Распакуйте `ds2-nx-1.0.2.zip`, положите рядом образы дисков и файл TU2 и откройте терминал в папке
+   `ds2-nx-1.0.2`.
 3. Запустите:
 
    ```
@@ -63,7 +63,7 @@ ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в в
 4. **Исходники и сборка:**
 
    ```
-   git clone --branch v1.0.1 https://github.com/VasilkovND/ds2-nx
+   git clone --branch v1.0.2 https://github.com/VasilkovND/ds2-nx
    cd ds2-nx
    deadspace2/tools/build_mac.sh
    ```
@@ -132,7 +132,7 @@ sdmc:/switch/ds2-nx/
 
 ---
 
-# Installing ds2-nx 1.0.1 (Dead Space 2 for Nintendo Switch)
+# Installing ds2-nx 1.0.2 (Dead Space 2 for Nintendo Switch)
 
 ds2-nx is a native Switch port of Dead Space 2 (Xbox 360) as a homebrew program. **No ready-made `.nro` is
 distributed**: you build it on your computer from the sources and the recompiled game code, and the game itself comes
@@ -149,7 +149,7 @@ shaders and the script for the game files.
 
 ## Step 1. Prepare the game files
 
-Unzip `ds2-nx-1.0.1.zip`, put your disc images and the TU2 file next to it, open a terminal in `ds2-nx-1.0.1` and run:
+Unzip `ds2-nx-1.0.2.zip`, put your disc images and the TU2 file next to it, open a terminal in `ds2-nx-1.0.2` and run:
 
 ```
 python3 tools/stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" --disc2 "Dead Space 2 (Disc 2).iso" --tu "TU_12K226V_000000C000000.00000000000G3" -o game
@@ -167,7 +167,7 @@ xcode-select --install                        # macOS only
 brew install cmake ninja python git           # macOS (Homebrew); on Linux, your distribution's packages
 # devkitPro: https://github.com/devkitPro/pacman/releases (macOS pkg) or https://devkitpro.org/wiki/Getting_Started
 sudo dkp-pacman -S switch-dev deko3d
-git clone --branch v1.0.1 https://github.com/VasilkovND/ds2-nx
+git clone --branch v1.0.2 https://github.com/VasilkovND/ds2-nx
 cd ds2-nx
 deadspace2/tools/build_mac.sh
 ```

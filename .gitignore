@@ -1,5 +1,5 @@
-# Nothing derived from the game is ever committed: its files, the code generated from default.xex, and the
-# binaries built from that code.
+# Nothing derived from the game is committed (its files, the code generated from default.xex, the binaries built
+# from that code), except the Homebrew Menu icon in deadspace2/res/icon.jpg, made from the disc's dashboard art.
 
 # --- Game files ---------------------------------------------------------------
 assets/

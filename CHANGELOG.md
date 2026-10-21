@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 (TU2) — 2026-10-21
+
+- The Homebrew Menu icon is the game's again (Isaac's helmet from the disc's dashboard art, `deadspace2/res/icon.jpg`).
+  `-DDS2_ICON_NEUTRAL=ON` builds with the neutral one.
+
 ## 1.0.1 (TU2) — 2026-10-21
 
 Release build and distribution. No ready-made NRO is published any more: the release archive holds the prepared shader
