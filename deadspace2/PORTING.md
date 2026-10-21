@@ -221,6 +221,13 @@ At stock the main thread is now game code (game logic, Havok, scene preparation,
 done: color resolves by image swap (needs 720-tall 1280-pitch targets), native skinning (hand-scheduled VMX128 with
 packed formats: risky), non-volatile guest loads (spin loops without barriers would hang).
 
+**Videos at stock clocks (known issue).** DS2 decodes its full-motion videos (VP6) in software on the `Job Manager`
+thread (`VP6_DecodeBlock`, `FilterBlock2dBil_FirstPass_Xenon`, ...). During the intro that thread sits at 99 % of a
+core at 1020 MHz (about 88 % at 1785 MHz), while the presenter keeps flipping at 30 fps and the other threads are far
+from busy: the decoder cannot produce frames fast enough and the video stutters. Streaming from the SD is not the cause
+(~680 KB every ~2 s, ~10 ms each). A fix would be native NEON versions of the decoder's hottest functions, after a
+stack profile taken during a video (`telemetria.flag` samples from startup).
+
 ## 6. Tools and how to debug
 
 - **`telemetria.flag`** next to the NRO: screenshots every 5 s, frame dumps, GPU profile, frame traces, 1 ms stack

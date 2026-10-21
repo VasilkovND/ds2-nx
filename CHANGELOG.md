@@ -46,4 +46,7 @@ A/B lap (in 1.0.1 only the FPS counter is on by default).
 
 - Shadows show some self-shadowing bands and blotches (shadow acne) on characters and furniture.
 - At stock clocks the heaviest scenes drop to 12-16 fps; the light ones are limited by the 307 MHz GPU (~28 fps).
+- At stock clocks the intro video (and the other full-motion videos) stutters: the game decodes VP6 video in software
+  on one thread, which needs more than one core at 1020 MHz. The screen still updates at 30 fps; overclocked the videos
+  play nearly smoothly.
 - The final mix has no dynamics compression (`ds2_audio_sin_compresor=false` restores it, at a CPU cost).

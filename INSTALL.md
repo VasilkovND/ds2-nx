@@ -127,6 +127,7 @@ sdmc:/switch/ds2-nx/
 | `--disc1: ... not found` | Неверный путь к файлу: проверьте имя и кавычки |
 | `devkitA64 not found` / `deko3d not installed` | Не выполнен пункт 3 сборки (devkitPro и `dkp-pacman -S switch-dev deko3d`) |
 | Программа сразу закрывается | Проверьте, что на карте есть `tu/`, `disc1/`, `disc2/` и оба файла шейдеров, и что запуск идёт через игру с R |
+| Стартовое видео (и другие ролики) дёргается | Известная проблема на стоковых частотах: игра декодирует видео программно на одном ядре, и ему не хватает частоты. Изображение при этом обновляется 30 раз в секунду. С разгоном видео идёт почти плавно |
 | Другие проблемы | Приложите к сообщению об ошибке всю папку `sdmc:/switch/ds2-nx/logs/` (вместе с `logs/rex/`) и опишите, где и что произошло. В первой строке лога записаны версия сборки, прошивка и режим запуска |
 
 ---
@@ -193,7 +194,8 @@ Saves go to `sdmc:/switch/ds2-nx/ds2/`, logs to `sdmc:/switch/ds2-nx/logs/`.
 Start any installed game **while holding R** (title takeover: full memory; the album/applet mode does not have
 enough) and choose **Dead Space 2** in the Homebrew Menu. **ZL + ZR + D-pad Up** shows or hides the FPS counter.
 Overclocked (e.g. sys-clk) it runs close to the game's 30 fps cap; at stock clocks mostly 20–30 fps, with drops in the
-heaviest fights. If something goes wrong, send the whole `sdmc:/switch/ds2-nx/logs/` folder (with `logs/rex/`) and
+heaviest fights. Known issue: at stock clocks the intro video and other full-motion videos stutter (the game decodes
+them in software on one core); overclocked they play nearly smoothly. If something goes wrong, send the whole `sdmc:/switch/ds2-nx/logs/` folder (with `logs/rex/`) and
 say where and what happened: the first log lines record the build, the firmware and how it was started.
 
 ---
