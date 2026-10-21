@@ -1,5 +1,5 @@
 diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
-index 4cffec3..88a9735 100644
+index 4cffec3..4dec1c0 100644
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
 @@ -29,6 +29,8 @@
@@ -36,7 +36,7 @@ index 4cffec3..88a9735 100644
    EstadisticasDibujos EstadisticasDeDibujos() const override;
    void EsperarSubidas() override {}  // vertices are copied on the ring thread, before Dibujar returns
    uint64_t CopiasProfundidad() const override { return copias_profundidad_; }
-@@ -206,25 +219,58 @@ class RenderDk final : public DestinosNativos {
+@@ -206,25 +219,62 @@ class RenderDk final : public DestinosNativos {
    // engine (0.78 ms per Mpixel), keeps compressed images compressed, and orders against draws with Fragments barriers
    // instead of Full ones. rop_sin_barrera_: render target writes since the last barrier that made them visible to
    // sampling; copia3d_pendiente_: a copy since then, which the next draw or clear waits for.
@@ -58,6 +58,10 @@ index 4cffec3..88a9735 100644
 +    uint64_t version = UINT64_MAX;
 +  };
 +  std::unordered_map<uint64_t, ConvertidaSigno> convertidas_signo_;
++  // A resolved texture sampled by a fetch smaller than it (a 320x180 resolve into a 640-wide texture, read as 320x180):
++  // a copy of its top-left corner at the fetch's size, so normalized coordinates cover what the game means.
++  const ImagenDk* ResueltaRecortada(const ImagenDk& resuelta, uint32_t ancho, uint32_t alto);
++  std::unordered_map<uint64_t, ConvertidaSigno> recortadas_;
 +  // A 3D texture whose slices are resolved textures (Dead Space 2's color grading LUT, Copiar): its host image and the
 +  // version of each slice it holds.
 +  struct VolumenResuelto {
@@ -99,7 +103,7 @@ index 4cffec3..88a9735 100644
    Resuelta* ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato, bool intercambio_rb,
                              bool profundidad);
    bool CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat formato, uint32_t ancho, uint32_t alto,
-@@ -393,7 +439,9 @@ class RenderDk final : public DestinosNativos {
+@@ -393,7 +443,9 @@ class RenderDk final : public DestinosNativos {
    // check; resolved textures and cubemaps, this frame only).
    uint32_t PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint32_t& ancho, uint32_t& alto, bool& puntual,
                             uint64_t& valido_hasta);
@@ -110,7 +114,7 @@ index 4cffec3..88a9735 100644
    uint32_t SamplerDe(const uint32_t* f, bool puntual);
    uint32_t VaciaDe(uint16_t tipo_shader) const;
    bool LeerNivel(uint64_t direccion, bool mosaico, uint32_t pitch_bloques, uint64_t fila_bytes, const FormatoDk& tf,
-@@ -422,6 +470,12 @@ class RenderDk final : public DestinosNativos {
+@@ -422,6 +474,12 @@ class RenderDk final : public DestinosNativos {
    std::unordered_map<uint64_t, ImagenDk> destinos_;
    std::unordered_map<uint64_t, ImagenDk> profundidades_;
    std::unordered_map<uint32_t, Resuelta> resueltas_;
@@ -123,7 +127,7 @@ index 4cffec3..88a9735 100644
    // Read-backs: kBytesLecturaRanura per work slot in one CPU-cached, GPU-uncached block
    std::vector<LecturasRanura> lecturas_;
    DkMemBlock lectura_bloque_ = nullptr;
-@@ -703,4 +757,8 @@ class RenderDk final : public DestinosNativos {
+@@ -703,4 +761,8 @@ class RenderDk final : public DestinosNativos {
  std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
                                                      rex::x360::RenderHooks& hooks);  // default in nfsmw_dk_destinos.h
  
@@ -184,7 +188,7 @@ index 09794c4..26e16af 100644
  
  struct SamplerShader {
 diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
-index dcd46c7..497e058 100644
+index dcd46c7..4e90dce 100644
 --- a/src/x360/deko/destinos.cpp
 +++ b/src/x360/deko/destinos.cpp
 @@ -8,12 +8,17 @@
@@ -488,7 +492,20 @@ index dcd46c7..497e058 100644
    }
    Resuelta r;
    // A depth texture has the depth targets' flags (resolves without copy swap their images).
-@@ -788,7 +960,7 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
+@@ -782,13 +954,20 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
+   }
+   r.formato_guest = formato;
+   r.imagen.intercambio_rb = intercambio_rb;
++  // Cleared once: a resolve that covers only part of it (a sub-rectangle, a narrower one) left the rest as whatever
++  // the memory held, sampled as colored noise.
++  r.imagen.borrado_z = 1.0f;
++  r.imagen.borrado_estencil = 0;
++  std::fill(std::begin(r.imagen.borrado_color), std::end(r.imagen.borrado_color), 0.0f);
++  r.imagen.borrado_pendiente = true;
++  HacerBorradoPendiente(r.imagen);
+   REXLOG_INFO("[deko3d] textura resuelta en {:08X}, {}x{}, formato {}{}", base, ancho, alto, formato,
+               profundidad ? " (profundidad)" : "");
+   ++generacion_texturas_;  // that address is now sampled from the resolved texture
    return &resueltas_.emplace(base, std::move(r)).first->second;
  }
  
@@ -497,7 +514,7 @@ index dcd46c7..497e058 100644
    if (frontal_.pendiente && direccion == frontal_.base) {
      MaterializarFrontal();  // a draw samples the front buffer: it gets the copy now
    } else if (frontal_obsoleta_ && direccion == frontal_obsoleta_) {
-@@ -802,10 +974,19 @@ const ImagenDk* RenderDk::TexturaResuelta(uint32_t direccion) {
+@@ -802,10 +981,19 @@ const ImagenDk* RenderDk::TexturaResuelta(uint32_t direccion) {
      }
    }
    const auto it = resueltas_.find(direccion);
@@ -520,7 +537,7 @@ index dcd46c7..497e058 100644
  }
  
  // ---- Copies (resolve and clear)
-@@ -906,8 +1087,8 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -906,8 +1094,8 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
    }
    const uint32_t info_color = reg.rb_color_info[origen];
    const uint32_t formato_color = (info_color >> 16) & 0xF;
@@ -531,7 +548,7 @@ index dcd46c7..497e058 100644
      return Rechazar(100 + formato_color, "formato de destino de render todavia no soportado");
    }
    int32_t x0, y0, x1, y1;
-@@ -925,11 +1106,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -925,22 +1113,28 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
      Resuelta* resuelta = nullptr;
      uint32_t dx = 0, dy = 0;
      uint32_t base_resuelta = 0;
@@ -551,21 +568,28 @@ index dcd46c7..497e058 100644
        Rechazar(200 + formato_destino, "formato de copia todavia no soportado");
      } else {
        const uint32_t pitch_destino = reg.rb_copy_dest_pitch & 0x3FFF;
-@@ -937,8 +1121,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
-       // 4 bytes per texel: the base in multiples of 32 texels (GetResolveInfo).
-       const uint32_t base_x = uint32_t(x0) & ~uint32_t(31);
-       const uint32_t base_y = uint32_t(y0) & ~uint32_t(31);
+       const uint32_t alto_destino = (reg.rb_copy_dest_pitch >> 16) & 0x3FFF;
+-      // 4 bytes per texel: the base in multiples of 32 texels (GetResolveInfo).
+-      const uint32_t base_x = uint32_t(x0) & ~uint32_t(31);
+-      const uint32_t base_y = uint32_t(y0) & ~uint32_t(31);
 -      const uint32_t base = reg.rb_copy_dest_base + uint32_t(DesplazamientoMosaico2D(int32_t(base_x), int32_t(base_y),
 -                                                                                     pitch_destino, 2));
-+      uint32_t base = reg.rb_copy_dest_base + uint32_t(DesplazamientoMosaico2D(int32_t(base_x), int32_t(base_y),
-+                                                                               pitch_destino, 2));
+-      dx = uint32_t(x0) - base_x;
+-      dy = uint32_t(y0) - base_y;
++      // The rectangle lands at its own position in the texture at the copy's base. The emulation (GetResolveInfo)
++      // moves the base to the 32-texel tile that holds the rectangle, which in guest memory is the same bytes; here
++      // textures are images keyed by base, so that made another texture the game never samples (Dead Space 2 resolves
++      // a sub-rectangle of its 640x360 blur target in the boss fight: the real texture kept garbage).
++      uint32_t base = reg.rb_copy_dest_base;
 +      if (capa) {
 +        base += ((info_destino >> 4) & 0x7) * pitch_destino * alto_destino * 4;
 +      }
-       dx = uint32_t(x0) - base_x;
-       dy = uint32_t(y0) - base_y;
++      dx = uint32_t(x0);
++      dy = uint32_t(y0);
        base_resuelta = base & 0x1FFFFFFF;
-@@ -967,7 +1154,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // The copy destination gives the texture's pitch (a multiple of 32 texels) and its real height, not its width.
+       // A resolve from the left edge that is narrower than the pitch by less than 32 texels is the whole texture and
+@@ -967,7 +1161,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
        // nfsmw_nativo_frontal_perezoso: the whole scene to the front buffer of the last Swap, not read back.
        const int32_t maximo_lectura = REXCVAR_GET(nfsmw_nativo_leer_resueltas_texels);
        const bool se_lee = maximo_lectura > 0 && uint64_t(ancho) * alto <= uint64_t(maximo_lectura);
@@ -574,7 +598,7 @@ index dcd46c7..497e058 100644
        const bool frontal = frontal_perezoso && !frontal_apagado_ && base_resuelta == ultimo_frontal_ && !encoger &&
                             !se_lee && x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == resuelta->imagen.ancho &&
                             alto == resuelta->imagen.alto;
-@@ -1011,6 +1198,9 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -1011,6 +1205,9 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
          ++resuelta->imagen.version;
          SombraMinimoResueltaEscrita(base_resuelta);
          ++copias_;
@@ -584,7 +608,7 @@ index dcd46c7..497e058 100644
          if (encoger) {
            LeerResuelta(reg, resuelta->imagen, x0, y0, dx, dy, cabe_ancho, cabe_alto);
          } else {
-@@ -1021,7 +1211,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -1021,7 +1218,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
      }
    }
    // nfsmw_nativo_saltar_borrados_repetidos: the target already holds that value and nothing has been drawn since.
@@ -593,7 +617,7 @@ index dcd46c7..497e058 100644
    if (borrar_color && saltar_repetidos) {
      const uint64_t valor = uint64_t(reg.rb_color_clear) | (uint64_t(reg.rb_color_clear_lo) << 32);
      const auto it = borrado_previo_.find(destino_render->serie);
-@@ -1040,9 +1230,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -1040,9 +1237,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
      // painted from it, and a later clear makes this one unnecessary.
      destino_render->borrado_pendiente = true;
      ++borrados_;
@@ -609,7 +633,7 @@ index dcd46c7..497e058 100644
      } else {
        HacerBorradoPendiente(*destino_render);
      }
-@@ -1061,7 +1256,7 @@ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
+@@ -1061,7 +1263,7 @@ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
    }
    SombraMinimoAntesDeBorrar(*profundidad);
    profundidad->contenido_invalido = false;  // cleared: what a swap took away is no longer needed
@@ -618,7 +642,7 @@ index dcd46c7..497e058 100644
    EstadoBorrado& previo = borrado_previo_[profundidad->serie];
    if (saltar_repetidos && previo.dibujos == dibujados_ && previo.valor == reg.rb_depth_clear) {
      ++borrados_saltados_;
-@@ -1072,9 +1267,10 @@ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
+@@ -1072,9 +1274,10 @@ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
    profundidad->borrado_z = float(reg.rb_depth_clear >> 8) / 16777215.0f;
    profundidad->borrado_estencil = uint8_t(reg.rb_depth_clear & 0xFF);
    profundidad->borrado_pendiente = true;
@@ -630,7 +654,7 @@ index dcd46c7..497e058 100644
      return;
    }
    HacerBorradoPendiente(*profundidad);
-@@ -1101,7 +1297,7 @@ void RenderDk::HacerBorradoPendiente(ImagenDk& destino) {
+@@ -1101,7 +1304,7 @@ void RenderDk::HacerBorradoPendiente(ImagenDk& destino) {
  }
  
  uint32_t RenderDk::AltoDeBorrado(const ImagenDk& destino) const {
@@ -639,7 +663,25 @@ index dcd46c7..497e058 100644
    if (!area_util || !destino.alto_usado) {
      return destino.alto;
    }
-@@ -1273,7 +1469,7 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
+@@ -1241,13 +1444,10 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
+   }
+   const uint32_t pitch_destino = reg.rb_copy_dest_pitch & 0x3FFF;
+   const uint32_t alto_destino = (reg.rb_copy_dest_pitch >> 16) & 0x3FFF;
+-  const uint32_t base_x = uint32_t(x0) & ~uint32_t(31);
+-  const uint32_t base_y = uint32_t(y0) & ~uint32_t(31);
+-  const uint32_t base =
+-      (reg.rb_copy_dest_base + uint32_t(DesplazamientoMosaico2D(int32_t(base_x), int32_t(base_y), pitch_destino, 2))) &
+-      0x1FFFFFFF;
+-  const uint32_t dx = uint32_t(x0) - base_x;
+-  const uint32_t dy = uint32_t(y0) - base_y;
++  // At its own position in the texture at the copy's base, as for color (Copiar).
++  const uint32_t base = reg.rb_copy_dest_base & 0x1FFFFFFF;
++  const uint32_t dx = uint32_t(x0);
++  const uint32_t dy = uint32_t(y0);
+   const uint32_t formato_textura = ((info >> 16) & 0x1) ? 23 : 22;  // k_24_8_FLOAT : k_24_8
+   // Its width as for color (the pitch is padded to 32 texels; see Copiar).
+   const uint32_t ancho_resolve = uint32_t(x1 - x0);
+@@ -1273,7 +1473,7 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
    }
    HacerBorradoPendiente(*profundidad);
    CompletarBanda(*profundidad, uint32_t(std::max(y1, 0)), false, 0);
@@ -648,7 +690,7 @@ index dcd46c7..497e058 100644
    const bool entero = x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == profundidad->ancho &&
                        alto == profundidad->alto && resuelta->imagen.ancho == profundidad->ancho &&
                        resuelta->imagen.alto == profundidad->alto && resuelta->imagen.formato == profundidad->formato;
-@@ -1302,6 +1498,9 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
+@@ -1302,6 +1502,9 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
    ++resuelta->imagen.version;
    SombraMinimoResueltaEscrita(base);
    ++copias_;
@@ -658,7 +700,7 @@ index dcd46c7..497e058 100644
    OlvidarEstado();
  }
  
-@@ -1516,7 +1715,12 @@ const ImagenDk* RenderDk::CompaneraSombraCoches(bool capaz, uint32_t ps) {
+@@ -1516,7 +1719,12 @@ const ImagenDk* RenderDk::CompaneraSombraCoches(bool capaz, uint32_t ps) {
  void RenderDk::LeerResuelta(const RegistrosCopia& reg, const ImagenDk& imagen, int32_t x0, int32_t y0, uint32_t dx,
                              uint32_t dy, uint32_t ancho, uint32_t alto) {
    const int32_t maximo = REXCVAR_GET(nfsmw_nativo_leer_resueltas_texels);
@@ -672,7 +714,7 @@ index dcd46c7..497e058 100644
      return;
    }
    LecturasRanura& l = lecturas_[trabajo_ % kRanuras];
-@@ -1558,7 +1762,10 @@ void RenderDk::EscribirLecturas(uint32_t ranura) {
+@@ -1558,7 +1766,10 @@ void RenderDk::EscribirLecturas(uint32_t ranura) {
    for (const LecturaDk& p : l.pendientes) {
      dkMemBlockFlushCpuCache(lectura_bloque_, p.offset, p.ancho * p.alto * 4);  // what the GPU wrote, not the cache
      const uint8_t* const datos = lectura_cpu_ + p.offset;
@@ -684,7 +726,7 @@ index dcd46c7..497e058 100644
      const uint32_t orden_copia = p.info & 0x7;  // Endian128: 0-3 as xenos::Endian
      const auto orden = orden_copia <= 3 ? static_cast<xenos::Endian>(orden_copia) : xenos::Endian::k8in32;
      // Each texel is a permutation of its 4 bytes (R/B swap plus GpuSwap), computed once with marked bytes.
-@@ -1670,6 +1877,11 @@ bool RenderDk::CrearShadersSalida() {
+@@ -1670,6 +1881,11 @@ bool RenderDk::CrearShadersSalida() {
    }
    const deko::Compilador::Resultado color = compilador_.Compilar(false, kFsCopiaColor);
    fs_copia_color_valido_ = color.ok && nucleo_.CargarShader(fs_copia_color_, color.dksh, "copia de color");
@@ -696,7 +738,7 @@ index dcd46c7..497e058 100644
    const deko::Compilador::Resultado z = compilador_.Compilar(false, kFsCopiaProfundidad);
    fs_copia_profundidad_valido_ = z.ok && nucleo_.CargarShader(fs_copia_profundidad_, z.dksh, "copia de profundidad");
    if (!fs_copia_color_valido_ || !fs_copia_profundidad_valido_) {
-@@ -1803,6 +2015,24 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
+@@ -1803,6 +2019,24 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
  }
  
  bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) {
@@ -721,7 +763,7 @@ index dcd46c7..497e058 100644
    RexSwitchPerfCount(0);  // the profiler's "juego N fps"
    const uint64_t ahora = deko::AhoraNs();
    if (ultimo_swap_ns_) {
-@@ -2286,4 +2516,186 @@ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* prov
+@@ -2286,4 +2520,186 @@ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* prov
    return std::make_unique<RenderDk>(*proveedor, memoria, hooks);
  }
  
@@ -1107,7 +1149,7 @@ index e3fb6f1..5d8264e 100644
          dkCmdBufDrawIndexed(cmd, primitiva, n_indices, 1, 0, -int32_t(vmin), 0);
        } else {
 diff --git a/src/x360/deko/texturas.cpp b/src/x360/deko/texturas.cpp
-index 8118904..3c1c004 100644
+index 8118904..f895fc8 100644
 --- a/src/x360/deko/texturas.cpp
 +++ b/src/x360/deko/texturas.cpp
 @@ -93,6 +93,35 @@ void LeerNivelMosaicoDeSiempre(const uint8_t* origen, uint32_t pitch_bloques, ui
@@ -1179,7 +1221,7 @@ index 8118904..3c1c004 100644
    if (imagen.profundidad) {
      v.dsSource = DkDsSource_Depth;
    }
-@@ -224,6 +261,47 @@ uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint1
+@@ -224,6 +261,75 @@ uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint1
    return ranura;
  }
  
@@ -1224,10 +1266,38 @@ index 8118904..3c1c004 100644
 +  return &c.imagen;
 +}
 +
++const ImagenDk* RenderDk::ResueltaRecortada(const ImagenDk& resuelta, uint32_t ancho, uint32_t alto) {
++  if (recortadas_.size() > 64) {  // resolves recreated at other sizes leave theirs behind
++    for (auto& [clave, c] : recortadas_) {
++      DestruirImagen(c.imagen);
++    }
++    recortadas_.clear();
++  }
++  ConvertidaSigno& c = recortadas_[(resuelta.serie << 28) | (uint64_t(ancho) << 14) | alto];
++  if (!c.imagen.viva) {
++    if (!CrearImagen(c.imagen, DkImageType_2D, resuelta.formato, ancho, alto, 1, 1,
++                     DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine, "resuelta recortada")) {
++      return nullptr;
++    }
++    REXLOG_INFO("[deko3d] resuelta {}x{} leida como {}x{}: copia de su esquina", resuelta.ancho, resuelta.alto, ancho,
++                alto);
++  }
++  c.imagen.intercambio_rb = resuelta.intercambio_rb;
++  if (c.version != resuelta.version) {
++    if (!Copiar3D(resuelta, 0, 0, ancho, alto, c.imagen, 0, 0)) {
++      return nullptr;
++    }
++    OlvidarEstado();  // the copy bound its own target and shaders; the draw binds its pass again
++    c.version = resuelta.version;
++    ++c.imagen.version;
++  }
++  return &c.imagen;
++}
++
  uint32_t RenderDk::VaciaDe(uint16_t tipo_shader) const {
    return TipoVolumen(tipo_shader) ? 1 : TipoCubo(tipo_shader) ? 2 : 0;
  }
-@@ -394,23 +472,42 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -394,23 +500,52 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
      return VaciaDe(tipo_shader);
    }
    const uint32_t dimension = (f[5] >> 9) & 0x3;
@@ -1270,12 +1340,22 @@ index 8118904..3c1c004 100644
    const uint32_t base = (f[1] >> 12) << 12;
    if (!cubo && !volumen) {
 -    if (const ImagenDk* resuelta = TexturaResuelta(base & 0x1FFFFFFF)) {
-+    if (const ImagenDk* resuelta =
-+            TexturaResuelta(base & 0x1FFFFFFF, (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1)) {
++    const uint32_t ancho_fetch = (f[2] & 0x1FFF) + 1, alto_fetch = ((f[2] >> 13) & 0x1FFF) + 1;
++    if (const ImagenDk* resuelta = TexturaResuelta(base & 0x1FFFFFFF, ancho_fetch, alto_fetch)) {
++      // Read smaller than it is: its corner of the fetch's size (Dead Space 2's 320x180 blur levels live in
++      // 640-wide textures; sampled whole, the final image came out in stretched vertical strips).
++      if (!resuelta->profundidad && ancho_fetch <= resuelta->ancho && alto_fetch <= resuelta->alto &&
++          (ancho_fetch < resuelta->ancho || alto_fetch < resuelta->alto)) {
++        if (const ImagenDk* recortada = ResueltaRecortada(*resuelta, ancho_fetch, alto_fetch)) {
++          resuelta = recortada;
++          // Looked at again on every draw: a resolve later in the frame must reach the copy.
++          valido_hasta = fotograma_ ? fotograma_ - 1 : 0;
++        }
++      }
        // Resolved textures report their size like any other (without it the shadow PCF taps collapse).
        ancho_out = resuelta->ancho;
        alto_out = resuelta->alto;
-@@ -421,7 +518,16 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -421,7 +556,16 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
        }
        // The emulation's copy swaps channels in memory (copy_dest_swap) and the fetch swizzle undoes it; here the copy
        // is image to image, so the swap goes into the host channels.
@@ -1293,7 +1373,7 @@ index 8118904..3c1c004 100644
      }
    }
    const uint32_t formato = f[1] & 0x3F;
-@@ -430,6 +536,10 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -430,6 +574,10 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
      Avisar(400 + formato, "formato de textura todavia no soportado: se usa una vacia");
      return VaciaDe(tipo_shader);
    }
@@ -1304,7 +1384,7 @@ index 8118904..3c1c004 100644
    // size_2d: 13 + 13 bits; size_3d: 11 + 11 + 10 bits (xenos.h).
    const uint32_t ancho = volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1;
    const uint32_t alto = volumen ? ((f[2] >> 11) & 0x7FF) + 1 : ((f[2] >> 13) & 0x1FFF) + 1;
-@@ -447,7 +557,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -447,7 +595,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
    const uint64_t zancada_cara =
        (uint64_t((pitch_bloques + 31) & ~uint32_t(31)) * tf.bytes * ((bloques_y + 31) & ~uint32_t(31)) + 4095) &
        ~uint64_t(4095);
@@ -1313,7 +1393,7 @@ index 8118904..3c1c004 100644
    const uint64_t clave = XXH3_64bits(claves, sizeof(claves));
  
    // Mip levels with the rules of GetSubresourcesFromFetchConstant: no mip address, no mips; the maximum clamped to the
-@@ -455,7 +565,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -455,7 +603,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
    static const bool mipmaps = REXCVAR_GET(nfsmw_nativo_mipmaps);
    const bool mosaico = (f[0] >> 31) & 0x1;
    const uint64_t dir_base = uint64_t(base) & 0x1FFFFFFF;
@@ -1322,7 +1402,7 @@ index 8118904..3c1c004 100644
    const uint32_t nivel_empaquetado =
        mipmaps && !volumen && ((f[5] >> 11) & 0x1) ? NivelEmpaquetado(ancho, alto) : UINT32_MAX;
    uint32_t nivel_max = 0;
-@@ -573,6 +683,75 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -573,6 +721,75 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
      }
    }
  
@@ -1398,7 +1478,7 @@ index 8118904..3c1c004 100644
    TexturaDk& textura = texturas_[clave];
    if (!textura.imagen.viva) {
      // BC: the size in whole blocks, as the Vulkan backend (the shaders' 1/size is the host size).
-@@ -598,7 +777,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -598,7 +815,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
                    ((f[0] >> 22) & 0x1FF) << 5, swizzle, cubo ? " (cubo)" : volumen ? " (3D)" : "", niveles);
      }
    }
