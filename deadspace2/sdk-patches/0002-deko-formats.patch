@@ -1,17 +1,18 @@
 diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
-index 4cffec3..4dec1c0 100644
+index 4cffec3..449a1cc 100644
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
-@@ -29,6 +29,8 @@
+@@ -29,6 +29,9 @@
  #include <mutex>
  #include <string>
  #include <thread>
 +#include <map>
++#include <set>
 +#include <tuple>
  #include <unordered_map>
  #include <unordered_set>
  #include <vector>
-@@ -131,6 +133,16 @@ struct EntradaVerticesDk {
+@@ -131,6 +134,16 @@ struct EntradaVerticesDk {
      uint32_t ubicacion, enlace, offset;
    };
    std::vector<Atributo> lista;  // for the diagnostics: the position's stream
@@ -28,7 +29,7 @@ index 4cffec3..4dec1c0 100644
  };
  
  class RenderDk final : public DestinosNativos {
-@@ -151,6 +163,7 @@ class RenderDk final : public DestinosNativos {
+@@ -151,6 +164,7 @@ class RenderDk final : public DestinosNativos {
    }
    void EstadisticasOclusion(uint64_t valores[5]) const override;
    bool Dibujar(const PeticionDibujo& peticion) override;  // nfsmw_dk_dibujos.cpp
@@ -36,7 +37,7 @@ index 4cffec3..4dec1c0 100644
    EstadisticasDibujos EstadisticasDeDibujos() const override;
    void EsperarSubidas() override {}  // vertices are copied on the ring thread, before Dibujar returns
    uint64_t CopiasProfundidad() const override { return copias_profundidad_; }
-@@ -206,25 +219,62 @@ class RenderDk final : public DestinosNativos {
+@@ -206,25 +220,63 @@ class RenderDk final : public DestinosNativos {
    // engine (0.78 ms per Mpixel), keeps compressed images compressed, and orders against draws with Fragments barriers
    // instead of Full ones. rop_sin_barrera_: render target writes since the last barrier that made them visible to
    // sampling; copia3d_pendiente_: a copy since then, which the next draw or clear waits for.
@@ -62,6 +63,7 @@ index 4cffec3..4dec1c0 100644
 +  // a copy of its top-left corner at the fetch's size, so normalized coordinates cover what the game means.
 +  const ImagenDk* ResueltaRecortada(const ImagenDk& resuelta, uint32_t ancho, uint32_t alto);
 +  std::unordered_map<uint64_t, ConvertidaSigno> recortadas_;
++  std::set<uint32_t> sesgos_vistos_;  // depth-only target widths whose bias was logged (Dibujar)
 +  // A 3D texture whose slices are resolved textures (Dead Space 2's color grading LUT, Copiar): its host image and the
 +  // version of each slice it holds.
 +  struct VolumenResuelto {
@@ -103,7 +105,7 @@ index 4cffec3..4dec1c0 100644
    Resuelta* ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato, bool intercambio_rb,
                              bool profundidad);
    bool CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat formato, uint32_t ancho, uint32_t alto,
-@@ -393,7 +443,9 @@ class RenderDk final : public DestinosNativos {
+@@ -393,7 +445,9 @@ class RenderDk final : public DestinosNativos {
    // check; resolved textures and cubemaps, this frame only).
    uint32_t PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint32_t& ancho, uint32_t& alto, bool& puntual,
                             uint64_t& valido_hasta);
@@ -114,7 +116,7 @@ index 4cffec3..4dec1c0 100644
    uint32_t SamplerDe(const uint32_t* f, bool puntual);
    uint32_t VaciaDe(uint16_t tipo_shader) const;
    bool LeerNivel(uint64_t direccion, bool mosaico, uint32_t pitch_bloques, uint64_t fila_bytes, const FormatoDk& tf,
-@@ -422,6 +474,12 @@ class RenderDk final : public DestinosNativos {
+@@ -422,6 +476,12 @@ class RenderDk final : public DestinosNativos {
    std::unordered_map<uint64_t, ImagenDk> destinos_;
    std::unordered_map<uint64_t, ImagenDk> profundidades_;
    std::unordered_map<uint32_t, Resuelta> resueltas_;
@@ -127,7 +129,7 @@ index 4cffec3..4dec1c0 100644
    // Read-backs: kBytesLecturaRanura per work slot in one CPU-cached, GPU-uncached block
    std::vector<LecturasRanura> lecturas_;
    DkMemBlock lectura_bloque_ = nullptr;
-@@ -703,4 +761,8 @@ class RenderDk final : public DestinosNativos {
+@@ -703,4 +763,8 @@ class RenderDk final : public DestinosNativos {
  std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
                                                      rex::x360::RenderHooks& hooks);  // default in nfsmw_dk_destinos.h
  
@@ -951,10 +953,21 @@ index dcd46c7..4e90dce 100644
 +
  }  // namespace rex::x360
 diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
-index e3fb6f1..5d8264e 100644
+index e3fb6f1..f9070e6 100644
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
-@@ -266,9 +266,17 @@ void IndicesDe32(const uint8_t* datos, uint32_t cuenta, bool indices32, xenos::E
+@@ -49,6 +49,10 @@ REXCVAR_DEFINE_INT32(nfsmw_nativo_sombras_sesgo_constante, 0, "NFSMW",
+                      "Renderizador nativo (25/09, build 181): desplazamiento de profundidad constante en el mapa de "
+                      "sombras, en miles de unidades de 24 bits (1 = 1000). 0 = sin constante. Se cambia en marcha")
+     .range(0, 1000);
++REXCVAR_DEFINE_INT32(nfsmw_dk_sombras_sesgo_pitch, 1600, "NFSMW",
++                     "Ancho minimo de un destino solo de profundidad para darle el sesgo de sombras de arriba cuando el "
++                     "juego no pone ninguno (1600 = el mapa de NFS; Dead Space 2 usa 960)")
++    .range(64, 8192);
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_saltar_invisibles, true, "NFSMW",
+                     "Renderizador nativo (20/09): saltarse los dibujos que no pueden cambiar ni un pixel (mezcla que "
+                     "copia el destino, o prueba de alfa con la funcion NUNCA)");
+@@ -266,9 +270,17 @@ void IndicesDe32(const uint8_t* datos, uint32_t cuenta, bool indices32, xenos::E
        std::memcpy(&crudo, datos + size_t(i) * 4, 4);
        v = xenos::GpuSwap(crudo, orden) & 0xFFFFFF;
      } else {
@@ -975,7 +988,7 @@ index e3fb6f1..5d8264e 100644
      }
      if (reinicio && v == indice_reinicio) {
        if constexpr (kEscribir) {
-@@ -499,6 +507,33 @@ bool RenderDk::CalcularEntrada(const PeticionDibujo& p, EntradaVerticesDk& entra
+@@ -499,6 +511,33 @@ bool RenderDk::CalcularEntrada(const PeticionDibujo& p, EntradaVerticesDk& entra
      const uint32_t formato = (d1 >> 16) & 0x3F;
      const uint32_t zancada = (d2 & 0xFF) * 4;
      const int32_t offset = (int32_t(d2 << 1) >> 9) * 4;
@@ -1009,7 +1022,7 @@ index e3fb6f1..5d8264e 100644
      const int32_t ubicacion = UbicacionDeUso(elemento.uso, elemento.indice_uso);
      if (ubicacion < 0 || ubicacion >= 16 || ((ubicaciones_usadas >> ubicacion) & 0x1)) {
        Avisar(22, "elemento de vertices sin ubicacion libre en el shader: se omite");
-@@ -1059,6 +1094,11 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1059,6 +1098,11 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
      case 13:
        primitiva = DkPrimitive_Quads;  // native (the Vulkan backend makes triangle lists of them)
        break;
@@ -1021,7 +1034,7 @@ index e3fb6f1..5d8264e 100644
      default:
        return Rechazar(100 + tipo, "tipo de primitiva todavia no soportado");
    }
-@@ -1093,8 +1133,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1093,8 +1137,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
      }
      const uint32_t info = r[kInfoColor[i]];
      const uint32_t formato = (info >> 16) & 0xF;
@@ -1031,7 +1044,7 @@ index e3fb6f1..5d8264e 100644
        return Rechazar(200 + formato, "formato de destino de color todavia no soportado");
      }
      claves[i] = (uint64_t(1) << 63) | (uint64_t(info & 0xFFF) << 24) | (uint64_t(formato) << 16) | pitch;
-@@ -1103,7 +1142,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1103,7 +1146,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
    }
    const uint32_t control_profundidad = r[gr::XE_GPU_REG_RB_DEPTHCONTROL];
    // Draws that cannot change a pixel (nfsmw_nativo_saltar_invisibles; the Vulkan backend explains both cases).
@@ -1040,7 +1053,7 @@ index e3fb6f1..5d8264e 100644
    if (saltar_invisibles && mascaras) {
      const uint32_t control_color = r[gr::XE_GPU_REG_RB_COLORCONTROL];
      const bool alfa_nunca = ((control_color >> 3) & 0x1) && (control_color & 0x7) == 0;
-@@ -1133,7 +1172,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1133,7 +1176,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
    if (!mascaras && ps) {
      const uint32_t control_color = r[gr::XE_GPU_REG_RB_COLORCONTROL];
      const bool prueba_alfa = ((control_color >> 3) & 0x1) && (control_color & 0x7) != 7;
@@ -1049,7 +1062,27 @@ index e3fb6f1..5d8264e 100644
      if (!prueba_alfa && !ps->descarta && !(ps->salidas & 0x10)) {
        if (sin_ps_sin_color) {
          ps = nullptr;
-@@ -1450,7 +1489,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1174,7 +1217,18 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+                                                 ? float(uint32_t(1) << 24)
+                                                 : float((uint32_t(1) << 24) - 1)),
+                     escala_sesgo * (1.0f / 16.0f)};
+-  if (destino_sombras && tipo >= 4 && sesgo[0] == 0.0f && sesgo[1] == 0.0f) {
++  // A depth-only target as wide as a shadow map: what bias the game draws it with, once per width (to check).
++  const bool solo_z = claves[4] && !claves[0] && !claves[1] && !claves[2] && !claves[3];
++  if (solo_z && tipo >= 4 && pitch >= 512 && sesgos_vistos_.insert(pitch).second) {
++    REXLOG_INFO("[deko3d] solo profundidad, ancho {}: PA_SU_SC_MODE_CNTL {:08X}, sesgo delante {} / {}, detras {} / {}",
++                pitch, modo_sc, Flotante(r[gr::XE_GPU_REG_PA_SU_POLY_OFFSET_FRONT_SCALE]),
++                Flotante(r[gr::XE_GPU_REG_PA_SU_POLY_OFFSET_FRONT_OFFSET]),
++                Flotante(r[gr::XE_GPU_REG_PA_SU_POLY_OFFSET_BACK_SCALE]),
++                Flotante(r[gr::XE_GPU_REG_PA_SU_POLY_OFFSET_BACK_OFFSET]));
++  }
++  const bool sombras_sesgo =
++      destino_sombras || (solo_z && pitch >= uint32_t(REXCVAR_GET(nfsmw_dk_sombras_sesgo_pitch)));
++  if (sombras_sesgo && tipo >= 4 && sesgo[0] == 0.0f && sesgo[1] == 0.0f) {
+     sesgo[0] = float(REXCVAR_GET(nfsmw_nativo_sombras_sesgo_constante)) * 1000.0f;
+     sesgo[1] = float(REXCVAR_GET(nfsmw_nativo_sombras_sesgo_pendiente)) * 0.1f;
+   }
+@@ -1450,7 +1504,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
    // --- Specialization and shared constants
    uint32_t especializacion = entrada->especializacion;
    static const bool inv_tamano = REXCVAR_GET(nfsmw_nativo_inv_tamano_tex);
@@ -1058,7 +1091,7 @@ index e3fb6f1..5d8264e 100644
    if (inv_tamano) {
      especializacion |= kSpecInvTamanoTex;
    }
-@@ -1511,6 +1550,10 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1511,6 +1565,10 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
    compartidas[69] = funcion_alfa;
    std::memcpy(&compartidas[70], ndc, sizeof(ndc));
    std::copy(entrada->remapeos.begin(), entrada->remapeos.end(), compartidas + 74);
@@ -1069,7 +1102,7 @@ index e3fb6f1..5d8264e 100644
  
    // --- The deferred sky (nfsmw_nativo_cielo_aplazado; the Vulkan path's criteria, explained there). The dome is the
    // sky's pixel shader, opaque, testing depth without writing it, no stencil, 480 indices, the first draw of the
-@@ -1541,7 +1584,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1541,7 +1599,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
        REXLOG_WARN("[deko3d] cielo: la guardia ve {} domos en el MISMO fotograma; no se aplaza nada en la sesion",
                    cielo_guardia_en_fotograma_);
      }
@@ -1078,7 +1111,7 @@ index e3fb6f1..5d8264e 100644
      es_cielo = aplazar_cielo && es_el_domo && cielo_guardia_ == kCieloAplazando;
    }
    if (cielo_pendiente_ && (es_cielo || !(opaco_en_todos && escribe_z_dibujo))) {
-@@ -1773,6 +1816,47 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1773,6 +1831,47 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
    for (size_t b = 0; b < entrada->enlaces.size(); ++b) {
      dkCmdBufBindVtxBuffers(cmd, uint32_t(b), &bufers[b], 1);
    }
@@ -1126,7 +1159,7 @@ index e3fb6f1..5d8264e 100644
    cortar_etapa(3);
    DkGpuAddr dir_indices = 0;
    if (con_indices) {
-@@ -1797,7 +1881,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1797,7 +1896,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
      dkCmdBufBindIdxBuffer(cmd, indices_de_16 ? DkIdxFormat_Uint16 : DkIdxFormat_Uint32, dir_indices);
    }
    cortar_etapa(4);
@@ -1135,7 +1168,7 @@ index e3fb6f1..5d8264e 100644
    if (por_diferencias && !es_cielo) {
      constexpr uint32_t kBloqueCompartidas = 512;  // dkCmdBufPushConstants wants the block size in 256-byte steps
      if (bloques_trabajo_ != trabajo_) {
-@@ -1987,6 +2071,12 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1987,6 +2086,12 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
          }
          dkCmdBufReportCounter(cmd, DkCounter_Timestamp, marca_vez);
        }

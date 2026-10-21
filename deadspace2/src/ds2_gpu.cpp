@@ -85,6 +85,8 @@ REXCVAR_DECLARE(bool, switch_omitir_pedido);   // ZL + ZR + Right: next draw-ski
 // drop colorless draws that alpha-test or discard, which here are ordinary depth-only draws. Off for Dead Space 2.
 REXCVAR_DECLARE(bool, nfsmw_sombras_sin_vegetacion);
 REXCVAR_DECLARE(bool, nfsmw_nativo_ps_solo_alfa);
+// The renderer's shadow-map depth bias, given when the game sets none: Dead Space 2's shadow maps are 960 wide.
+REXCVAR_DECLARE(int32_t, nfsmw_dk_sombras_sesgo_pitch);
 // The renderer's sampled change checks of geometry and textures stay at the SDK's defaults (sampled). Full fingerprints
 // were tried against the streaks (which were the vertex index and the computed-index fetches, not stale vertices):
 // they hashed 14-20 MB of vertices a frame and the ring thread went from 9 % to 40 % of a core.
@@ -246,6 +248,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 #if DS2_DEKO3D
     REXCVAR_SET(nfsmw_sombras_sin_vegetacion, false);
     REXCVAR_SET(nfsmw_nativo_ps_solo_alfa, false);
+    REXCVAR_SET(nfsmw_dk_sombras_sesgo_pitch, 960);
     // Telemetry (automatic captures, frame dumps, per-draw traces of light frames, CPU stack sampling) only with
     // telemetria.flag next to the NRO: it costs frames (the stack sampler stops every thread each millisecond).
     {

@@ -1,5 +1,5 @@
 diff --git a/src/input/switch/switch_input_driver.cpp b/src/input/switch/switch_input_driver.cpp
-index ccf5e2a..dcc9ddb 100644
+index ccf5e2a..6992a9a 100644
 --- a/src/input/switch/switch_input_driver.cpp
 +++ b/src/input/switch/switch_input_driver.cpp
 @@ -18,6 +18,27 @@
@@ -52,7 +52,14 @@ index ccf5e2a..dcc9ddb 100644
      gamepad.thumb_rx = static_cast<int16_t>(0);
      gamepad.thumb_ry = static_cast<int16_t>(0);
    }
-@@ -348,15 +369,15 @@ extern "C" void RexSwitchPerfToggleAb(void);
+@@ -343,20 +364,23 @@ void SwitchInputDriver::Poll(size_t index) {
+ 
+ /* From the profiler (switch_perf.cpp): turns the GPU A/B test lap on and off. */
+ extern "C" void RexSwitchPerfToggleAb(void);
++/* From the profiler too: stack sampling on and off (returns the new state). */
++extern "C" bool RexSwitchPerfToggleStacks(void);
+ /*
+  * The SDK menus, on the controller
   *
   * On the PC they are function keys (see RegisterBind in rex_app.cpp): F3 debug,
   * F4 settings, F7 achievements and the tilde key for the log console. The Switch
@@ -72,11 +79,12 @@ index ccf5e2a..dcc9ddb 100644
 + *   ZL + ZR + Down  -> log console
 + *   ZL + ZR + Left  -> achievements
 + *   ZL + ZR + L     -> GPU A/B test lap (for measuring, not for playing)
++ *   ZL + ZR + R     -> CPU stack sampling on/off (logs/rex/rex_perfil.log; costs frames while on)
 + *   ZL + ZR + right stick -> moves the debug overlay if it is open
   *                          (its position is saved; see Poll and debug_overlay.cpp)
   *
   * It fires once per press, not while held: each shortcut stores its bit in
-@@ -367,7 +388,7 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -367,7 +391,7 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
      uint64_t boton;
      rex::ui::VirtualKey tecla;
    };
@@ -85,7 +93,7 @@ index ccf5e2a..dcc9ddb 100644
    static const Atajo kAtajos[] = {
        {HidNpadButton_Up, rex::ui::VirtualKey::kF3},
        {HidNpadButton_Right, rex::ui::VirtualKey::kF4},
-@@ -380,7 +401,20 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -380,7 +404,20 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
      const uint64_t bit = uint64_t(1) << i;
      const bool ahora = modificador && (held & kAtajos[i].boton) != 0;
      const bool antes = (slot.menu_shortcuts & bit) != 0;
@@ -107,7 +115,7 @@ index ccf5e2a..dcc9ddb 100644
        /*
         * Each shortcut creates or destroys an ImGui menu, and the UI thread
         * draws them continuously while any is open. From this game thread a
-@@ -402,12 +436,12 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -402,12 +439,12 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
    }
  
    /*
@@ -122,6 +130,23 @@ index ccf5e2a..dcc9ddb 100644
    const bool ab_antes = (slot.menu_shortcuts & kBitAb) != 0;
    if (ab_ahora && !ab_antes) {
      RexSwitchPerfToggleAb();
+@@ -415,6 +452,16 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+   }
+   slot.menu_shortcuts = ab_ahora ? (slot.menu_shortcuts | kBitAb)
+                                  : (slot.menu_shortcuts & ~kBitAb);
++
++  // ZL+ZR+R: the profiler's stack sampling, as perfil_pilas.flag but during play.
++  const uint64_t kBitPilas = uint64_t(1) << 9;
++  const bool pilas_ahora = modificador && (held & HidNpadButton_R) != 0;
++  const bool pilas_antes = (slot.menu_shortcuts & kBitPilas) != 0;
++  if (pilas_ahora && !pilas_antes) {
++    const bool activo = RexSwitchPerfToggleStacks();
++    REXLOG_INFO("atajo de menu: muestreo de pilas {}", activo ? "activo" : "apagado");
++  }
++  slot.menu_shortcuts = pilas_ahora ? (slot.menu_shortcuts | kBitPilas) : (slot.menu_shortcuts & ~kBitPilas);
+ }
+ 
+ SwitchInputDriver::Slot* SwitchInputDriver::FindSlot(DeviceId id) {
 diff --git a/src/ui/deko3d/presentador.cpp b/src/ui/deko3d/presentador.cpp
 index cdf084b..52e1536 100644
 --- a/src/ui/deko3d/presentador.cpp
@@ -365,3 +390,48 @@ index d1b2a1c..73742e6 100644
        debug_overlay_->SetPositionFile(config_path_.parent_path() / "overlay_depuracion.txt");
  #endif
      }
+diff --git a/src/ui/switch_perf.cpp b/src/ui/switch_perf.cpp
+index 6b3d30a..9533019 100644
+--- a/src/ui/switch_perf.cpp
++++ b/src/ui/switch_perf.cpp
+@@ -232,6 +232,22 @@ extern "C" void RexSwitchPerfToggleAb(void) {
+   }
+ }
+ 
++/*
++ * Stack sampling (1 ms, invasive), on from the start with perfil_pilas.flag or switched on and off during play with
++ * ZL+ZR+R (switch_input_driver.cpp): no file to copy to the card for one profiling run.
++ */
++std::atomic<bool> g_muestrear_pilas{false};
++
++extern "C" bool RexSwitchPerfToggleStacks(void) {
++  const bool nuevo = !g_muestrear_pilas.load(std::memory_order_relaxed);
++  g_muestrear_pilas.store(nuevo, std::memory_order_relaxed);
++  if (FILE* f = std::fopen(ReportPath().c_str(), "a")) {
++    std::fprintf(f, "\nMuestreo de pilas: %s (atajo ZL+ZR+R)\n", nuevo ? "activo (1 ms)" : "desactivado");
++    std::fclose(f);
++  }
++  return nuevo;
++}
++
+ /*
+  * Horizon limits how much memory a process may map (LimitableResource_Memory). Our
+  * guest memory model maps each chunk several times (the shadow and once per 360
+@@ -808,6 +824,9 @@ void ProfilerMain(void*) {
+     sample_stacks = true;
+     std::fclose(flag);
+   }
++  if (sample_stacks) {
++    g_muestrear_pilas.store(true, std::memory_order_relaxed);
++  }
+ 
+   u64 counters_last[kCounterCount]{};
+   for (unsigned i = 0; i < kCounterCount; ++i) {
+@@ -831,6 +850,7 @@ void ProfilerMain(void*) {
+   size_t rr = 0;
+   size_t mode_index = 0;
+   while (true) {
++    sample_stacks = g_muestrear_pilas.load(std::memory_order_relaxed);
+     __real_svcSleepThread(sample_stacks ? kSampleIntervalNs : kPassiveIntervalNs);
+ 
+     for (size_t tries = 0; sample_stacks && tries < kMaxThreads; ++tries) {
