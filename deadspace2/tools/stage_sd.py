@@ -2,8 +2,7 @@
 """Make the SD card folder for deadspace2 from your own discs and title update.
 
     python3 stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" [--disc2 "Dead Space 2 (Disc 2).iso"] \
-        --tu <TU2 package or its disc001/default.xexp> --ds2-recomp <Dead-Space-2-Recomp checkout> \
-        -o <out>/ds2-nx
+        --tu <TU2 package or its disc001/default.xexp> -o <out>/ds2-nx
 
 Writes, beside where the NRO goes (src/ds2_app.h reads this layout):
     ds2-nx/disc1/   the extracted Disc 1 (bigfile0.viv 3.3 GB and bigfile1.viv 3.4 GB: under FAT32's 4 GB)
@@ -12,7 +11,9 @@ Writes, beside where the NRO goes (src/ds2_app.h reads this layout):
 
 Every input is checked against the hashes the recompiled code was made from (the same pins as
 Dead-Space-2-Recomp's launcher): the code is TU2, so any other executable or patch would not match it.
-Only the standard library; the title update package is read with Dead-Space-2-Recomp's tools/extract_dlc.py.
+Only the standard library (the title update package is read by the small STFS reader below). The title update is the
+one with Media ID 2915C8F8 (TU_12K226V_000000C000000.00000000000G3); the other regional TU2 packages carry another
+executable.
 """
 import argparse
 import hashlib
@@ -97,35 +98,78 @@ def extract(iso: Path, out: Path) -> None:
 
 
 # --- Title update ------------------------------------------------------------------------------------------
-def read_xexp(path: Path, ds2_recomp: Path) -> bytes:
+class Stfs:
+    """The parts of an Xbox 360 STFS package (CON/LIVE/PIRS) needed to read one file from it."""
+
+    BLOCK = 0x1000
+
+    def __init__(self, path: Path):
+        self.f = open(path, "rb")
+        head = self.read(0, 0x3A0)
+        if head[:4] not in (b"CON ", b"LIVE", b"PIRS"):
+            sys.exit(f"{path} is not an Xbox 360 package (STFS)")
+        self.title_id = struct.unpack_from(">I", head, 0x360)[0]
+        header_size = struct.unpack_from(">I", head, 0x340)[0]
+        self.data = (header_size + 0xFFF) & ~0xFFF
+        volume = head[0x379:0x379 + 0x24]
+        # Read-only packages keep one hash table per level, the others two.
+        self.tables = 1 if volume[2] & 1 else 2
+        self.table_blocks = struct.unpack_from("<H", volume, 3)[0]
+        self.table_start = int.from_bytes(volume[5:8], "little")
+
+    def read(self, offset: int, n: int) -> bytes:
+        self.f.seek(offset)
+        return self.f.read(n)
+
+    def block(self, b: int) -> bytes:
+        # Data blocks are numbered without the hash table blocks between them: one level 0 table every 0xAA blocks,
+        # one level 1 every 0x70E4, one level 2 every 0x4AF768.
+        backing = b + (b + 0xAA) // 0xAA * self.tables
+        if b >= 0xAA:
+            backing += (b + 0x70E4) // 0x70E4 * self.tables
+            if b >= 0x70E4:
+                backing += (b + 0x4AF768) // 0x4AF768 * self.tables
+        return self.read(self.data + backing * self.BLOCK, self.BLOCK)
+
+    def entries(self) -> list:
+        out = []
+        for k in range(self.table_blocks):
+            table = self.block(self.table_start + k)
+            for i in range(0, self.BLOCK, 0x40):
+                e = table[i:i + 0x40]
+                if not e[0]:
+                    continue
+                flags = e[0x28]
+                out.append({"name": e[:flags & 0x3F].decode("latin-1"), "dir": bool(flags & 0x80),
+                            "contig": bool(flags & 0x40), "blocks": int.from_bytes(e[0x29:0x2C], "little"),
+                            "start": int.from_bytes(e[0x2F:0x32], "little"),
+                            "parent": struct.unpack_from(">h", e, 0x32)[0],
+                            "size": struct.unpack_from(">I", e, 0x34)[0]})
+        return out
+
+
+def read_xexp(path: Path) -> bytes:
     if path.stat().st_size < 16 << 20:
         data = path.read_bytes()
         if sha256(data) == XEXP_SHA:
             return data
-    sys.path.insert(0, str(ds2_recomp / "tools"))
-    from extract_dlc import Package  # Dead-Space-2-Recomp's STFS reader
-
-    pkg = Package(path)
+    pkg = Stfs(path)
     try:
         if pkg.title_id != TITLE_ID:
             sys.exit(f"{path} is not a Dead Space 2 package")
         entries = pkg.entries()
-        names = {}
-        for i, e in enumerate(entries):
-            if e is None:
+        for e in entries:
+            parent = entries[e["parent"]]["name"] if 0 <= e["parent"] < len(entries) else ""
+            if e["dir"] or f"{parent}/{e['name']}".casefold() != "disc001/default.xexp":
                 continue
-            parts, j = [e["name"]], e["parent"]
-            while 0 <= j < len(entries) and entries[j] and len(parts) < 16:
-                parts.insert(0, entries[j]["name"])
-                j = entries[j]["parent"]
-            names[i] = "/".join(parts).casefold()
-        for i, name in names.items():
-            e = entries[i]
-            if name == "disc001/default.xexp" and not e["dir"]:
-                data = b"".join(pkg.blocks(e["start"], e["blocks"], e["contig"]))[:e["size"]]
-                if sha256(data) != XEXP_SHA:
-                    sys.exit("disc001/default.xexp is not Title Update 2 (hash mismatch)")
-                return data
+            if not e["contig"]:
+                sys.exit("disc001/default.xexp is fragmented in this package: extract it with another tool and pass "
+                         "the .xexp file to --tu")
+            data = b"".join(pkg.block(e["start"] + k) for k in range(e["blocks"]))[:e["size"]]
+            if sha256(data) != XEXP_SHA:
+                sys.exit("disc001/default.xexp is not the Title Update 2 this port needs (hash mismatch): use the "
+                         "package with Media ID 2915C8F8")
+            return data
         sys.exit(f"{path} has no disc001/default.xexp")
     finally:
         pkg.f.close()
@@ -136,11 +180,14 @@ def main() -> None:
     ap.add_argument("--disc1", type=Path, required=True)
     ap.add_argument("--disc2", type=Path)
     ap.add_argument("--tu", type=Path, required=True, help="TU2 package, or its disc001/default.xexp")
-    ap.add_argument("--ds2-recomp", type=Path, default=Path("."), help="Dead-Space-2-Recomp checkout")
+    ap.add_argument("--ds2-recomp", type=Path, help=argparse.SUPPRESS)  # no longer needed, accepted as before
     ap.add_argument("-o", "--out", type=Path, required=True)
     a = ap.parse_args()
+    for name, path in (("--disc1", a.disc1), ("--disc2", a.disc2), ("--tu", a.tu)):
+        if path is not None and not path.is_file():
+            sys.exit(f"{name}: {path} not found")
 
-    xexp = read_xexp(a.tu, a.ds2_recomp)
+    xexp = read_xexp(a.tu)
     print("  TU2 default.xexp: ok")
     extract(a.disc1, a.out / "disc1")
     xex = (a.out / "disc1" / "default.xex").read_bytes()
@@ -152,7 +199,7 @@ def main() -> None:
     tu.mkdir(parents=True, exist_ok=True)
     (tu / "default.xex").write_bytes(xex)
     (tu / "default.xexp").write_bytes(xexp)
-    print(f"Ready: copy {a.out} to sdmc:/switch/ds2-nx/ and put ds2-nx.nro in it.")
+    print(f"Ready: copy the contents of {a.out} into sdmc:/switch/ds2-nx/ (next to ds2-nx.nro).")
 
 
 if __name__ == "__main__":
