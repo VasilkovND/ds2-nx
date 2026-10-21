@@ -1,9 +1,8 @@
 # Dead Space 2 → Nintendo Switch: передача контекста (20.10.2026)
 
-
 ## Что это
 Нативный порт Dead Space 2 (Xbox 360, TU2) на Switch (homebrew NRO, Atmosphère).
-- Репозиторий: https://github.com/VasilkovND/ds2-nx (форк nx-mod/xbox360-nx), игра в `deadspace2/`.
+- Репозиторий: https://github.com/VasilkovND/ds2-nx (вырос из nx-mod/xbox360-nx), игра в `deadspace2/`.
 - Код игры не генерируем: берём готовый `src_tu2/` из https://github.com/bifftannen1/Dead-Space-2-Recomp
   (47 739 функций с именами из PDB, ReXGlue v0.10.0). На Mac лежит в `~/Downloads/DeadSpace2_Switch/Dead-Space-2-Recomp`.
 - SDK: подмодуль `sdk` → nx-mod/rexglue-sdk-nx, ветка switch, коммит f961303 (libnx + deko3d, без Vulkan на Switch).
