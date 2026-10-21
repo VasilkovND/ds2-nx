@@ -9,8 +9,9 @@ a homebrew NRO, and frames are drawn by a native deko3d renderer from the game's
 > You need your own copy of the game (both discs and Title Update 2). This repository contains no game data or
 > game code.
 
-Status: menus and gameplay run with audio; the deko3d renderer is in progress. Details, boot history and
-measurements are in [deadspace2/PORTING.md](deadspace2/PORTING.md).
+Status: **1.0.0** — playable. Comfortable when overclocked; about 20-30 fps at stock clocks,
+with drops in the heaviest fights. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
+details, boot history and measurements in [deadspace2/PORTING.md](deadspace2/PORTING.md).
 
 ## Layout
 

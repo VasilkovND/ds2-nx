@@ -71,6 +71,6 @@ if(REXGLUE_PLATFORM_SWITCH)
     rexglue_switch_add_nro(deadspace2
         NAME "Dead Space 2"
         AUTHOR "VasilkovND"
-        VERSION "0.2.0 (TU2)"
+        VERSION "1.0.0 (TU2)"
         ${DS2_ICON_ARG})
 endif()
