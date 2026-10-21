@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.0.4 (TU2) — 2026-10-21
 
-- The Russian edition (En/Ru, Media ID 2C199AEB, TU2 `TU_12K226V_000000K000000.00000000000G5`) is accepted by
-  `tools/stage_sd.py`: after TU2 its executable recompiles to the same code as the World edition's, so the same NRO
-  runs it. Disc and update must be from the same edition; the script says which TU2 a disc needs. Not yet played on a
-  Switch with the Russian edition.
+- **The Russian edition is supported** (Dead Space 2 (Russia) (En,Ru), Media ID 2C199AEB, TU2
+  `TU_12K226V_000000K000000.00000000000G5`). After TU2 its executable recompiles to byte-identical code with the World
+  edition's, so the same NRO runs both; `tools/stage_sd.py` accepts either edition's discs and update.
+- Disc and update must come from the same edition: a mismatched pair is refused with the Media ID of the TU2 the disc
+  needs.
+- The game takes its language from the console's: for Russian, put `ds2.toml` with `user_language = 12` next to the
+  NRO ([INSTALL.md](INSTALL.md)).
+- Not yet played through on a Switch with the Russian edition.
 
 ## 1.0.3 (TU2) — 2026-10-21
 
