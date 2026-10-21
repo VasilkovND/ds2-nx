@@ -55,6 +55,20 @@ endif()
 target_include_directories(deadspace2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shaders
                            ${REXSDK_DIR}/thirdparty/xxHash)
 
+# The version (Homebrew Menu and the first lines of the log) and the commit it was built from, so a log a player sends
+# says which build made it. The commit is read when CMake configures (build_mac.sh RECONFIGURE=1 refreshes it).
+set(DS2_VERSION "1.0.1 (TU2)")
+execute_process(COMMAND git rev-parse --short=10 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE DS2_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+execute_process(COMMAND git status --porcelain --untracked-files=no --ignore-submodules=all WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE DS2_SUCIO OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT DS2_COMMIT)
+    set(DS2_COMMIT "unknown")
+elseif(DS2_SUCIO)
+    string(APPEND DS2_COMMIT "+changes")
+endif()
+target_compile_definitions(deadspace2 PRIVATE DS2_VERSION="${DS2_VERSION}" DS2_COMMIT="${DS2_COMMIT}")
+
 # Disc swap, title update mount and XamSwapDisc (src/ds2_disc_swap.cpp) are TU2 code.
 target_compile_definitions(deadspace2 PRIVATE DS2_TARGET_TU2=1)
 
@@ -73,6 +87,6 @@ if(REXGLUE_PLATFORM_SWITCH)
     rexglue_switch_add_nro(deadspace2
         NAME "Dead Space 2"
         AUTHOR "VasilkovND"
-        VERSION "1.0.1 (TU2)"
+        VERSION "${DS2_VERSION}"
         ${DS2_ICON_ARG})
 endif()

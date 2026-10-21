@@ -127,7 +127,7 @@ sdmc:/switch/ds2-nx/
 | `--disc1: ... not found` | Неверный путь к файлу: проверьте имя и кавычки |
 | `devkitA64 not found` / `deko3d not installed` | Не выполнен пункт 3 сборки (devkitPro и `dkp-pacman -S switch-dev deko3d`) |
 | Программа сразу закрывается | Проверьте, что на карте есть `tu/`, `disc1/`, `disc2/` и оба файла шейдеров, и что запуск идёт через игру с R |
-| Другие проблемы | Приложите файлы из `sdmc:/switch/ds2-nx/logs/` к сообщению об ошибке |
+| Другие проблемы | Приложите к сообщению об ошибке всю папку `sdmc:/switch/ds2-nx/logs/` (вместе с `logs/rex/`) и опишите, где и что произошло. В первой строке лога записаны версия сборки, прошивка и режим запуска |
 
 ---
 
@@ -193,7 +193,8 @@ Saves go to `sdmc:/switch/ds2-nx/ds2/`, logs to `sdmc:/switch/ds2-nx/logs/`.
 Start any installed game **while holding R** (title takeover: full memory; the album/applet mode does not have
 enough) and choose **Dead Space 2** in the Homebrew Menu. **ZL + ZR + D-pad Up** shows or hides the FPS counter.
 Overclocked (e.g. sys-clk) it runs close to the game's 30 fps cap; at stock clocks mostly 20–30 fps, with drops in the
-heaviest fights. If something goes wrong, include the files from `sdmc:/switch/ds2-nx/logs/` in your report.
+heaviest fights. If something goes wrong, send the whole `sdmc:/switch/ds2-nx/logs/` folder (with `logs/rex/`) and
+say where and what happened: the first log lines record the build, the firmware and how it was started.
 
 ---
 

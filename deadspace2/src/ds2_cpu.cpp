@@ -11,6 +11,10 @@
 
 #include "ds2_cpu.h"
 
+#if defined(__SWITCH__)
+#include <switch.h>
+#endif
+
 REXCVAR_DECLARE(bool, ignore_thread_priorities);  // the SDK's (src/system/xthread.cpp): on by default
 
 REXCVAR_DEFINE_BOOL(ds2_msr_cerrojo_global, false, "DS2",
@@ -38,3 +42,24 @@ REX_EXTERN(EA__Thread__SetThreadPriority) {
   }
   __imp__EA__Thread__SetThreadPriority(ctx, base);
 }
+
+namespace ds2::cpu {
+
+void InformarSistema() {
+#if defined(__SWITCH__)
+  const u32 hos = hosversionGet();
+  const bool aplicacion = appletGetAppletType() == AppletType_Application;
+  REXLOG_INFO("ds2-nx {} (commit {}), firmware {}.{}.{}{}, {}, {}", DS2_VERSION, DS2_COMMIT, HOSVER_MAJOR(hos),
+              HOSVER_MINOR(hos), HOSVER_MICRO(hos), hosversionIsAtmosphere() ? " (Atmosphere)" : "",
+              aplicacion ? "title takeover" : "APPLET MODE",
+              appletGetOperationMode() == AppletOperationMode_Handheld ? "handheld" : "docked");
+  if (!aplicacion) {
+    REXLOG_WARN("ds2-nx: started as an applet (from the album?): not enough memory for the game. Start any game while "
+                "holding R and open the Homebrew Menu from there");
+  }
+#else
+  REXLOG_INFO("ds2-nx {} (commit {})", DS2_VERSION, DS2_COMMIT);
+#endif
+}
+
+}  // namespace ds2::cpu

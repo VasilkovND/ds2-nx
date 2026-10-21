@@ -66,6 +66,7 @@ class Ds2App : public rex::ReXApp {
   }
 
   void OnPostInitLogging() override {
+    ds2::cpu::InformarSistema();
 #if !DS2_DEKO3D
     // NVK build: ReXGlue's Xenos emulation draws the game.
     DefaultFlag("gpu_plugin", "xenos");
