@@ -1,0 +1,68 @@
+diff --git a/src/audio/xma_context.cpp b/src/audio/xma_context.cpp
+index a902d01..5485a89 100644
+--- a/src/audio/xma_context.cpp
++++ b/src/audio/xma_context.cpp
+@@ -481,7 +481,9 @@ bool XmaContext::Work() {
+ }
+ 
+ void XmaContext::Enable() {
+-  std::lock_guard<std::mutex> lock(lock_);
++  // Without the context lock: Work holds it for a whole decode, and the kick (the game's mixer thread) waited that
++  // long just to set this flag. Work reads the flag again under the lock, then the context data, and stores it merged
++  // with what the guest changed meanwhile: an enable during a decode is the next decode.
+   set_is_enabled(true);
+ }
+ 
+diff --git a/src/audio/xma_decoder.cpp b/src/audio/xma_decoder.cpp
+index 3a1bebb..5c1ec44 100644
+--- a/src/audio/xma_decoder.cpp
++++ b/src/audio/xma_decoder.cpp
+@@ -231,6 +231,19 @@ void MarcarPendiente(uint32_t context_id) {
+   g_pendientes[context_id / 32].fetch_or(1u << (context_id % 32), std::memory_order_release);
+ }
+ 
++// The worker is about to wait or waiting on work_event_. A kick only signals the event then: the worker drains the
++// pending marks before it sleeps, and every kick used to signal it (1,500 a second, each a mutex and a kernel wake,
++// the mixer thread's largest lock cost in the stack profile). Both sides fence between their store and their load
++// (the worker: asleep, then pending; the kick: pending, then asleep), so a wake-up is never lost.
++std::atomic<bool> g_trabajador_dormido{false};
++
++bool HayPendientes() {
++  for (uint32_t i = 0; i < kPalabrasPendientes; ++i) {
++    if (g_pendientes[i].load(std::memory_order_relaxed)) return true;
++  }
++  return false;
++}
++
+ // Returns true if this thread takes the context; only one can.
+ bool TomarPendiente(uint32_t context_id) {
+   const uint32_t bit = 1u << (context_id % 32);
+@@ -357,8 +370,15 @@ void XmaDecoder::WorkerThreadMain() {
+     if (did_work) {
+       continue;
+     }
+-    // No work done this iteration, block until signaled.
++    // No work done this iteration, block until signaled (unless a kick marked a context meanwhile).
++    g_trabajador_dormido.store(true, std::memory_order_relaxed);
++    std::atomic_thread_fence(std::memory_order_seq_cst);
++    if (HayPendientes()) {
++      g_trabajador_dormido.store(false, std::memory_order_relaxed);
++      continue;
++    }
+     rex::thread::Wait(work_event_.get(), false);
++    g_trabajador_dormido.store(false, std::memory_order_relaxed);
+   }
+ }
+ 
+@@ -514,7 +534,10 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
+         }
+       }
+       g_pendiente_desde_ns.store(AhoraNs(), std::memory_order_release);
+-      work_event_->Set();
++      std::atomic_thread_fence(std::memory_order_seq_cst);
++      if (g_trabajador_dormido.exchange(false, std::memory_order_acq_rel)) {
++        work_event_->Set();
++      }
+     }
+     for (int i = 0; kicked_value && i < 32; ++i, kicked_value >>= 1) {
+       if (kicked_value & 1) {
