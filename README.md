@@ -69,18 +69,27 @@ it costs performance, so only use it for debugging.
   code this port builds.
 - **[StevensND](https://github.com/StevensND/nfsmw-nx)**: NFSMW-NX, the Switch port this repository was forked from:
   its Switch layer, deko3d renderer and shader tools.
+- **[nx-mod](https://github.com/nx-mod/rexglue-sdk-nx)**: rexglue-sdk-nx, the Switch fork of the SDK this port builds
+  on, and its Halo 3 port, where the PM4 ring reader (`deadspace2/src/ds2_gpu.cpp`) and the universal deko3d renderer
+  (`rex::x360::RenderDk`) started.
 - **[Tom Clay](https://github.com/rexglue/rexglue-sdk)**: the ReXGlue SDK, built on the work of the
   **[Xenia](https://xenia.jp)** team.
 - **[hedge-dev](https://github.com/hedge-dev/XenosRecomp)**: XenosRecomp.
 - **[centollOS](https://github.com/centollOS/SwitchWakerHD)**: the uam shader compiler patches.
 - **[devkitPro](https://devkitpro.org) and [switchbrew](https://github.com/switchbrew/libnx)**: devkitA64, libnx
   and deko3d.
+- **[Atmosphère](https://github.com/Atmosphere-NX/Atmosphere)** (SciresM and contributors): the custom firmware every
+  Switch homebrew runs on.
+- **[DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)** and the
+  **[Vulkan SDK](https://vulkan.lunarg.com)** (spirv-val): building the shader library.
+- **[FFmpeg](https://ffmpeg.org)**: the XMA (WMA Pro) audio decoding.
 - The other libraries listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Legal
 
 Unofficial fan port with no affiliation to Electronic Arts or Visceral Games. "Dead Space" is a trademark of
-Electronic Arts. You provide your own legally obtained copy of the game. Running homebrew requires custom firmware,
+Electronic Arts. You provide your own legally obtained copy of the game. No prebuilt NRO is distributed: it contains
+code recompiled from the game, so it is built from source on your own computer ([INSTALL.md](INSTALL.md)). Running homebrew requires custom firmware,
 which violates Nintendo's terms and can get a console banned.
 
 Source code is under the GPL-3.0 license (see [LICENSE](LICENSE)). The SDK changes are under the SDK's BSD-3-Clause

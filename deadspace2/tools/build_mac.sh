@@ -1,8 +1,9 @@
 #!/bin/bash
-# Build ds2-nx.nro on a Mac (Apple Silicon or Intel) with devkitPro's own toolchain.
+# Build ds2-nx.nro with devkitPro's toolchain: on a Mac (Apple Silicon or Intel), tested; on Linux, the same steps
+# with your distribution's packages instead of Homebrew (not tested).
 #
 # Once:
-#   1. devkitPro: install the pkg from https://github.com/devkitPro/installer/releases (or
+#   1. devkitPro: install the pkg from https://github.com/devkitPro/pacman/releases (or
 #      https://devkitpro.org/wiki/Getting_Started), then:  sudo dkp-pacman -S switch-dev deko3d
 #   2. Homebrew tools:  brew install cmake ninja python git
 #
@@ -14,14 +15,24 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DS2_RECOMP="${1:-$ROOT/../Dead-Space-2-Recomp}"
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 export PATH="$DEVKITPRO/tools/bin:$PATH"
-JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
+JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 
 [ -x "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++" ] || { echo "devkitA64 not found in $DEVKITPRO (step 1)"; exit 1; }
 [ -f "$DEVKITPRO/libnx/lib/libdeko3d.a" ] || { echo "deko3d not installed: sudo dkp-pacman -S deko3d"; exit 1; }
 
+# The recompiled tree this release was built and tested against (Dead-Space-2-Recomp, 2026-10-17). A later commit may
+# rename or change what the Switch glue relies on: DS2_RECOMP_COMMIT= (empty) takes whatever is checked out.
+DS2_RECOMP_COMMIT="${DS2_RECOMP_COMMIT-97b9dac62ad10175874774ea0dcc8a9fd632893f}"
 if [ ! -d "$DS2_RECOMP/src_tu2" ]; then
-  echo "== cloning Dead-Space-2-Recomp into $DS2_RECOMP"
-  git clone --depth 1 https://github.com/bifftannen1/Dead-Space-2-Recomp "$DS2_RECOMP"
+  echo "== Dead-Space-2-Recomp into $DS2_RECOMP"
+  mkdir -p "$DS2_RECOMP"
+  git -C "$DS2_RECOMP" init -q
+  git -C "$DS2_RECOMP" remote add origin https://github.com/bifftannen1/Dead-Space-2-Recomp
+  git -C "$DS2_RECOMP" fetch -q --depth 1 origin "${DS2_RECOMP_COMMIT:-HEAD}"
+  git -C "$DS2_RECOMP" checkout -q FETCH_HEAD
+fi
+if [ -n "$DS2_RECOMP_COMMIT" ] && [ "$(git -C "$DS2_RECOMP" rev-parse HEAD 2>/dev/null)" != "$DS2_RECOMP_COMMIT" ]; then
+  echo "warning: $DS2_RECOMP is not at the tested commit $DS2_RECOMP_COMMIT"
 fi
 
 cd "$ROOT"

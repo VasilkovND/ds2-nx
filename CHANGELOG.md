@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1 (TU2) — 2026-10-21
+
+Release build and distribution. No ready-made NRO is published any more: the release archive holds the prepared shader
+library and cache and the game-file script, and the NRO is built from source (see [INSTALL.md](INSTALL.md)).
+
+- Debug shortcuts are off: only **ZL + ZR + D-pad Up** (FPS counter, hidden at start) answers; the rest need
+  `switch_atajos_depuracion=true`.
+- Our own Homebrew Menu icon, with no art from the game (`-DDS2_ICON_DEL_DISCO=ON` uses your disc's).
+- `tools/stage_sd.py` reads the title update package itself: only Python and your own files are needed.
+- `build_mac.sh` fetches Dead-Space-2-Recomp at the commit this release was tested with, and runs on Linux too
+  (untested there).
+
 ## 1.0.0 (TU2) — 2026-10-21
 
 First release: Dead Space 2 is playable on the Switch, natively (homebrew NRO). Tested through the early chapters,
@@ -26,15 +38,9 @@ the decompression scene, a space walk and a boss fight; a full playthrough has n
 
 ### Controls
 
-The game uses the controller as on the Xbox 360. **ZL + ZR + D-pad Up** shows or hides the FPS counter (hidden at
-start). The debugging shortcuts (screenshots, frame dumps, draw-skipping modes, the SDK menus, CPU stack sampling) are
-off; `switch_atajos_depuracion=true` in the configuration turns them back on.
-
-### Other
-
-- The Homebrew Menu icon is our own, with no art from the game (a personal build can use your disc's with
-  `-DDS2_ICON_DEL_DISCO=ON`).
-- `tools/stage_sd.py` reads the title update package itself: only Python and your own files are needed.
+The game uses the controller as on the Xbox 360. Debug shortcuts hold both rear triggers (ZL + ZR): Up the FPS
+counter, Down a screenshot, Left a frame dump and trace, Right the draw-skipping modes, R CPU stack sampling, L the GPU
+A/B lap (in 1.0.1 only the FPS counter is on by default).
 
 ### Known issues
 

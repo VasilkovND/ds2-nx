@@ -1,71 +1,100 @@
-# Установка ds2-nx 1.0.0 (Dead Space 2 для Nintendo Switch)
+# Установка ds2-nx 1.0.1 (Dead Space 2 для Nintendo Switch)
 
-ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в виде homebrew-программы. В архиве релиза только
-программа. **Сама игра берётся из вашей собственной копии**: два диска Xbox 360 и обновление Title Update 2.
+ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в виде homebrew-программы. **Готовый `.nro` не
+распространяется.** Программа собирается у вас на компьютере из исходников и перекомпилированного кода игры, а
+сама игра берётся **из вашей собственной копии**: два диска Xbox 360 и Title Update 2. Архив релиза содержит только
+подготовленные шейдеры и скрипт для файлов игры.
 
-## 1. Что понадобится
+Всего три шага: подготовить файлы игры, собрать программу, скопировать всё на карту.
+
+## Что понадобится
 
 | Что | Подробности |
 | --- | --- |
 | Nintendo Switch | С кастомной прошивкой **Atmosphère** и Homebrew Menu |
-| Карта microSD | Свободно **~15 ГБ**. Подойдёт exFAT или FAT32: самые большие файлы игры меньше 4 ГБ |
-| Образы ваших дисков | Dead Space 2 для Xbox 360, **Disc 1** и **Disc 2**, файлы `.iso`, издание World (En/Fr/Es) |
-| Title Update 2 | Файл **`TU_12K226V_000000C000000.00000000000G3`** (Media ID 2915C8F8) |
-| Компьютер | Windows, macOS или Linux с **Python 3**, плюс ~15 ГБ свободного места |
-| Архив релиза | `ds2-nx-1.0.0.zip` |
+| Карта microSD | Свободно **~15 ГБ**, exFAT или FAT32 (самые большие файлы игры меньше 4 ГБ) |
+| Образы ваших дисков | Dead Space 2 для Xbox 360, **Disc 1** и **Disc 2**, `.iso`, издание World (En/Fr/Es) |
+| Title Update 2 | **`TU_12K226V_000000C000000.00000000000G3`** (Media ID 2915C8F8). На накопителе Xbox 360 лежит в `Content/0000000000000000/454108DF/000B0000/` |
+| Компьютер | **macOS** (проверено) или Linux (не проверялось), ~20 ГБ свободного места, интернет для загрузки инструментов |
+| Архив релиза | `ds2-nx-1.0.1.zip`: шейдеры, кэш шейдеров, `tools/stage_sd.py` |
 
-**Откуда взять файлы игры.** Образы `.iso` делаются с ваших собственных дисков. Title Update 2 Xbox 360 скачивает
-сам, когда игра запускается онлайн. На накопителе консоли он лежит в
-`Content/0000000000000000/454108DF/000B0000/`.
+Принимаются только эти версии: каждый файл проверяется по контрольной сумме. Перекомпилированный код сделан из
+именно этого издания, с другим он не совпадёт. TU2 других регионов (другой Media ID) несут другой исполняемый файл.
 
-Программа принимает только эти версии. Каждый файл проверяется по контрольной сумме, а с другим изданием
-перекомпилированный код просто не совпадёт. Обновления TU2 для других регионов (другой Media ID) содержат другой
-исполняемый файл, поэтому не подходят.
+## Шаг 1. Подготовить файлы игры
 
-## 2. Распаковать архив релиза
-
-Распакуйте `ds2-nx-1.0.0.zip` в любую папку на компьютере. Внутри:
-
-```
-ds2-nx-1.0.0/
-    switch/ds2-nx/ds2-nx.nro         программа
-    switch/ds2-nx/ds2_shaders.dslib  шейдеры игры, переведённые для Switch
-    switch/ds2-nx/shadercache_dksh.bin  те же шейдеры, заранее скомпилированные (без подтормаживаний)
-    tools/stage_sd.py                скрипт, который готовит файлы игры
-    INSTALL.md  CHANGELOG.md  LICENSE  THIRD_PARTY_NOTICES.md
-```
-
-## 3. Подготовить файлы игры (на компьютере)
-
-1. **Установите Python 3** с https://www.python.org. На Windows при установке отметьте **«Add python.exe to PATH»**.
-2. **Положите рядом три файла:** `Dead Space 2 (Disc 1).iso`, `Dead Space 2 (Disc 2).iso` и
-   `TU_12K226V_000000C000000.00000000000G3`. Например, в папку `ds2-nx-1.0.0`.
-3. **Откройте терминал в папке `ds2-nx-1.0.0`.** На Windows — правый клик по папке → «Открыть в терминале». На macOS —
-   «Терминал», затем `cd` и перетащить папку в окно.
-4. **Запустите** (на Windows вместо `python3` пишите `py`):
+1. Установите **Python 3**: на macOS он ставится вместе с инструментами шага 2 (`brew install python`); на Linux —
+   из пакетов дистрибутива.
+2. Распакуйте `ds2-nx-1.0.1.zip`, положите рядом образы дисков и файл TU2 и откройте терминал в папке
+   `ds2-nx-1.0.1`.
+3. Запустите:
 
    ```
    python3 tools/stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" --disc2 "Dead Space 2 (Disc 2).iso" --tu "TU_12K226V_000000C000000.00000000000G3" -o game
    ```
 
-   Если файлы лежат в другом месте, укажите полный путь к каждому в кавычках.
+   Если файлы лежат в другом месте, укажите полный путь к каждому в кавычках. Скрипт проверит обновление и оба
+   диска и распакует их; это 5–15 минут. В конце он напишет `Ready: ...`, а в папке `game` появятся `disc1`,
+   `disc2` и `tu`.
 
-Скрипт проверит обновление и оба диска и распакует их. Это займёт 5–15 минут, в зависимости от диска компьютера.
-В конце будет строка `Ready: ...`, а рядом появится папка `game` с тремя папками внутри: `disc1`, `disc2` и `tu`.
+`disc1` и `disc2` — это просто всё содержимое образов, распакованное как есть. В `tu` скрипт кладёт `default.xex`
+с первого диска и `default.xexp`, извлечённый из пакета обновления.
 
-## 4. Скопировать на карту
+## Шаг 2. Собрать программу (ds2-nx.nro)
 
-1. Скопируйте папку **`switch`** из `ds2-nx-1.0.0` в **корень** карты. Если папка `switch` на карте уже есть,
-   содержимое объединится.
-2. Скопируйте **содержимое** папки `game` (`disc1`, `disc2`, `tu`) в **`switch/ds2-nx/`** на карте.
+Сборка один раз занимает ~20–30 минут (на Apple M1 Pro) и ~3 ГБ места.
 
-В итоге на карте должно быть:
+### macOS
+
+1. **Инструменты Xcode:** `xcode-select --install`.
+2. **Homebrew** (https://brew.sh), затем:
+
+   ```
+   brew install cmake ninja python git
+   ```
+
+3. **devkitPro:** установщик `devkitpro-pacman-installer.pkg` со страницы
+   https://github.com/devkitPro/pacman/releases, затем:
+
+   ```
+   sudo dkp-pacman -S switch-dev deko3d
+   ```
+
+4. **Исходники и сборка:**
+
+   ```
+   git clone --branch v1.0.1 https://github.com/VasilkovND/ds2-nx
+   cd ds2-nx
+   deadspace2/tools/build_mac.sh
+   ```
+
+   Скрипт сам скачает перекомпилированный код игры (проект Dead-Space-2-Recomp, ровно ту версию, с которой собран
+   этот релиз), библиотеки и SDK, применит наши правки и соберёт программу. Готовый файл:
+   **`ds2-nx/deadspace2/out/sw/deadspace2.nro`**.
+
+### Linux (не проверялось)
+
+Те же шаги: devkitPro по инструкции https://devkitpro.org/wiki/Getting_Started, затем
+`sudo dkp-pacman -S switch-dev deko3d`; `cmake`, `ninja`, `python3`, `git` — из пакетов дистрибутива; дальше
+`git clone ...` и `deadspace2/tools/build_mac.sh`, как выше.
+
+## Шаг 3. Скопировать на карту
+
+Создайте на карте папку `switch/ds2-nx/` и положите в неё:
+
+| Откуда | Что |
+| --- | --- |
+| Шаг 2 | `deadspace2.nro`, **переименовав его в `ds2-nx.nro`** |
+| Архив релиза | `switch/ds2-nx/ds2_shaders.dslib` и `switch/ds2-nx/shadercache_dksh.bin` |
+| Шаг 1 | Содержимое папки `game`: `disc1`, `disc2`, `tu` |
+
+В итоге:
 
 ```
 sdmc:/switch/ds2-nx/
-    ds2-nx.nro
-    ds2_shaders.dslib
-    shadercache_dksh.bin
+    ds2-nx.nro             собран на шаге 2
+    ds2_shaders.dslib      из архива релиза
+    shadercache_dksh.bin   из архива релиза
     tu/
         default.xex
         default.xexp
@@ -75,9 +104,9 @@ sdmc:/switch/ds2-nx/
         default.xex  bigfile0.viv  bigfile1.viv  disc2_info.txt  ...
 ```
 
-Сохранения игра создаст сама в `sdmc:/switch/ds2-nx/ds2/`, логи — в `sdmc:/switch/ds2-nx/logs/`.
+Сохранения игра создаст сама в `sdmc:/switch/ds2-nx/ds2/`, логи пишутся в `sdmc:/switch/ds2-nx/logs/`.
 
-## 5. Запуск
+## Запуск
 
 1. Вставьте карту и загрузите Atmosphère.
 2. Запустите **любую установленную игру, удерживая кнопку R**: так откроется Homebrew Menu с полным доступом к
@@ -85,9 +114,8 @@ sdmc:/switch/ds2-nx/
 3. Выберите **Dead Space 2**.
 
 Первый запуск дольше обычного. Счётчик FPS включается и выключается сочетанием **ZL + ZR + вверх на крестовине**.
-
-**Производительность.** С разгоном (например, sys-clk) играется плавно, близко к 30 fps, на которых игра ограничена. На
-стоковых частотах обычно 20–30 fps, в самых тяжёлых боях бывают просадки.
+С разгоном (например, sys-clk) игра идёт близко к 30 fps, на которых она ограничена; на стоковых частотах обычно
+20–30 fps, в самых тяжёлых боях бывают просадки.
 
 ## Если что-то не так
 
@@ -95,61 +123,77 @@ sdmc:/switch/ds2-nx/
 | --- | --- |
 | `not the Title Update 2 this port needs` | Нужен TU2 с Media ID 2915C8F8, а не другой регион |
 | `Disc 1 default.xex does not match` | Образ не того издания или повреждён: нужен World (En/Fr/Es) |
-| `Not an Xbox 360 disc image` | Это не образ диска Xbox 360 (или он запакован в другой формат) |
+| `Not an Xbox 360 disc image` | Это не образ диска Xbox 360 (или он в другом формате) |
 | `--disc1: ... not found` | Неверный путь к файлу: проверьте имя и кавычки |
-| Программа сразу закрывается | Проверьте, что на карте есть `tu/`, `disc1/`, `disc2/`, и что запуск идёт через игру с R |
+| `devkitA64 not found` / `deko3d not installed` | Не выполнен пункт 3 сборки (devkitPro и `dkp-pacman -S switch-dev deko3d`) |
+| Программа сразу закрывается | Проверьте, что на карте есть `tu/`, `disc1/`, `disc2/` и оба файла шейдеров, и что запуск идёт через игру с R |
 | Другие проблемы | Приложите файлы из `sdmc:/switch/ds2-nx/logs/` к сообщению об ошибке |
 
 ---
 
-# Installing ds2-nx 1.0.0 (Dead Space 2 for Nintendo Switch)
+# Installing ds2-nx 1.0.1 (Dead Space 2 for Nintendo Switch)
 
-ds2-nx is a native Switch port of Dead Space 2 (Xbox 360) as a homebrew program. The release archive contains only
-the program. **The game comes from your own copy**: the two Xbox 360 discs and Title Update 2.
+ds2-nx is a native Switch port of Dead Space 2 (Xbox 360) as a homebrew program. **No ready-made `.nro` is
+distributed**: you build it on your computer from the sources and the recompiled game code, and the game itself comes
+from **your own copy** (the two Xbox 360 discs and Title Update 2). The release archive holds only the prepared
+shaders and the script for the game files.
 
-## 1. You need
+## You need
 
 - A Switch with **Atmosphère** and the Homebrew Menu, and a microSD card with **~15 GB** free (exFAT or FAT32).
 - Images of **your** Dead Space 2 Xbox 360 discs: **Disc 1** and **Disc 2** as `.iso`, World (En/Fr/Es) release.
-- **Title Update 2**: `TU_12K226V_000000C000000.00000000000G3` (Media ID 2915C8F8). On an Xbox 360 it is in
+- **Title Update 2**: `TU_12K226V_000000C000000.00000000000G3` (Media ID 2915C8F8); on an Xbox 360 it is in
   `Content/0000000000000000/454108DF/000B0000/`. Other regional TU2 packages carry another executable and are refused.
-- A computer (Windows, macOS or Linux) with **Python 3** and ~15 GB free.
+- A computer with **macOS** (tested) or Linux (not tested), ~20 GB free and an internet connection.
 
-## 2. Prepare the game files
+## Step 1. Prepare the game files
 
-1. Install Python 3 from https://www.python.org. On Windows, tick **"Add python.exe to PATH"**.
-2. Unzip `ds2-nx-1.0.0.zip`, open a terminal in `ds2-nx-1.0.0`, and run (on Windows use `py` instead of `python3`):
+Unzip `ds2-nx-1.0.1.zip`, put your disc images and the TU2 file next to it, open a terminal in `ds2-nx-1.0.1` and run:
 
-   ```
-   python3 tools/stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" --disc2 "Dead Space 2 (Disc 2).iso" --tu "TU_12K226V_000000C000000.00000000000G3" -o game
-   ```
+```
+python3 tools/stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" --disc2 "Dead Space 2 (Disc 2).iso" --tu "TU_12K226V_000000C000000.00000000000G3" -o game
+```
 
-   It checks every file against its hash, extracts both discs (5–15 minutes) and ends with `Ready: ...`. The `game`
-   folder then holds `disc1/`, `disc2/` and `tu/`.
+It checks every file against its hash and extracts both discs (5–15 minutes). The `game` folder then holds `disc1/`,
+`disc2/` and `tu/`.
 
-## 3. Copy to the SD card
+## Step 2. Build ds2-nx.nro
 
-Copy the archive's **`switch`** folder to the root of the card, then the **contents** of `game` into
-**`switch/ds2-nx/`**:
+About 20–30 minutes once (on an Apple M1 Pro) and ~3 GB of disk.
+
+```
+xcode-select --install                        # macOS only
+brew install cmake ninja python git           # macOS (Homebrew); on Linux, your distribution's packages
+# devkitPro: https://github.com/devkitPro/pacman/releases (macOS pkg) or https://devkitpro.org/wiki/Getting_Started
+sudo dkp-pacman -S switch-dev deko3d
+git clone --branch v1.0.1 https://github.com/VasilkovND/ds2-nx
+cd ds2-nx
+deadspace2/tools/build_mac.sh
+```
+
+The script fetches the recompiled game code (Dead-Space-2-Recomp, at the exact commit this release was built
+against), the libraries and the SDK, applies our patches and builds `deadspace2/out/sw/deadspace2.nro`.
+
+## Step 3. Copy to the SD card
 
 ```
 sdmc:/switch/ds2-nx/
-    ds2-nx.nro   ds2_shaders.dslib   shadercache_dksh.bin
-    tu/      default.xex  default.xexp
-    disc1/   default.xex  bigfile0.viv  bigfile1.viv  ...
-    disc2/   default.xex  bigfile0.viv  bigfile1.viv  ...
+    ds2-nx.nro             step 2's deadspace2.nro, renamed
+    ds2_shaders.dslib      from the release archive
+    shadercache_dksh.bin   from the release archive
+    tu/      default.xex  default.xexp                 (step 1)
+    disc1/   default.xex  bigfile0.viv  bigfile1.viv  ... (step 1)
+    disc2/   default.xex  bigfile0.viv  bigfile1.viv  ... (step 1)
 ```
 
 Saves go to `sdmc:/switch/ds2-nx/ds2/`, logs to `sdmc:/switch/ds2-nx/logs/`.
 
-## 4. Run
+## Run
 
 Start any installed game **while holding R** (title takeover: full memory; the album/applet mode does not have
-enough), and choose **Dead Space 2** in the Homebrew Menu. The first start takes longer. **ZL + ZR + D-pad Up**
-shows or hides the FPS counter.
-
-Overclocked (e.g. sys-clk) it runs close to the game's 30 fps cap; at stock clocks it is mostly 20–30 fps, with drops
-in the heaviest fights. If something goes wrong, include the files from `sdmc:/switch/ds2-nx/logs/` in your report.
+enough) and choose **Dead Space 2** in the Homebrew Menu. **ZL + ZR + D-pad Up** shows or hides the FPS counter.
+Overclocked (e.g. sys-clk) it runs close to the game's 30 fps cap; at stock clocks mostly 20–30 fps, with drops in the
+heaviest fights. If something goes wrong, include the files from `sdmc:/switch/ds2-nx/logs/` in your report.
 
 ---
 

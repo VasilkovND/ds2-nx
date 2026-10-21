@@ -7,6 +7,7 @@ repository derived from it.
 
 | Project | Used for | License |
 |---|---|---|
+| [rexglue-sdk-nx](https://github.com/nx-mod/rexglue-sdk-nx) by nx-mod | The SDK submodule (`sdk/`): the Switch fork of ReXGlue, and its Halo 3 port's ring reader, which `deadspace2/src/ds2_gpu.cpp` started from | BSD-3-Clause (`sdk/LICENSE`) |
 | [Dead-Space-2-Recomp](https://github.com/bifftannen1/Dead-Space-2-Recomp) by bifftannen1 | The recompiled Title Update 2 code (`src_tu2/`, not in this repository) that `deadspace2/` builds, and the parts of `deadspace2/src` based on its PC app | See that repository |
 | [NFSMW-NX](https://github.com/StevensND/nfsmw-nx) by StevensND | The port this repository was forked from: the Horizon (Switch) layer and deko3d renderer in `sdk/` (via `rexglue-sdk-nx`), and the shader tools in `shaders/` | GPL-3.0 (this repository), BSD-3-Clause (SDK changes), MIT (translator changes) |
 | [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) by Tom Clay, with portions from [Xenia](https://xenia.jp) (Ben Vanik and the Xenia contributors) | `sdk/`: Xbox 360 kernel and runtime, GPU command processing, Switch layer | BSD-3-Clause (`sdk/LICENSE`) |
@@ -23,7 +24,7 @@ that the NRO or the shader tools use:
 
 | Library | License |
 |---|---|
-| [FFmpeg](https://ffmpeg.org) (libavcodec, libavutil: the WMV3 decoder) | LGPL-2.1-or-later (configured without GPL parts) |
+| [FFmpeg](https://ffmpeg.org) (libavcodec, libavutil: the WMA Pro/XMA, WMA v2, MP3 and WMV3 decoders) | LGPL-2.1-or-later (configured without GPL parts) |
 | [libmspack](https://www.cabextract.org.uk/libmspack/) by Stuart Caie (LZX decompression) | LGPL-2.1 |
 | [fmt](https://github.com/fmtlib/fmt), [spdlog](https://github.com/gabime/spdlog) | MIT |
 | [xxHash](https://github.com/Cyan4973/xxHash) | BSD-2-Clause |
