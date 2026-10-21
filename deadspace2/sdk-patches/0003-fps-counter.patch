@@ -148,7 +148,7 @@ index ccf5e2a..6992a9a 100644
  
  SwitchInputDriver::Slot* SwitchInputDriver::FindSlot(DeviceId id) {
 diff --git a/src/ui/deko3d/presentador.cpp b/src/ui/deko3d/presentador.cpp
-index cdf084b..52e1536 100644
+index cdf084b..4e688ab 100644
 --- a/src/ui/deko3d/presentador.cpp
 +++ b/src/ui/deko3d/presentador.cpp
 @@ -2,6 +2,7 @@
@@ -159,7 +159,7 @@ index cdf084b..52e1536 100644
  #include <rex/logging.h>
  #include <rex/logging/api.h>
  #include <rex/ui/surface_switch.h>
-@@ -9,10 +10,15 @@
+@@ -9,10 +10,17 @@
  #include <switch.h>
  
  #include <algorithm>
@@ -171,11 +171,13 @@ index cdf084b..52e1536 100644
  
 +// Defined with the input driver, which toggles it with ZL + ZR + Up (switch_input_driver.cpp).
 +REXCVAR_DECLARE(bool, switch_contador_fps);
++// The profiler's stack sampling (switch_perf.cpp), shown in the counter.
++extern "C" bool RexSwitchPerfStacksActive(void);
 +
  namespace rex::deko3d {
  namespace {
  
-@@ -120,6 +126,60 @@ class ContextoUIDeko3d final : public rex::ui::UIDrawContext {
+@@ -120,6 +128,62 @@ class ContextoUIDeko3d final : public rex::ui::UIDrawContext {
    DkImage& destino;
  };
  
@@ -202,6 +204,7 @@ index cdf084b..52e1536 100644
 +  static const uint8_t kF[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10};
 +  static const uint8_t kP[7] = {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10};
 +  static const uint8_t kS[7] = {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E};
++  static const uint8_t kR[7] = {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11};
 +  static const uint8_t kM[7] = {0, 0, 0x1A, 0x15, 0x15, 0x11, 0x11};
 +  static const uint8_t kSMinuscula[7] = {0, 0, 0x0E, 0x10, 0x0E, 0x01, 0x1E};
 +  static const uint8_t kEspacio[7] = {};
@@ -211,6 +214,7 @@ index cdf084b..52e1536 100644
 +    case 'F': return kF;
 +    case 'P': return kP;
 +    case 'S': return kS;
++    case 'R': return kR;
 +    case 'm': return kM;
 +    case 's': return kSMinuscula;
 +    default: return kEspacio;
@@ -236,7 +240,7 @@ index cdf084b..52e1536 100644
  // ---- The presenter
  
  class PresentadorDeko3d final : public Presenter {
-@@ -135,6 +195,8 @@ class PresentadorDeko3d final : public Presenter {
+@@ -135,6 +199,8 @@ class PresentadorDeko3d final : public Presenter {
      }
      cadena_.Destruir();
      proveedor_.dispositivo().EsperarInactiva();
@@ -245,7 +249,7 @@ index cdf084b..52e1536 100644
      for (ImagenSalida& s : salidas_) {
        proveedor_.dispositivo().DestruirBloque(s.memoria);
        s.memoria = nullptr;
-@@ -149,8 +211,8 @@ class PresentadorDeko3d final : public Presenter {
+@@ -149,8 +215,8 @@ class PresentadorDeko3d final : public Presenter {
      config.kb_comandos = 256;
      config.mb_codigo = 1;
      config.mb_trozo_imagenes = 1;
@@ -256,7 +260,7 @@ index cdf084b..52e1536 100644
      config.kb_consultas = 4;
      nucleo_.Crear(proveedor_.dispositivo(), config);
      if (!CompilarPropio(proveedor_, nucleo_, vs_, true, kVsCopia, "presentador_vs") ||
-@@ -161,6 +223,28 @@ class PresentadorDeko3d final : public Presenter {
+@@ -161,6 +227,28 @@ class PresentadorDeko3d final : public Presenter {
      nucleo_.EmpezarTrabajo(++trabajo_);
      const DkSamplerDescriptor sampler = DescriptorSampler(DkFilter_Linear, DkWrapMode_ClampToEdge);
      dkCmdBufPushData(nucleo_.comandos(), nucleo_.DescriptoresSampler(), &sampler, sizeof(sampler));
@@ -285,7 +289,7 @@ index cdf084b..52e1536 100644
      nucleo_.TerminarTrabajo();
      return InitializeCommonSurfaceIndependent();
    }
-@@ -299,6 +383,10 @@ class PresentadorDeko3d final : public Presenter {
+@@ -299,6 +387,10 @@ class PresentadorDeko3d final : public Presenter {
      DkCmdBuf c = nucleo_.comandos();
      nucleo_.BindDescriptores();
      nucleo_.InvalidarCodigoSiHaceFalta();
@@ -296,7 +300,7 @@ index cdf084b..52e1536 100644
      DkImageView vista;
      dkImageViewDefaults(&vista, &cadena_.Imagen(imagen));
      dkCmdBufBindRenderTarget(c, &vista, nullptr);
-@@ -353,6 +441,9 @@ class PresentadorDeko3d final : public Presenter {
+@@ -353,6 +445,9 @@ class PresentadorDeko3d final : public Presenter {
          }
        }
      }
@@ -306,7 +310,7 @@ index cdf084b..52e1536 100644
      nucleo_.TerminarTrabajo();
  
      if (execute_ui_drawers) {
-@@ -364,6 +455,70 @@ class PresentadorDeko3d final : public Presenter {
+@@ -364,6 +459,72 @@ class PresentadorDeko3d final : public Presenter {
    }
  
   private:
@@ -327,7 +331,9 @@ index cdf084b..52e1536 100644
 +    }
 +    char texto[kContadorCaracteres + 1];
 +    const double fps = segundos > 0 ? double(contador_imagenes_ - 1) / segundos : 0.0;
-+    std::snprintf(texto, sizeof(texto), "%4.1f FPS %4.1fms", std::min(fps, 999.9), std::min(contador_hueco_max_, 999.9));
++    // PRF instead of FPS while the profiler samples stacks (ZL+ZR+R): the only sign of it on screen.
++    std::snprintf(texto, sizeof(texto), "%4.1f %s %4.1fms", std::min(fps, 999.9),
++                  RexSwitchPerfStacksActive() ? "PRF" : "FPS", std::min(contador_hueco_max_, 999.9));
 +    contador_desde_ = ahora;
 +    contador_imagenes_ = 1;
 +    contador_hueco_max_ = 0;
@@ -391,10 +397,10 @@ index d1b2a1c..73742e6 100644
  #endif
      }
 diff --git a/src/ui/switch_perf.cpp b/src/ui/switch_perf.cpp
-index 6b3d30a..9533019 100644
+index 6b3d30a..548e986 100644
 --- a/src/ui/switch_perf.cpp
 +++ b/src/ui/switch_perf.cpp
-@@ -232,6 +232,22 @@ extern "C" void RexSwitchPerfToggleAb(void) {
+@@ -232,6 +232,24 @@ extern "C" void RexSwitchPerfToggleAb(void) {
    }
  }
  
@@ -403,6 +409,8 @@ index 6b3d30a..9533019 100644
 + * ZL+ZR+R (switch_input_driver.cpp): no file to copy to the card for one profiling run.
 + */
 +std::atomic<bool> g_muestrear_pilas{false};
++
++extern "C" bool RexSwitchPerfStacksActive(void) { return g_muestrear_pilas.load(std::memory_order_relaxed); }
 +
 +extern "C" bool RexSwitchPerfToggleStacks(void) {
 +  const bool nuevo = !g_muestrear_pilas.load(std::memory_order_relaxed);
@@ -417,7 +425,7 @@ index 6b3d30a..9533019 100644
  /*
   * Horizon limits how much memory a process may map (LimitableResource_Memory). Our
   * guest memory model maps each chunk several times (the shadow and once per 360
-@@ -808,6 +824,9 @@ void ProfilerMain(void*) {
+@@ -808,6 +826,9 @@ void ProfilerMain(void*) {
      sample_stacks = true;
      std::fclose(flag);
    }
@@ -427,7 +435,7 @@ index 6b3d30a..9533019 100644
  
    u64 counters_last[kCounterCount]{};
    for (unsigned i = 0; i < kCounterCount; ++i) {
-@@ -831,6 +850,7 @@ void ProfilerMain(void*) {
+@@ -831,6 +852,7 @@ void ProfilerMain(void*) {
    size_t rr = 0;
    size_t mode_index = 0;
    while (true) {

@@ -25,6 +25,7 @@
 #include <string>
 #include <system_error>
 
+#include "ds2_cpu.h"
 #include "ds2_disc_swap.h"
 #if DS2_DEKO3D
 #include "ds2_gpu.h"
@@ -87,6 +88,7 @@ class Ds2App : public rex::ReXApp {
   }
 
   void OnPreLaunchModule() override {
+    ds2::cpu::Configurar();
     try {
       ds2::disc_swap::RegisterImport(*runtime());
     } catch (const std::exception& error) {
