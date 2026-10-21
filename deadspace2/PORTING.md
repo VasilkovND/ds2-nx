@@ -74,7 +74,9 @@ Mushihimesama Futari Switch ports do too; Xenos emulation would be a few frames 
   Both bigfiles are under 4 GB, so FAT32 works. Disc 2 is swapped in at chapter 4 by binding `XamSwapDisc`'s
   import (`0x82B0857C`) to a handler that re-points `d:` and signals the game's event.
 - **The code is TU2**: it only matches `default.xex` + TU2's `default.xexp`, checked by hash
-  (`928597dd…` and `8d386d37…`). Of the four regional TU2 packages only Media ID 2915C8F8 carries that executable.
+  (World: `928597dd…` and `8d386d37…`). Two of the four regional TU2 packages fit: Media ID 2915C8F8 (World) and
+  2C199AEB (Russia, its own disc `7fac7f81…` and patch `6eb88610…`). Run through ReXGlue, the two patched executables
+  generate byte-identical C++, so one NRO serves both; the Russian data comes from its own xex and bigfiles.
   `stage_sd.py` reads the STFS package itself (contiguous files: header size at 0x340, volume descriptor at 0x379,
   one or two hash tables per level by bit 0 of the block separation byte, a level-0 table every 0xAA data blocks).
 - **Title takeover is required** (start a game holding R): applet mode does not have the memory.

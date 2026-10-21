@@ -11,9 +11,12 @@ Writes, beside where the NRO goes (src/ds2_app.h reads this layout):
 
 Every input is checked against the hashes the recompiled code was made from (the same pins as
 Dead-Space-2-Recomp's launcher): the code is TU2, so any other executable or patch would not match it.
-Only the standard library (the title update package is read by the small STFS reader below). The title update is the
-one with Media ID 2915C8F8 (TU_12K226V_000000C000000.00000000000G3); the other regional TU2 packages carry another
-executable.
+Only the standard library (the title update package is read by the small STFS reader below).
+
+Two editions are accepted, each as its own disc and its own TU2 package (the patch only fits the disc it was made for):
+    World (En/Fr/Es)   Media ID 2915C8F8   TU_12K226V_000000C000000.00000000000G3
+    Russia (En/Ru)     Media ID 2C199AEB   TU_12K226V_000000K000000.00000000000G5
+After their TU2 the two executables recompile to the same code, so one NRO runs both.
 """
 import argparse
 import hashlib
@@ -21,8 +24,13 @@ import struct
 import sys
 from pathlib import Path
 
-XEX_SHA = "928597ddb80240b8aefeef0a70a9476ee85d6de733035b326dd155c2094a3408"   # Disc 1 default.xex
-XEXP_SHA = "8d386d37e8f71937b9d9c4b34bdbf85240101479c8aaece1002d94e7cdc01ec2"  # TU2 disc001/default.xexp
+# TU2 disc001/default.xexp -> (edition, Media ID, Disc 1 default.xex)
+EDITIONS = {
+    "8d386d37e8f71937b9d9c4b34bdbf85240101479c8aaece1002d94e7cdc01ec2":
+        ("World, En/Fr/Es", "2915C8F8", "928597ddb80240b8aefeef0a70a9476ee85d6de733035b326dd155c2094a3408"),
+    "6eb88610317fddb84984a9d8cf8eadaffe7d02ff867aa67e7dc70ecccd4c3b5c":
+        ("Russia, En/Ru", "2C199AEB", "7fac7f815aaccdfedfd1ef7c2b6e6e43cc50af72d46ac22776a7e8a0daed6cc8"),
+}
 TITLE_ID = 0x454108DF
 SECTOR = 2048
 MAGIC = b"MICROSOFT*XBOX*MEDIA"
@@ -151,7 +159,7 @@ class Stfs:
 def read_xexp(path: Path) -> bytes:
     if path.stat().st_size < 16 << 20:
         data = path.read_bytes()
-        if sha256(data) == XEXP_SHA:
+        if sha256(data) in EDITIONS:
             return data
     pkg = Stfs(path)
     try:
@@ -166,9 +174,9 @@ def read_xexp(path: Path) -> bytes:
                 sys.exit("disc001/default.xexp is fragmented in this package: extract it with another tool and pass "
                          "the .xexp file to --tu")
             data = b"".join(pkg.block(e["start"] + k) for k in range(e["blocks"]))[:e["size"]]
-            if sha256(data) != XEXP_SHA:
-                sys.exit("disc001/default.xexp is not the Title Update 2 this port needs (hash mismatch): use the "
-                         "package with Media ID 2915C8F8")
+            if sha256(data) not in EDITIONS:
+                sys.exit("disc001/default.xexp is not a Title Update 2 this port supports (hash mismatch): use the "
+                         "package with Media ID 2915C8F8 (World) or 2C199AEB (Russia)")
             return data
         sys.exit(f"{path} has no disc001/default.xexp")
     finally:
@@ -188,11 +196,15 @@ def main() -> None:
             sys.exit(f"{name}: {path} not found")
 
     xexp = read_xexp(a.tu)
-    print("  TU2 default.xexp: ok")
+    edition, media_id, xex_sha = EDITIONS[sha256(xexp)]
+    print(f"  TU2 default.xexp: ok ({edition}, Media ID {media_id})")
     extract(a.disc1, a.out / "disc1")
     xex = (a.out / "disc1" / "default.xex").read_bytes()
-    if sha256(xex) != XEX_SHA:
-        sys.exit("Disc 1 default.xex does not match the supported release (Dead Space 2, World, En/Fr/Es)")
+    if sha256(xex) != xex_sha:
+        other = [e for e in EDITIONS.values() if e[2] == sha256(xex)]
+        sys.exit(f"Disc 1 default.xex is from the {other[0][0]} edition, but the TU2 is for {edition}: use the TU2 "
+                 f"package with Media ID {other[0][1]}" if other else
+                 f"Disc 1 default.xex does not match the TU2's edition (Dead Space 2, {edition})")
     if a.disc2:
         extract(a.disc2, a.out / "disc2")
     tu = a.out / "tu"

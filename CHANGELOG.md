@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The Russian edition (En/Ru, Media ID 2C199AEB, TU2 `TU_12K226V_000000K000000.00000000000G5`) is accepted by
+  `tools/stage_sd.py`: after TU2 its executable recompiles to the same code as the World edition's, so the same NRO
+  runs it. Disc and update must be from the same edition; the script says which TU2 a disc needs. Not yet played on a
+  Switch with the Russian edition.
+
 ## 1.0.3 (TU2) — 2026-10-21
 
 The public release: nothing from the game is distributed or committed any more.

@@ -12,12 +12,18 @@ ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в в
 | --- | --- |
 | Nintendo Switch | С кастомной прошивкой **Atmosphère** и Homebrew Menu |
 | Карта microSD | Свободно **~15 ГБ**, exFAT или FAT32 (самые большие файлы игры меньше 4 ГБ) |
-| Образы ваших дисков | Dead Space 2 для Xbox 360, **Disc 1** и **Disc 2**, `.iso`, издание World (En/Fr/Es) |
-| Title Update 2 | **`TU_12K226V_000000C000000.00000000000G3`** (Media ID 2915C8F8). На накопителе Xbox 360 лежит в `Content/0000000000000000/454108DF/000B0000/` |
+| Образы ваших дисков | Dead Space 2 для Xbox 360, **Disc 1** и **Disc 2**, `.iso`, издание **World** (En/Fr/Es) или **Russia** (En/Ru) |
+| Title Update 2 | Для вашего издания (таблица ниже). На накопителе Xbox 360 лежит в `Content/0000000000000000/454108DF/000B0000/` |
 | Компьютер | **macOS** (проверено) или Linux (не проверялось), ~25 ГБ свободного места, интернет |
 
-Принимаются только эти версии: каждый файл проверяется по контрольной сумме. TU2 других регионов (другой Media ID)
-несут другой исполняемый файл и не подходят.
+| Издание | Media ID | Файл Title Update 2 |
+| --- | --- | --- |
+| World (En/Fr/Es) | 2915C8F8 | `TU_12K226V_000000C000000.00000000000G3` |
+| Russia (En/Ru) | 2C199AEB | `TU_12K226V_000000K000000.00000000000G5` |
+
+Обновление должно быть от того же издания, что и диски. Принимаются только эти версии: каждый файл проверяется по
+контрольной сумме, TU2 других регионов не подходят. Программа одна и та же для обоих изданий: после TU2 их код
+совпадает.
 
 ## Шаг 1. Собрать программу (ds2-nx.nro)
 
@@ -52,7 +58,8 @@ ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в в
 python3 deadspace2/tools/stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" --disc2 "Dead Space 2 (Disc 2).iso" --tu "TU_12K226V_000000C000000.00000000000G3" -o game
 ```
 
-Укажите полные пути к своим файлам в кавычках. Скрипт проверит обновление и оба диска и распакует их (5–15 минут).
+Для русского издания укажите его образы и `TU_12K226V_000000K000000.00000000000G5`. Укажите полные пути к своим
+файлам в кавычках. Скрипт проверит обновление и оба диска и распакует их (5–15 минут).
 В конце будет `Ready: ...`, а в папке `game` — `disc1`, `disc2` и `tu`.
 
 ## Шаг 3. Шейдеры из вашей копии игры
@@ -107,8 +114,9 @@ sdmc:/switch/ds2-nx/
 
 | Сообщение или проблема | Что делать |
 | --- | --- |
-| `not the Title Update 2 this port needs` | Нужен TU2 с Media ID 2915C8F8, а не другой регион |
-| `Disc 1 default.xex does not match` | Образ не того издания или повреждён: нужен World (En/Fr/Es) |
+| `not a Title Update 2 this port supports` | Нужен TU2 с Media ID 2915C8F8 (World) или 2C199AEB (Russia), а не другой регион |
+| `Disc 1 default.xex is from the ... edition` | Диск и TU2 от разных изданий: возьмите TU2 с указанным Media ID |
+| `Disc 1 default.xex does not match` | Образ не того издания или повреждён: нужен World (En/Fr/Es) или Russia (En/Ru) |
 | `Not an Xbox 360 disc image` | Это не образ диска Xbox 360 (или он в другом формате) |
 | `--disc1: ... not found` | Неверный путь к файлу: проверьте имя и кавычки |
 | `devkitA64 not found` / `deko3d not installed` | Не выполнен пункт 3 шага 1 (devkitPro и `dkp-pacman -S switch-dev deko3d`) |
@@ -129,9 +137,12 @@ Xbox 360 discs and Title Update 2).
 ## You need
 
 - A Switch with **Atmosphère** and the Homebrew Menu, and a microSD card with **~15 GB** free (exFAT or FAT32).
-- Images of **your** Dead Space 2 Xbox 360 discs: **Disc 1** and **Disc 2** as `.iso`, World (En/Fr/Es) release.
-- **Title Update 2**: `TU_12K226V_000000C000000.00000000000G3` (Media ID 2915C8F8); on an Xbox 360 it is in
-  `Content/0000000000000000/454108DF/000B0000/`. Other regional TU2 packages carry another executable and are refused.
+- Images of **your** Dead Space 2 Xbox 360 discs: **Disc 1** and **Disc 2** as `.iso`, the **World** (En/Fr/Es) or
+  **Russia** (En/Ru) release.
+- **Title Update 2** for the same release: World `TU_12K226V_000000C000000.00000000000G3` (Media ID 2915C8F8), Russia
+  `TU_12K226V_000000K000000.00000000000G5` (Media ID 2C199AEB). On an Xbox 360 it is in
+  `Content/0000000000000000/454108DF/000B0000/`. Other regional TU2 packages are refused. Both releases run on the same
+  program: after TU2 their code is identical.
 - A computer with **macOS** (tested) or Linux (not tested), ~25 GB free and an internet connection.
 
 ## Step 1. Build ds2-nx.nro
@@ -154,7 +165,8 @@ deadspace2/tools/build_mac.sh                 # -> deadspace2/out/sw/deadspace2.
 python3 deadspace2/tools/stage_sd.py --disc1 "Dead Space 2 (Disc 1).iso" --disc2 "Dead Space 2 (Disc 2).iso" --tu "TU_12K226V_000000C000000.00000000000G3" -o game
 ```
 
-It checks every file against its hash and extracts both discs (5–15 minutes) into `game/disc1`, `game/disc2` and
+(For the Russian release, pass its images and `TU_12K226V_000000K000000.00000000000G5`.) It checks every file
+against its hash and extracts both discs (5–15 minutes) into `game/disc1`, `game/disc2` and
 `game/tu`.
 
 ## Step 3. Shaders from your copy
