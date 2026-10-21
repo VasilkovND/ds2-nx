@@ -78,13 +78,17 @@ struct Variante {
 };
 
 std::vector<uint32_t> EspecializacionesPorDefecto(bool vertices) {
-  if (vertices) return {kBase};
-  std::vector<uint32_t> v = {kBase, 0};
-  for (uint32_t f = 0; f < 8; ++f)
-    v.push_back(kBase | SPEC_CONSTANT_ALPHA_TEST | (f << SPEC_CONSTANT_ALPHA_FUNC_SHIFT));
-  v.push_back(kBase | SPEC_CONSTANT_PCF_BARATO);
-  v.push_back(kBase | SPEC_CONSTANT_PCF_BARATO | SPEC_CONSTANT_SOMBRA_MINIMO);
-  v.push_back(kBase | SPEC_CONSTANT_SIN_DESENFOQUE);
+  // Each value with and without kBase: the NFS renderer always set it, Dead Space 2's draws come without it (the console
+  // asks for 0 and for alpha test alone, 0x00060002...). Values a shader does not depend on collapse into one key.
+  std::vector<uint32_t> v;
+  for (const uint32_t base : {kBase, 0u}) {
+    v.push_back(base);
+    if (vertices) continue;
+    for (uint32_t f = 0; f < 8; ++f) v.push_back(base | SPEC_CONSTANT_ALPHA_TEST | (f << SPEC_CONSTANT_ALPHA_FUNC_SHIFT));
+    v.push_back(base | SPEC_CONSTANT_PCF_BARATO);
+    v.push_back(base | SPEC_CONSTANT_PCF_BARATO | SPEC_CONSTANT_SOMBRA_MINIMO);
+    v.push_back(base | SPEC_CONSTANT_SIN_DESENFOQUE);
+  }
   return v;
 }
 

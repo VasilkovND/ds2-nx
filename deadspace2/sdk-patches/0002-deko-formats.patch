@@ -1,8 +1,34 @@
 diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
-index 4cffec3..1c47522 100644
+index 4cffec3..88a9735 100644
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
-@@ -151,6 +151,7 @@ class RenderDk final : public DestinosNativos {
+@@ -29,6 +29,8 @@
+ #include <mutex>
+ #include <string>
+ #include <thread>
++#include <map>
++#include <tuple>
+ #include <unordered_map>
+ #include <unordered_set>
+ #include <vector>
+@@ -131,6 +133,16 @@ struct EntradaVerticesDk {
+     uint32_t ubicacion, enlace, offset;
+   };
+   std::vector<Atributo> lista;  // for the diagnostics: the position's stream
++  // The fetches the shader does itself (ElementoVertice::manual): each one's descriptor for dsVfetch (shader_common.h
++  // of the deko3d library: uint4 {storage buffer | format << 8 | signed << 16 | integer << 17, offset, stride,
++  // g_InputRemap code}) at its element's position, and the fetch constants of the storage buffers (0-3).
++  struct Manual {
++    uint32_t k = 0;  // the element's position: the descriptor's index
++    uint32_t ranura = 0, formato = 0, offset = 0, zancada = 0, remapeo = 0;
++    bool con_signo = false, entero = false;
++  };
++  std::vector<Manual> manuales;
++  std::vector<uint32_t> ranuras_manuales;  // storage buffer b reads vertex fetch constant ranuras_manuales[b]
+ };
+ 
+ class RenderDk final : public DestinosNativos {
+@@ -151,6 +163,7 @@ class RenderDk final : public DestinosNativos {
    }
    void EstadisticasOclusion(uint64_t valores[5]) const override;
    bool Dibujar(const PeticionDibujo& peticion) override;  // nfsmw_dk_dibujos.cpp
@@ -10,7 +36,7 @@ index 4cffec3..1c47522 100644
    EstadisticasDibujos EstadisticasDeDibujos() const override;
    void EsperarSubidas() override {}  // vertices are copied on the ring thread, before Dibujar returns
    uint64_t CopiasProfundidad() const override { return copias_profundidad_; }
-@@ -206,13 +207,30 @@ class RenderDk final : public DestinosNativos {
+@@ -206,25 +219,58 @@ class RenderDk final : public DestinosNativos {
    // engine (0.78 ms per Mpixel), keeps compressed images compressed, and orders against draws with Fragments barriers
    // instead of Full ones. rop_sin_barrera_: render target writes since the last barrier that made them visible to
    // sampling; copia3d_pendiente_: a copy since then, which the next draw or clear waits for.
@@ -44,7 +70,15 @@ index 4cffec3..1c47522 100644
    deko::Subida Reservar(uint32_t bytes, uint32_t alineacion);
  
    // ---- Render targets and resolved textures (nfsmw_dk_destinos.cpp)
-@@ -225,6 +243,20 @@ class RenderDk final : public DestinosNativos {
+   ImagenDk* DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch);
+   ImagenDk* DestinoProfundidad(uint32_t base, uint32_t formato, uint32_t pitch);
+   // The resolved texture at that address, if one exists and has content.
+-  const ImagenDk* TexturaResuelta(uint32_t direccion);
++  // `ancho`/`alto`: the size the fetch constant gives (0 = any). With several sizes resolved to that address
++  // (resueltas_otras_), the one of that size.
++  const ImagenDk* TexturaResuelta(uint32_t direccion, uint32_t ancho = 0, uint32_t alto = 0);
+   struct Resuelta {
+     ImagenDk imagen;
      uint32_t formato_guest = 0;
      bool escrita = false;
    };
@@ -65,7 +99,7 @@ index 4cffec3..1c47522 100644
    Resuelta* ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato, bool intercambio_rb,
                              bool profundidad);
    bool CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat formato, uint32_t ancho, uint32_t alto,
-@@ -393,7 +425,9 @@ class RenderDk final : public DestinosNativos {
+@@ -393,7 +439,9 @@ class RenderDk final : public DestinosNativos {
    // check; resolved textures and cubemaps, this frame only).
    uint32_t PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint32_t& ancho, uint32_t& alto, bool& puntual,
                             uint64_t& valido_hasta);
@@ -76,7 +110,20 @@ index 4cffec3..1c47522 100644
    uint32_t SamplerDe(const uint32_t* f, bool puntual);
    uint32_t VaciaDe(uint16_t tipo_shader) const;
    bool LeerNivel(uint64_t direccion, bool mosaico, uint32_t pitch_bloques, uint64_t fila_bytes, const FormatoDk& tf,
-@@ -703,4 +737,8 @@ class RenderDk final : public DestinosNativos {
+@@ -422,6 +470,12 @@ class RenderDk final : public DestinosNativos {
+   std::unordered_map<uint64_t, ImagenDk> destinos_;
+   std::unordered_map<uint64_t, ImagenDk> profundidades_;
+   std::unordered_map<uint32_t, Resuelta> resueltas_;
++  // The other sizes resolved to the same address, kept instead of destroyed. Dead Space 2 resolves 1280x360 and
++  // 1280x720 to one address every frame: each resolve destroyed and recreated the other's texture (175 times in
++  // 10 s), and the effects that sample the older one read an empty image (half the screen, in the decompression
++  // scene). Key: base, width, height, host format. At most kOtrasPorBase per address.
++  std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, Resuelta> resueltas_otras_;
++  static constexpr uint32_t kOtrasPorBase = 4;
+   // Read-backs: kBytesLecturaRanura per work slot in one CPU-cached, GPU-uncached block
+   std::vector<LecturasRanura> lecturas_;
+   DkMemBlock lectura_bloque_ = nullptr;
+@@ -703,4 +757,8 @@ class RenderDk final : public DestinosNativos {
  std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* proveedor, rex::memory::Memory* memoria,
                                                      rex::x360::RenderHooks& hooks);  // default in nfsmw_dk_destinos.h
  
@@ -119,8 +166,25 @@ index 643605a..fb2abd6 100644
    virtual EstadisticasDibujos EstadisticasDeDibujos() const = 0;
    // Deferred vertex copies finished: before returning the read pointer to the game.
    virtual void EsperarSubidas() = 0;
+diff --git a/include/rex/x360/shader_entry.h b/include/rex/x360/shader_entry.h
+index 09794c4..26e16af 100644
+--- a/include/rex/x360/shader_entry.h
++++ b/include/rex/x360/shader_entry.h
+@@ -18,6 +18,12 @@ struct ElementoVertice {
+   uint16_t instruccion = 0;  // index of the fetch instruction in the microcode
+   uint8_t uso = 0;           // DeclUsage: 0 position, 3 normal, 5 texcoord, 10 color...
+   uint8_t indice_uso = 0;
++  // The fetch reads at an index the shader computes (its source is not r0.x, the vertex's own index): Dead Space
++  // 2's particles read one record per particle at vertex / 4. The translated shader reads it from a storage buffer
++  // itself (dsVfetch, descriptor `k` = this element's position in `elementos`); the renderer binds the whole buffer
++  // and describes the fetch instead of making it a vertex attribute.
++  bool manual = false;
++  bool redondeado = false;  // is_index_rounded: the index is rounded, not truncated
+ };
+ 
+ struct SamplerShader {
 diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
-index dcd46c7..21087fa 100644
+index dcd46c7..497e058 100644
 --- a/src/x360/deko/destinos.cpp
 +++ b/src/x360/deko/destinos.cpp
 @@ -8,12 +8,17 @@
@@ -212,7 +276,42 @@ index dcd46c7..21087fa 100644
  }  // namespace
  
  // ---- Construction
-@@ -529,9 +591,10 @@ void RenderDk::AntesDe3D() {
+@@ -327,7 +389,9 @@ RenderDk::RenderDk(deko::ProveedorDeko3d& proveedor, rex::memory::Memory* memori
+   }
+   RecalcularRampa();
+ 
+-  // The DKSH cache: the console's own, or the one the PC tool made (shaders/dksh) next to the NRO.
++  // The DKSH cache: the console's own (cache/, what it compiled while playing) and the one the PC tool made next to the
++  // NRO (shaders/build_library.sh), merged. Loading only the first, a library rebuilt on the PC had none of its new or
++  // changed shaders: each one was compiled on the console when first drawn, 4-9 s each for Dead Space 2's particles.
+   std::string motivo;
+   for (const std::filesystem::path& ruta :
+        {RutaCache(), rex::filesystem::GetExecutableFolder() / "shadercache_dksh.bin"}) {
+@@ -336,11 +400,19 @@ RenderDk::RenderDk(deko::ProveedorDeko3d& proveedor, rex::memory::Memory* memori
+       continue;
+     }
+     std::vector<uint8_t> datos((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+-    if (cache_.Cargar(datos, motivo)) {
+-      REXLOG_INFO("[deko3d] cache de DKSH: {} entradas de {}", cache_.size(), ruta.string());
+-      break;
++    deko::CacheDksh leida;
++    if (!leida.Cargar(datos, motivo)) {
++      REXLOG_WARN("[deko3d] cache de DKSH {} no se usa: {}", ruta.string(), motivo);
++      continue;
+     }
+-    REXLOG_WARN("[deko3d] cache de DKSH {} no se usa: {}", ruta.string(), motivo);
++    size_t nuevas = 0;
++    for (const auto& [clave, dksh] : leida.entradas()) {
++      if (!cache_.Buscar(clave)) {
++        cache_.Anadir(clave, dksh);
++        ++nuevas;
++      }
++    }
++    REXLOG_INFO("[deko3d] cache de DKSH: {} entradas de {} ({} nuevas)", leida.size(), ruta.string(), nuevas);
+   }
+   if (!cache_.size()) {
+     REXLOG_WARN("[deko3d] sin cache de DKSH: cada shader se compila en la consola la primera vez que se usa");
+@@ -529,9 +601,10 @@ void RenderDk::AntesDe3D() {
  }
  
  bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
@@ -225,7 +324,7 @@ index dcd46c7..21087fa 100644
      return false;
    }
    AsegurarTrabajo();
-@@ -542,6 +605,9 @@ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32
+@@ -542,6 +615,9 @@ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32
    }
    const int32_t desplazamiento[4] = {int32_t(x0) - int32_t(dx), int32_t(y0) - int32_t(dy), 0, 0};
    std::memcpy(ubo.cpu, desplazamiento, sizeof(desplazamiento));
@@ -235,7 +334,7 @@ index dcd46c7..21087fa 100644
    const uint32_t ranura = VistaDe(origen, 0x688, z ? 0 /* RRRR */ : 0x688);
    DkCmdBuf cmd = nucleo_.comandos();
    MarcarGpu(kGpuCopias);
-@@ -596,7 +662,8 @@ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32
+@@ -596,7 +672,8 @@ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32
    dkCmdBufBindDepthStencilState(cmd, &ds);
    dkCmdBufBindVtxAttribState(cmd, nullptr, 0);
    dkCmdBufBindVtxBufferState(cmd, nullptr, 0);
@@ -245,7 +344,7 @@ index dcd46c7..21087fa 100644
    dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);
    dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo.gpu, 256);
    dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura, 0));
-@@ -693,6 +760,69 @@ void RenderDk::PrepararDestino(ImagenDk& imagen) {
+@@ -693,6 +770,69 @@ void RenderDk::PrepararDestino(ImagenDk& imagen) {
    OlvidarEstado();
  }
  
@@ -315,7 +414,7 @@ index dcd46c7..21087fa 100644
  ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch) {
    if (!pitch) {
      Rechazar(7, "destino de render con pitch 0");
-@@ -705,11 +835,16 @@ ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch
+@@ -705,11 +845,16 @@ ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch
    // The height from the pitch, as the Vulkan path (nfsmw_nativo_destinos.cpp, ObtenerDestino explains why).
    const uint32_t alto = std::min(kAltoMaximoDestino, std::max<uint32_t>(720, (pitch + 15) & ~15u));
    ImagenDk imagen;
@@ -334,7 +433,7 @@ index dcd46c7..21087fa 100644
      Rechazar(8, "no se pudo crear un destino de render");
      return nullptr;
    }
-@@ -750,7 +885,10 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
+@@ -750,7 +895,10 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
      Rechazar(9, "copia a una textura de tamano 0");
      return nullptr;
    }
@@ -346,7 +445,82 @@ index dcd46c7..21087fa 100644
    if (auto it = resueltas_.find(base); it != resueltas_.end()) {
      Resuelta& r = it->second;
      if (r.imagen.ancho == ancho && r.imagen.alto == alto && r.imagen.formato == formato_host) {
-@@ -906,8 +1044,8 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -761,14 +909,38 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
+       r.imagen.intercambio_rb = intercambio_rb;
+       return &r;
+     }
+-    // Another size or format at the same address. Its memory and descriptors are only reused after the fence of
+-    // this slot, so nothing waits here.
++    // Another size or format at the same address: this one is kept for its own size (resueltas_otras_), and the
++    // one of the new size, if it was kept, comes back without being created again.
+     if (frontal_.pendiente && frontal_.resuelta == &r) {
+-      frontal_.pendiente = false;  // its texture goes: nothing to copy into
++      frontal_.pendiente = false;  // it moves: nothing to copy into
++    }
++    const auto vieja = std::make_tuple(base, r.imagen.ancho, r.imagen.alto, uint32_t(r.imagen.formato));
++    if (auto o = resueltas_otras_.find(vieja); o != resueltas_otras_.end()) {
++      DestruirImagen(o->second.imagen);
++      resueltas_otras_.erase(o);
+     }
+-    DestruirImagen(r.imagen);
++    uint32_t de_la_base = 0;
++    for (auto o = resueltas_otras_.lower_bound(std::make_tuple(base, 0u, 0u, 0u));
++         o != resueltas_otras_.end() && std::get<0>(o->first) == base;) {
++      if (++de_la_base >= kOtrasPorBase) {
++        DestruirImagen(o->second.imagen);
++        o = resueltas_otras_.erase(o);
++      } else {
++        ++o;
++      }
++    }
++    resueltas_otras_.emplace(vieja, std::move(r));
+     resueltas_.erase(it);
+     SombraMinimoResueltaEscrita(base);
++    const auto nueva = std::make_tuple(base, ancho, alto, uint32_t(formato_host));
++    if (auto o = resueltas_otras_.find(nueva); o != resueltas_otras_.end()) {
++      Resuelta vuelta = std::move(o->second);
++      resueltas_otras_.erase(o);
++      vuelta.formato_guest = formato;
++      vuelta.imagen.intercambio_rb = intercambio_rb;
++      ++generacion_texturas_;  // that address is sampled from this image again
++      return &resueltas_.emplace(base, std::move(vuelta)).first->second;
++    }
+   }
+   Resuelta r;
+   // A depth texture has the depth targets' flags (resolves without copy swap their images).
+@@ -788,7 +960,7 @@ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uin
+   return &resueltas_.emplace(base, std::move(r)).first->second;
+ }
+ 
+-const ImagenDk* RenderDk::TexturaResuelta(uint32_t direccion) {
++const ImagenDk* RenderDk::TexturaResuelta(uint32_t direccion, uint32_t ancho, uint32_t alto) {
+   if (frontal_.pendiente && direccion == frontal_.base) {
+     MaterializarFrontal();  // a draw samples the front buffer: it gets the copy now
+   } else if (frontal_obsoleta_ && direccion == frontal_obsoleta_) {
+@@ -802,10 +974,19 @@ const ImagenDk* RenderDk::TexturaResuelta(uint32_t direccion) {
+     }
+   }
+   const auto it = resueltas_.find(direccion);
+-  if (it == resueltas_.end() || !it->second.escrita) {
+-    return nullptr;
++  const bool actual = it != resueltas_.end() && it->second.escrita;
++  // A fetch of another size than the address's last resolve: the image of its size, if one was kept.
++  if (ancho && alto && (!actual || it->second.imagen.ancho != ancho || it->second.imagen.alto != alto)) {
++    for (auto o = resueltas_otras_.lower_bound(std::make_tuple(direccion, ancho, alto, 0u));
++         o != resueltas_otras_.end() && std::get<0>(o->first) == direccion && std::get<1>(o->first) == ancho &&
++         std::get<2>(o->first) == alto;
++         ++o) {
++      if (o->second.escrita) {
++        return &o->second.imagen;
++      }
++    }
+   }
+-  return &it->second.imagen;
++  return actual ? &it->second.imagen : nullptr;
+ }
+ 
+ // ---- Copies (resolve and clear)
+@@ -906,8 +1087,8 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
    }
    const uint32_t info_color = reg.rb_color_info[origen];
    const uint32_t formato_color = (info_color >> 16) & 0xF;
@@ -357,7 +531,7 @@ index dcd46c7..21087fa 100644
      return Rechazar(100 + formato_color, "formato de destino de render todavia no soportado");
    }
    int32_t x0, y0, x1, y1;
-@@ -925,11 +1063,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -925,11 +1106,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
      Resuelta* resuelta = nullptr;
      uint32_t dx = 0, dy = 0;
      uint32_t base_resuelta = 0;
@@ -377,7 +551,7 @@ index dcd46c7..21087fa 100644
        Rechazar(200 + formato_destino, "formato de copia todavia no soportado");
      } else {
        const uint32_t pitch_destino = reg.rb_copy_dest_pitch & 0x3FFF;
-@@ -937,8 +1078,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -937,8 +1121,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
        // 4 bytes per texel: the base in multiples of 32 texels (GetResolveInfo).
        const uint32_t base_x = uint32_t(x0) & ~uint32_t(31);
        const uint32_t base_y = uint32_t(y0) & ~uint32_t(31);
@@ -391,7 +565,16 @@ index dcd46c7..21087fa 100644
        dx = uint32_t(x0) - base_x;
        dy = uint32_t(y0) - base_y;
        base_resuelta = base & 0x1FFFFFFF;
-@@ -1011,6 +1155,9 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -967,7 +1154,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // nfsmw_nativo_frontal_perezoso: the whole scene to the front buffer of the last Swap, not read back.
+       const int32_t maximo_lectura = REXCVAR_GET(nfsmw_nativo_leer_resueltas_texels);
+       const bool se_lee = maximo_lectura > 0 && uint64_t(ancho) * alto <= uint64_t(maximo_lectura);
+-      static const bool frontal_perezoso = REXCVAR_GET(nfsmw_nativo_frontal_perezoso);
++      const bool frontal_perezoso = REXCVAR_GET(nfsmw_nativo_frontal_perezoso);  // read each time: the game can switch it (ds2 safe mode)
+       const bool frontal = frontal_perezoso && !frontal_apagado_ && base_resuelta == ultimo_frontal_ && !encoger &&
+                            !se_lee && x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == resuelta->imagen.ancho &&
+                            alto == resuelta->imagen.alto;
+@@ -1011,6 +1198,9 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
          ++resuelta->imagen.version;
          SombraMinimoResueltaEscrita(base_resuelta);
          ++copias_;
@@ -401,7 +584,71 @@ index dcd46c7..21087fa 100644
          if (encoger) {
            LeerResuelta(reg, resuelta->imagen, x0, y0, dx, dy, cabe_ancho, cabe_alto);
          } else {
-@@ -1302,6 +1449,9 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
+@@ -1021,7 +1211,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     }
+   }
+   // nfsmw_nativo_saltar_borrados_repetidos: the target already holds that value and nothing has been drawn since.
+-  static const bool saltar_repetidos = REXCVAR_GET(nfsmw_nativo_saltar_borrados_repetidos);
++  const bool saltar_repetidos = REXCVAR_GET(nfsmw_nativo_saltar_borrados_repetidos);  // read each time: the game can switch it (ds2 safe mode)
+   if (borrar_color && saltar_repetidos) {
+     const uint64_t valor = uint64_t(reg.rb_color_clear) | (uint64_t(reg.rb_color_clear_lo) << 32);
+     const auto it = borrado_previo_.find(destino_render->serie);
+@@ -1040,9 +1230,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // painted from it, and a later clear makes this one unnecessary.
+     destino_render->borrado_pendiente = true;
+     ++borrados_;
+-    static const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_color_aplazado);
++    const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_color_aplazado);  // read each time: the game can switch it (ds2 safe mode)
+     if (aplazar) {
+       ++borrados_aplazados_;
++      // The target may be bound in the current pass, and a draw with the same targets does not bind them again: the
++      // pass ends here so the next draw goes through EmpezarPase, which does the clear. Without it the clear waited for
++      // the resolve and wiped what had been drawn since (Dead Space 2's decompression scene: some particles bind the
++      // G-buffer before its clear, then the whole G-buffer pass was cleared away at its resolve).
++      g_.pase_valido = false;
+     } else {
+       HacerBorradoPendiente(*destino_render);
+     }
+@@ -1061,7 +1256,7 @@ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
+   }
+   SombraMinimoAntesDeBorrar(*profundidad);
+   profundidad->contenido_invalido = false;  // cleared: what a swap took away is no longer needed
+-  static const bool saltar_repetidos = REXCVAR_GET(nfsmw_nativo_saltar_borrados_repetidos);
++  const bool saltar_repetidos = REXCVAR_GET(nfsmw_nativo_saltar_borrados_repetidos);  // read each time: the game can switch it (ds2 safe mode)
+   EstadoBorrado& previo = borrado_previo_[profundidad->serie];
+   if (saltar_repetidos && previo.dibujos == dibujados_ && previo.valor == reg.rb_depth_clear) {
+     ++borrados_saltados_;
+@@ -1072,9 +1267,10 @@ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
+   profundidad->borrado_z = float(reg.rb_depth_clear >> 8) / 16777215.0f;
+   profundidad->borrado_estencil = uint8_t(reg.rb_depth_clear & 0xFF);
+   profundidad->borrado_pendiente = true;
+-  static const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_z_aplazado);
++  const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_z_aplazado);  // read each time: the game can switch it (ds2 safe mode)
+   if (aplazar) {
+     ++borrados_aplazados_;  // done when the target is next bound (EmpezarPase), copied or swapped
++    g_.pase_valido = false;  // even if it is bound now (see Copiar)
+     return;
+   }
+   HacerBorradoPendiente(*profundidad);
+@@ -1101,7 +1297,7 @@ void RenderDk::HacerBorradoPendiente(ImagenDk& destino) {
+ }
+ 
+ uint32_t RenderDk::AltoDeBorrado(const ImagenDk& destino) const {
+-  static const bool area_util = REXCVAR_GET(nfsmw_dk_borrar_area_util);
++  const bool area_util = REXCVAR_GET(nfsmw_dk_borrar_area_util);  // read each time: the game can switch it (ds2 safe mode)
+   if (!area_util || !destino.alto_usado) {
+     return destino.alto;
+   }
+@@ -1273,7 +1469,7 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
+   }
+   HacerBorradoPendiente(*profundidad);
+   CompletarBanda(*profundidad, uint32_t(std::max(y1, 0)), false, 0);
+-  static const bool sin_copia = REXCVAR_GET(nfsmw_nativo_resolver_sin_copia);
++  const bool sin_copia = REXCVAR_GET(nfsmw_nativo_resolver_sin_copia);  // read each time: the game can switch it (ds2 safe mode)
+   const bool entero = x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == profundidad->ancho &&
+                       alto == profundidad->alto && resuelta->imagen.ancho == profundidad->ancho &&
+                       resuelta->imagen.alto == profundidad->alto && resuelta->imagen.formato == profundidad->formato;
+@@ -1302,6 +1498,9 @@ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool
    ++resuelta->imagen.version;
    SombraMinimoResueltaEscrita(base);
    ++copias_;
@@ -411,7 +658,7 @@ index dcd46c7..21087fa 100644
    OlvidarEstado();
  }
  
-@@ -1516,7 +1666,12 @@ const ImagenDk* RenderDk::CompaneraSombraCoches(bool capaz, uint32_t ps) {
+@@ -1516,7 +1715,12 @@ const ImagenDk* RenderDk::CompaneraSombraCoches(bool capaz, uint32_t ps) {
  void RenderDk::LeerResuelta(const RegistrosCopia& reg, const ImagenDk& imagen, int32_t x0, int32_t y0, uint32_t dx,
                              uint32_t dy, uint32_t ancho, uint32_t alto) {
    const int32_t maximo = REXCVAR_GET(nfsmw_nativo_leer_resueltas_texels);
@@ -425,7 +672,7 @@ index dcd46c7..21087fa 100644
      return;
    }
    LecturasRanura& l = lecturas_[trabajo_ % kRanuras];
-@@ -1558,7 +1713,10 @@ void RenderDk::EscribirLecturas(uint32_t ranura) {
+@@ -1558,7 +1762,10 @@ void RenderDk::EscribirLecturas(uint32_t ranura) {
    for (const LecturaDk& p : l.pendientes) {
      dkMemBlockFlushCpuCache(lectura_bloque_, p.offset, p.ancho * p.alto * 4);  // what the GPU wrote, not the cache
      const uint8_t* const datos = lectura_cpu_ + p.offset;
@@ -437,7 +684,7 @@ index dcd46c7..21087fa 100644
      const uint32_t orden_copia = p.info & 0x7;  // Endian128: 0-3 as xenos::Endian
      const auto orden = orden_copia <= 3 ? static_cast<xenos::Endian>(orden_copia) : xenos::Endian::k8in32;
      // Each texel is a permutation of its 4 bytes (R/B swap plus GpuSwap), computed once with marked bytes.
-@@ -1670,6 +1828,11 @@ bool RenderDk::CrearShadersSalida() {
+@@ -1670,6 +1877,11 @@ bool RenderDk::CrearShadersSalida() {
    }
    const deko::Compilador::Resultado color = compilador_.Compilar(false, kFsCopiaColor);
    fs_copia_color_valido_ = color.ok && nucleo_.CargarShader(fs_copia_color_, color.dksh, "copia de color");
@@ -449,7 +696,7 @@ index dcd46c7..21087fa 100644
    const deko::Compilador::Resultado z = compilador_.Compilar(false, kFsCopiaProfundidad);
    fs_copia_profundidad_valido_ = z.ok && nucleo_.CargarShader(fs_copia_profundidad_, z.dksh, "copia de profundidad");
    if (!fs_copia_color_valido_ || !fs_copia_profundidad_valido_) {
-@@ -1803,6 +1966,24 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
+@@ -1803,6 +2015,24 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
  }
  
  bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) {
@@ -474,7 +721,7 @@ index dcd46c7..21087fa 100644
    RexSwitchPerfCount(0);  // the profiler's "juego N fps"
    const uint64_t ahora = deko::AhoraNs();
    if (ultimo_swap_ns_) {
-@@ -2286,4 +2467,186 @@ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* prov
+@@ -2286,4 +2516,186 @@ std::unique_ptr<DestinosNativos> CrearDestinosDeko3d(deko::ProveedorDeko3d* prov
    return std::make_unique<RenderDk>(*proveedor, memoria, hooks);
  }
  
@@ -662,10 +909,65 @@ index dcd46c7..21087fa 100644
 +
  }  // namespace rex::x360
 diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
-index e3fb6f1..614b21a 100644
+index e3fb6f1..5d8264e 100644
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
-@@ -1059,6 +1059,11 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -266,9 +266,17 @@ void IndicesDe32(const uint8_t* datos, uint32_t cuenta, bool indices32, xenos::E
+       std::memcpy(&crudo, datos + size_t(i) * 4, 4);
+       v = xenos::GpuSwap(crudo, orden) & 0xFFFFFF;
+     } else {
+-      uint16_t crudo;
+-      std::memcpy(&crudo, datos + size_t(i) * 2, 2);
+-      v = xenos::GpuSwap(crudo, orden);
++      // The GPU reads 16-bit indices as 32-bit words and swaps the whole word: with k8in32 or k16in32 the two indices
++      // of a word trade places (GpuSwap of a single uint16_t only knows kNone and k8in16, and returned the others
++      // unswapped: indices like 0x0100 for 1, triangles across a whole mesh). Each index is the matching half of its
++      // swapped word; the same result as before for kNone and k8in16.
++      uint32_t palabra = 0;
++      const uint8_t* par = datos + size_t(i & ~1u) * 2;
++      // The last index of an odd count has no partner: its word's other half is padding the GPU reads too, unless
++      // it would cross into the next page.
++      std::memcpy(&palabra, par, (i + 1 == cuenta && !(i & 1) && (uintptr_t(par) & 0xFFF) > 0xFFC) ? 2 : 4);
++      palabra = xenos::GpuSwap(palabra, orden);
++      v = (i & 1) ? (palabra >> 16) : (palabra & 0xFFFF);
+     }
+     if (reinicio && v == indice_reinicio) {
+       if constexpr (kEscribir) {
+@@ -499,6 +507,33 @@ bool RenderDk::CalcularEntrada(const PeticionDibujo& p, EntradaVerticesDk& entra
+     const uint32_t formato = (d1 >> 16) & 0x3F;
+     const uint32_t zancada = (d2 & 0xFF) * 4;
+     const int32_t offset = (int32_t(d2 << 1) >> 9) * 4;
++    if (elemento.manual) {
++      // Read by the shader at the index it computes (dsVfetch): the whole buffer as a storage buffer, described here.
++      if (offset < 0) {
++        return Rechazar(24, "offset de vertice negativo o demasiado grande");
++      }
++      uint32_t b = 0;
++      while (b < entrada.ranuras_manuales.size() && entrada.ranuras_manuales[b] != ranura) {
++        ++b;
++      }
++      if (b == entrada.ranuras_manuales.size()) {
++        if (b >= 4) {
++          return Rechazar(26, "mas de 4 bufers de vertices leidos por el propio shader");
++        }
++        entrada.ranuras_manuales.push_back(ranura);
++      }
++      EntradaVerticesDk::Manual m;
++      m.k = uint32_t(&elemento - vs.elementos.data());
++      m.ranura = ranura;
++      m.formato = formato;
++      m.offset = uint32_t(offset);
++      m.zancada = zancada;
++      m.remapeo = CodigoRemapeo(original, d1 & 0xFFF);
++      m.con_signo = (d1 >> 12) & 0x1;
++      m.entero = (d1 >> 13) & 0x1;
++      entrada.manuales.push_back(m);
++      continue;
++    }
+     const int32_t ubicacion = UbicacionDeUso(elemento.uso, elemento.indice_uso);
+     if (ubicacion < 0 || ubicacion >= 16 || ((ubicaciones_usadas >> ubicacion) & 0x1)) {
+       Avisar(22, "elemento de vertices sin ubicacion libre en el shader: se omite");
+@@ -1059,6 +1094,11 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
      case 13:
        primitiva = DkPrimitive_Quads;  // native (the Vulkan backend makes triangle lists of them)
        break;
@@ -677,7 +979,7 @@ index e3fb6f1..614b21a 100644
      default:
        return Rechazar(100 + tipo, "tipo de primitiva todavia no soportado");
    }
-@@ -1093,8 +1098,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1093,8 +1133,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
      }
      const uint32_t info = r[kInfoColor[i]];
      const uint32_t formato = (info >> 16) & 0xF;
@@ -687,7 +989,111 @@ index e3fb6f1..614b21a 100644
        return Rechazar(200 + formato, "formato de destino de color todavia no soportado");
      }
      claves[i] = (uint64_t(1) << 63) | (uint64_t(info & 0xFFF) << 24) | (uint64_t(formato) << 16) | pitch;
-@@ -1987,6 +1991,12 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -1103,7 +1142,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   }
+   const uint32_t control_profundidad = r[gr::XE_GPU_REG_RB_DEPTHCONTROL];
+   // Draws that cannot change a pixel (nfsmw_nativo_saltar_invisibles; the Vulkan backend explains both cases).
+-  static const bool saltar_invisibles = REXCVAR_GET(nfsmw_nativo_saltar_invisibles);
++  const bool saltar_invisibles = REXCVAR_GET(nfsmw_nativo_saltar_invisibles);  // read each time: the game can switch it (ds2 safe mode)
+   if (saltar_invisibles && mascaras) {
+     const uint32_t control_color = r[gr::XE_GPU_REG_RB_COLORCONTROL];
+     const bool alfa_nunca = ((control_color >> 3) & 0x1) && (control_color & 0x7) == 0;
+@@ -1133,7 +1172,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   if (!mascaras && ps) {
+     const uint32_t control_color = r[gr::XE_GPU_REG_RB_COLORCONTROL];
+     const bool prueba_alfa = ((control_color >> 3) & 0x1) && (control_color & 0x7) != 7;
+-    static const bool sin_ps_sin_color = REXCVAR_GET(nfsmw_nativo_sin_ps_sin_color);
++    const bool sin_ps_sin_color = REXCVAR_GET(nfsmw_nativo_sin_ps_sin_color);  // read each time: the game can switch it (ds2 safe mode)
+     if (!prueba_alfa && !ps->descarta && !(ps->salidas & 0x10)) {
+       if (sin_ps_sin_color) {
+         ps = nullptr;
+@@ -1450,7 +1489,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   // --- Specialization and shared constants
+   uint32_t especializacion = entrada->especializacion;
+   static const bool inv_tamano = REXCVAR_GET(nfsmw_nativo_inv_tamano_tex);
+-  static const bool pcf_barato = REXCVAR_GET(nfsmw_nativo_pcf_barato);
++  const bool pcf_barato = REXCVAR_GET(nfsmw_nativo_pcf_barato);  // read each time: the game can switch it (ds2 safe mode)
+   if (inv_tamano) {
+     especializacion |= kSpecInvTamanoTex;
+   }
+@@ -1511,6 +1550,10 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   compartidas[69] = funcion_alfa;
+   std::memcpy(&compartidas[70], ndc, sizeof(ndc));
+   std::copy(entrada->remapeos.begin(), entrada->remapeos.end(), compartidas + 74);
++  // g_IndiceBase (byte 488): the first vertex index of the draw. The draw starts its vertex buffers at vmin (base
++  // vertex -vmin for indices; the index offset for auto-indexed draws), so SV_VertexID counts from it, and the vertex
++  // shaders that read the Xenos vertex index (r0.x: Dead Space 2's particles) add it back.
++  compartidas[122] = vmin;
+ 
+   // --- The deferred sky (nfsmw_nativo_cielo_aplazado; the Vulkan path's criteria, explained there). The dome is the
+   // sky's pixel shader, opaque, testing depth without writing it, no stencil, 480 indices, the first draw of the
+@@ -1541,7 +1584,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+       REXLOG_WARN("[deko3d] cielo: la guardia ve {} domos en el MISMO fotograma; no se aplaza nada en la sesion",
+                   cielo_guardia_en_fotograma_);
+     }
+-    static const bool aplazar_cielo = REXCVAR_GET(nfsmw_nativo_cielo_aplazado);
++    const bool aplazar_cielo = REXCVAR_GET(nfsmw_nativo_cielo_aplazado);  // read each time: the game can switch it (ds2 safe mode)
+     es_cielo = aplazar_cielo && es_el_domo && cielo_guardia_ == kCieloAplazando;
+   }
+   if (cielo_pendiente_ && (es_cielo || !(opaco_en_todos && escribe_z_dibujo))) {
+@@ -1773,6 +1816,47 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   for (size_t b = 0; b < entrada->enlaces.size(); ++b) {
+     dkCmdBufBindVtxBuffers(cmd, uint32_t(b), &bufers[b], 1);
+   }
++  // The fetches the shader does itself (EntradaVerticesDk::manuales): each buffer whole, as a storage buffer (its
++  // words in host order, as the vertex buffers), and the descriptors in uniform buffer 3 of the vertex stage.
++  if (!entrada->manuales.empty()) {
++    for (size_t b = 0; b < entrada->ranuras_manuales.size(); ++b) {
++      const uint32_t d0 = r[kRegFetch + entrada->ranuras_manuales[b] * 2];
++      const uint32_t d1 = r[kRegFetch + entrada->ranuras_manuales[b] * 2 + 1];
++      const uint64_t direccion = uint64_t(d0 & 0x1FFFFFFC);
++      const uint32_t bytes = ((d1 >> 2) & 0xFFFFFF) * 4;
++      if ((d0 & 0x3) != uint32_t(xenos::FetchConstantType::kVertex) || !bytes || bytes > (8u << 20) ||
++          direccion + bytes > kMemoriaFisica) {
++        return Rechazar(27, "bufer de vertices leido por el shader invalido o demasiado grande");
++      }
++      const deko::Subida s = nucleo_.Reservar(bytes, 16);
++      if (!s) {
++        return Rechazar(13, "sin sitio en el anillo de subida");
++      }
++      CopiarVertices(TrabajoCopia{memoria_->TranslatePhysical(uint32_t(direccion)), s.cpu, bytes / 4,
++                                  static_cast<xenos::Endian>(d1 & 0x3)});
++      dkCmdBufBindStorageBuffer(cmd, DkStage_Vertex, uint32_t(b), s.gpu, bytes);
++    }
++    const deko::Subida descriptores = nucleo_.Reservar(256, DK_UNIFORM_BUF_ALIGNMENT);
++    if (!descriptores) {
++      return Rechazar(13, "sin sitio en el anillo de subida");
++    }
++    std::array<uint32_t, 64> v{};
++    for (const EntradaVerticesDk::Manual& m : entrada->manuales) {
++      if (m.k >= 16) {
++        continue;
++      }
++      uint32_t b = 0;
++      while (entrada->ranuras_manuales[b] != m.ranura) {
++        ++b;
++      }
++      v[m.k * 4 + 0] = b | (m.formato << 8) | (uint32_t(m.con_signo) << 16) | (uint32_t(m.entero) << 17);
++      v[m.k * 4 + 1] = m.offset;
++      v[m.k * 4 + 2] = m.zancada;
++      v[m.k * 4 + 3] = m.remapeo;
++    }
++    std::memcpy(descriptores.cpu, v.data(), sizeof(v));
++    dkCmdBufBindUniformBuffer(cmd, DkStage_Vertex, 3, descriptores.gpu, 256);
++  }
+   cortar_etapa(3);
+   DkGpuAddr dir_indices = 0;
+   if (con_indices) {
+@@ -1797,7 +1881,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     dkCmdBufBindIdxBuffer(cmd, indices_de_16 ? DkIdxFormat_Uint16 : DkIdxFormat_Uint32, dir_indices);
+   }
+   cortar_etapa(4);
+-  static const bool por_diferencias = REXCVAR_GET(nfsmw_dk_constantes_por_diferencias);
++  const bool por_diferencias = REXCVAR_GET(nfsmw_dk_constantes_por_diferencias);  // read each time: the game can switch it (ds2 safe mode)
+   if (por_diferencias && !es_cielo) {
+     constexpr uint32_t kBloqueCompartidas = 512;  // dkCmdBufPushConstants wants the block size in 256-byte steps
+     if (bloques_trabajo_ != trabajo_) {
+@@ -1987,6 +2071,12 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
          }
          dkCmdBufReportCounter(cmd, DkCounter_Timestamp, marca_vez);
        }
@@ -701,7 +1107,7 @@ index e3fb6f1..614b21a 100644
          dkCmdBufDrawIndexed(cmd, primitiva, n_indices, 1, 0, -int32_t(vmin), 0);
        } else {
 diff --git a/src/x360/deko/texturas.cpp b/src/x360/deko/texturas.cpp
-index 8118904..3786428 100644
+index 8118904..3c1c004 100644
 --- a/src/x360/deko/texturas.cpp
 +++ b/src/x360/deko/texturas.cpp
 @@ -93,6 +93,35 @@ void LeerNivelMosaicoDeSiempre(const uint8_t* origen, uint32_t pitch_bloques, ui
@@ -821,7 +1227,25 @@ index 8118904..3786428 100644
  uint32_t RenderDk::VaciaDe(uint16_t tipo_shader) const {
    return TipoVolumen(tipo_shader) ? 1 : TipoCubo(tipo_shader) ? 2 : 0;
  }
-@@ -402,11 +480,20 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -394,23 +472,42 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+     return VaciaDe(tipo_shader);
+   }
+   const uint32_t dimension = (f[5] >> 9) & 0x3;
+-  const bool cubo = dimension == uint32_t(xenos::DataDimension::kCube);
++  bool cubo = dimension == uint32_t(xenos::DataDimension::kCube);
+   const bool volumen = dimension == uint32_t(xenos::DataDimension::k3D);
++  // A cube read by a 2D fetch: on the Xenos that reads the first face (it starts at the base address with a 2D
++  // texture's layout). Dead Space 2 does it; an empty texture made what it draws invisible. Base level only (the
++  // faces' mips are laid out differently), and its own cache key.
++  bool cara0 = false;
++  if (cubo && !TipoCubo(tipo_shader) && !TipoVolumen(tipo_shader)) {
++    cubo = false;
++    cara0 = true;
++    Avisar(39, "cubo leido como 2D: se usa su primera cara");
++  }
+   if (dimension != uint32_t(xenos::DataDimension::k2DOrStacked) && !cubo && !volumen) {
+     Avisar(30, "texturas 1D todavia no soportadas: se usa una vacia");
+     return VaciaDe(tipo_shader);
    }
    if (TipoVolumen(tipo_shader) != volumen || TipoCubo(tipo_shader) != cubo) {
      Avisar(29, "la dimension de la textura no es la que declara el shader: se usa una vacia");
@@ -845,7 +1269,13 @@ index 8118904..3786428 100644
    const uint32_t swizzle = (f[3] >> 1) & 0xFFF;
    const uint32_t base = (f[1] >> 12) << 12;
    if (!cubo && !volumen) {
-@@ -421,7 +508,16 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+-    if (const ImagenDk* resuelta = TexturaResuelta(base & 0x1FFFFFFF)) {
++    if (const ImagenDk* resuelta =
++            TexturaResuelta(base & 0x1FFFFFFF, (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1)) {
+       // Resolved textures report their size like any other (without it the shadow PCF taps collapse).
+       ancho_out = resuelta->ancho;
+       alto_out = resuelta->alto;
+@@ -421,7 +518,16 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
        }
        // The emulation's copy swaps channels in memory (copy_dest_swap) and the fetch swizzle undoes it; here the copy
        // is image to image, so the swap goes into the host channels.
@@ -863,7 +1293,7 @@ index 8118904..3786428 100644
      }
    }
    const uint32_t formato = f[1] & 0x3F;
-@@ -430,6 +526,10 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -430,6 +536,10 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
      Avisar(400 + formato, "formato de textura todavia no soportado: se usa una vacia");
      return VaciaDe(tipo_shader);
    }
@@ -874,7 +1304,25 @@ index 8118904..3786428 100644
    // size_2d: 13 + 13 bits; size_3d: 11 + 11 + 10 bits (xenos.h).
    const uint32_t ancho = volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1;
    const uint32_t alto = volumen ? ((f[2] >> 11) & 0x7FF) + 1 : ((f[2] >> 13) & 0x1FFF) + 1;
-@@ -573,6 +673,75 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -447,7 +557,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+   const uint64_t zancada_cara =
+       (uint64_t((pitch_bloques + 31) & ~uint32_t(31)) * tf.bytes * ((bloques_y + 31) & ~uint32_t(31)) + 4095) &
+       ~uint64_t(4095);
+-  const uint32_t claves[5] = {f[0] & 0xFFC003FC, f[1], f[2], (f[4] >> 2) & 0xFF, f[5] >> 9};
++  const uint32_t claves[5] = {f[0] & 0xFFC003FC, f[1], f[2], (f[4] >> 2) & 0xFF, (f[5] >> 9) | (uint32_t(cara0) << 31)};
+   const uint64_t clave = XXH3_64bits(claves, sizeof(claves));
+ 
+   // Mip levels with the rules of GetSubresourcesFromFetchConstant: no mip address, no mips; the maximum clamped to the
+@@ -455,7 +565,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+   static const bool mipmaps = REXCVAR_GET(nfsmw_nativo_mipmaps);
+   const bool mosaico = (f[0] >> 31) & 0x1;
+   const uint64_t dir_base = uint64_t(base) & 0x1FFFFFFF;
+-  const uint64_t dir_mips = uint64_t((f[5] >> 12) & 0x1FFFF) << 12;
++  const uint64_t dir_mips = cara0 ? 0 : uint64_t((f[5] >> 12) & 0x1FFFF) << 12;
+   const uint32_t nivel_empaquetado =
+       mipmaps && !volumen && ((f[5] >> 11) & 0x1) ? NivelEmpaquetado(ancho, alto) : UINT32_MAX;
+   uint32_t nivel_max = 0;
+@@ -573,6 +683,75 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
      }
    }
  
@@ -950,7 +1398,7 @@ index 8118904..3786428 100644
    TexturaDk& textura = texturas_[clave];
    if (!textura.imagen.viva) {
      // BC: the size in whole blocks, as the Vulkan backend (the shaders' 1/size is the host size).
-@@ -598,7 +767,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+@@ -598,7 +777,7 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
                    ((f[0] >> 22) & 0x1FF) << 5, swizzle, cubo ? " (cubo)" : volumen ? " (3D)" : "", niveles);
      }
    }

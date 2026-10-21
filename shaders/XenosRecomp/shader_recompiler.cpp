@@ -1,4 +1,8 @@
 #include "shader_recompiler.h"
+
+#include <regex>
+#include <cstdlib>
+#include <cstdio>
 #include "shader_common.h"
 #include <stdexcept>
 
@@ -181,6 +185,27 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
     auto findResult = vertexElements.find(address);
     if (findResult == vertexElements.end())
         throw std::runtime_error("FETCH de vertices sin elemento declarado");
+
+    /*
+     * A fetch at an index the shader computes. The Xenos vfetch reads its vertex at the index in its source register;
+     * only r0.x (the vertex's own index) is what a vertex attribute gives. Dead Space 2's particles keep one record per
+     * particle and read it at vertex / 4 (58 of its 161 vertex shaders fetch like this); as attributes, every vertex
+     * read its own record, past the particles' and with the wrong corners. The shader reads these itself (dsVfetch,
+     * from the vertex buffer bound whole as a storage buffer); the renderer describes each one at runtime (D3D patches
+     * format, stride and offset into the fetch per draw), at the element's position in the declaration.
+     */
+    if (instr.srcRegister != 0 || instr.srcSwizzle != 0)
+    {
+        usaLecturaManual = true;
+        const uint32_t k = elementOrdinal.at(address);
+        print("remapInput(dsVfetch({}, r{}.{}, {}), g_UboLecturas.v[{}].w).", k, uint32_t(instr.srcRegister),
+            SWIZZLES[instr.srcSwizzle & 0x3], instr.isIndexRounded ? "true" : "false", k);
+        printDstSwizzle(instr.dstSwizzle, true);
+        out += ";\n";
+        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+        cerrarSiEscribePredicado(marcaPredicado);
+        return;
+    }
 
     // D3D patches the fetch swizzle according to the vertex declaration; the
     // native renderer passes the mapping through g_InputRemap.
@@ -1168,6 +1193,62 @@ void ShaderRecompiler::printDeko3dConstants(const ConstantTableContainer* consta
     }
 }
 
+// dsVfetch: the Xenos vfetch done by the shader (see recompile(VertexFetchInstruction)). Descriptor k (uniform buffer 3):
+// x = storage buffer | format << 8 | signed << 16 | integer << 17, y = offset, z = stride (bytes), w = g_InputRemap
+// code. The buffers hold the guest's words in host order (the renderer swaps them as vertex buffers): each format's
+// first component is in the low bits of its word, as the vertex attributes read them.
+static const char* const kLecturaManualHlsl = R"(struct DsBloqueLecturas { uint4 v[16]; };
+[[vk::binding(3, 4)]] ConstantBuffer<DsBloqueLecturas> g_UboLecturas;
+[[vk::binding(0, 5)]] ByteAddressBuffer g_VerticesB0;
+[[vk::binding(1, 5)]] ByteAddressBuffer g_VerticesB1;
+[[vk::binding(2, 5)]] ByteAddressBuffer g_VerticesB2;
+[[vk::binding(3, 5)]] ByteAddressBuffer g_VerticesB3;
+
+// Kept small on purpose: it is inlined at every fetch, and the first version (a switch per format) made 70 KB of DKSH
+// per shader that uam took 4-9 s to compile on the console. One read of 4 words, then one layout for every format.
+float4 dsVfetch(uint k, float indiceReal, bool redondeado)
+{
+    uint4 d = g_UboLecturas.v[k];
+    uint direccion = uint(max(redondeado ? round(indiceReal) : floor(indiceReal), 0.0)) * d.z + d.y;
+    uint b = d.x & 0xFF;
+    uint formato = (d.x >> 8) & 0x3F;
+    uint4 w;
+    [branch] if (b == 0) w = g_VerticesB0.Load4(direccion);
+    else [branch] if (b == 1) w = g_VerticesB1.Load4(direccion);
+    else [branch] if (b == 2) w = g_VerticesB2.Load4(direccion);
+    else w = g_VerticesB3.Load4(direccion);
+    // 32-bit floats (k_32_FLOAT 36, k_32_32 37, k_32_32_32 57, k_32_32_32_32 38) and halves (31, 32).
+    uint n = formato == 36 ? 1u : formato == 37 ? 2u : formato == 57 ? 3u : 4u;
+    if (formato == 36 || formato == 37 || formato == 57 || formato == 38)
+        return float4(asfloat(w.x), n > 1 ? asfloat(w.y) : 0.0, n > 2 ? asfloat(w.z) : 0.0, n > 3 ? asfloat(w.w) : 1.0);
+    if (formato == 31 || formato == 32)
+        return float4(f16tof32(w.x), f16tof32(w.x >> 16), formato == 32 ? f16tof32(w.y) : 0.0,
+                      formato == 32 ? f16tof32(w.y >> 16) : 1.0);
+    // Packed integers: each component's bits from a word at a shift (the first component in the low bits).
+    uint4 v;
+    uint4 bits;
+    if (formato == 6)        { v = w.xxxx >> uint4(0, 8, 16, 24); bits = uint4(8, 8, 8, 8); n = 4; }
+    else if (formato == 7)   { v = w.xxxx >> uint4(0, 10, 20, 30); bits = uint4(10, 10, 10, 2); n = 4; }
+    else if (formato == 25)  { v = w.xxxx >> uint4(0, 16, 0, 0); bits = uint4(16, 16, 16, 16); n = 2; }
+    else if (formato == 26)  { v = w.xxyy >> uint4(0, 16, 0, 16); bits = uint4(16, 16, 16, 16); n = 4; }
+    else                     { v = w; bits = uint4(32, 32, 32, 32); n = formato == 33 ? 1u : formato == 34 ? 2u : 4u; }
+    uint4 mascara = select(bits == 32, 0xFFFFFFFFu, (1u << bits) - 1u);
+    v &= mascara;
+    float4 r;
+    if ((d.x >> 16) & 1)
+    {
+        int4 s = int4(v << (32 - bits)) >> int4(32 - bits);
+        r = ((d.x >> 17) & 1) ? float4(s) : max(float4(s) / float4((1u << (bits - 1)) - 1u), -1.0);
+    }
+    else
+    {
+        r = ((d.x >> 17) & 1) ? float4(v) : float4(v) / float4(mascara);
+    }
+    return float4(r.x, n > 1 ? r.y : 0.0, n > 2 ? r.z : 0.0, n > 3 ? r.w : 1.0);
+}
+
+)";
+
 void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_view& include)
 {
     const auto shaderContainer = reinterpret_cast<const ShaderContainer*>(shaderData);
@@ -1282,6 +1363,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 uint32_t(vertexElement.usageIndex), USAGE_SEMANTICS[uint32_t(vertexElement.usage)]);
 
             vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+            elementOrdinal.emplace(uint32_t(vertexElement.address), i);
         }
 
 
@@ -1894,11 +1976,62 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     }
 
     /*
+     * The vertex index in r0.x. A Xenos vertex shader starts with its vertex's index in r0.x (as a float); the pixel
+     * shader's equivalent (vPos in its register) is above. Dead Space 2's particle shaders build each quad from it
+     * (which corner a vertex is: `r0.y = r0.x * c248.w + c244.w` before anything writes r0), and with r0 = 0 every
+     * vertex was corner 0 with garbage offsets: the huge triangles of fire, sparks and dust across the screen.
+     * Only shaders that read r0.x before writing it get it, so the others (and the DKSH caches of their SPIR-V) stay
+     * as they were. The index is SV_VertexID plus g_IndiceBase: the renderer draws from the first vertex the draw
+     * uses (base vertex -vmin) and puts vmin there.
+     */
+    if (!isPixelShader)
+    {
+        const std::string declaracion = "\tfloat4 r0 = 0.0;\n";
+        const size_t posDeclaracion = out.find(declaracion);
+        const size_t cuerpo = out.find("\tfloat ps = 0.0;\n", marcaRegistrosAltos);
+        if (posDeclaracion != std::string::npos && cuerpo != std::string::npos)
+        {
+            static const std::regex asignacion(R"(^\s*r0\.([xyzw]+)\s*=[^=](.*)$)");
+            static const std::regex lectura(R"(\br0\.([xyzw]+))");
+            bool escritoX = false, leidoX = false;
+            size_t inicio = cuerpo;
+            while (!leidoX && !escritoX && inicio < out.size())
+            {
+                size_t fin = out.find('\n', inicio);
+                if (fin == std::string::npos) fin = out.size();
+                const std::string linea = out.substr(inicio, fin - inicio);
+                inicio = fin + 1;
+                std::smatch m;
+                const bool esAsignacion = std::regex_match(linea, m, asignacion);
+                const std::string derecha = esAsignacion ? m[2].str() : linea;
+                for (auto it = std::sregex_iterator(derecha.begin(), derecha.end(), lectura);
+                     it != std::sregex_iterator(); ++it)
+                {
+                    if ((*it)[1].str().find('x') != std::string::npos) leidoX = true;
+                }
+                if (esAsignacion && m[1].str().find('x') != std::string::npos) escritoX = true;
+            }
+            if (leidoX)
+            {
+                out.replace(posDeclaracion, declaracion.size(),
+                    "\tfloat4 r0 = float4(float(iVertexId + g_IndiceBase), 0.0, 0.0, 0.0);\n");
+                const size_t main = out.find("void main(\n");
+                if (main != std::string::npos)
+                    out.insert(main + 11, "\tin uint iVertexId : SV_VertexID,\n");
+            }
+        }
+    }
+
+    /*
      * Texture fetches in vertex shaders (Dead Space 2's modulate_sampler_vs). tfetch2D of shader_common.h uses
      * Sample, which needs derivatives and is only allowed in pixel and compute shaders. tfetch2DVertice is the
      * same with SampleLevel at mip 0. It is written into the shader itself, right after shader_common.h, only
      * when the shader uses it.
      */
+    if (usaLecturaManual)
+    {
+        out.insert(marcaTrasInclude, kLecturaManualHlsl);
+    }
     if (usaTfetchVertice)
     {
         out.insert(marcaTrasInclude,

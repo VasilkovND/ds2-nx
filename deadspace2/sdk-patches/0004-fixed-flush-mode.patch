@@ -1,0 +1,70 @@
+diff --git a/include/rex/ppc/context.h b/include/rex/ppc/context.h
+index f574d2d..4b1e731 100644
+--- a/include/rex/ppc/context.h
++++ b/include/rex/ppc/context.h
+@@ -172,6 +172,21 @@ struct FPSCRRegister {
+   // Bits the guest owns; the rest is host policy seeded by InitHost.
+   static constexpr uint32_t GuestMask = uint32_t(RoundMaskVal) | uint32_t(FlushMask);
+ 
++  /*
++   * Switch: flush-to-zero is always on, and the switches below do nothing.
++   *
++   * The PowerPC's scalar FPU keeps denormals and VMX flushes them, so recompiled code switches FPCR.FZ at every
++   * border between scalar and vector code: 45,000 sites in Dead Space 2, 7,400 of them unconditional. On the
++   * Cortex-A57 each `msr fpcr` serialises the pipeline, and hot loops (the game's audio compressor mixes scalar and
++   * VMX every few instructions) paid it many times per sample. With FZ fixed the only difference is that scalar
++   * results below 1.2e-38 become 0.
++   */
++#if defined(__SWITCH__)
++  static constexpr bool kFixedFlush = true;
++#else
++  static constexpr bool kFixedFlush = false;
++#endif
++
+   inline uint32_t getcsr() noexcept { return Platform::getcsr(); }
+   inline void setcsr(uint32_t csr) noexcept {
+     // Keep host FP exceptions masked on every write, not just in InitHost.
+@@ -183,6 +198,7 @@ struct FPSCRRegister {
+     // per-arch polarity (x86: 1 = masked, ARM: 1 = trap enabled), so it is used
+     // here rather than open-coding a mask that is correct on only one of them.
+     Platform::InitHostExceptions(csr);
++    if constexpr (kFixedFlush) csr |= uint32_t(FlushMask);
+     Platform::setcsr(csr);
+   }
+ 
+@@ -205,16 +221,19 @@ struct FPSCRRegister {
+   }
+ 
+   inline void enableFlushModeUnconditional() noexcept {
++    if constexpr (kFixedFlush) return;
+     csr |= FlushMask;
+     setcsr(csr);
+   }
+ 
+   inline void disableFlushModeUnconditional() noexcept {
++    if constexpr (kFixedFlush) return;
+     csr &= ~FlushMask;
+     setcsr(csr);
+   }
+ 
+   inline void enableFlushMode() noexcept {
++    if constexpr (kFixedFlush) return;
+     if ((csr & FlushMask) != FlushMask) [[unlikely]] {
+       csr |= FlushMask;
+       setcsr(csr);
+@@ -222,6 +241,7 @@ struct FPSCRRegister {
+   }
+ 
+   inline void disableFlushMode() noexcept {
++    if constexpr (kFixedFlush) return;
+     if ((csr & FlushMask) != 0) [[unlikely]] {
+       csr &= ~FlushMask;
+       setcsr(csr);
+@@ -231,6 +251,7 @@ struct FPSCRRegister {
+   inline void InitHost() noexcept {
+     csr = getcsr();
+     Platform::InitHostExceptions(csr);
++    if constexpr (kFixedFlush) csr |= uint32_t(FlushMask);
+     setcsr(csr);
+   }
+ };

@@ -34,6 +34,7 @@ namespace ds2::shaders {
 struct Estadisticas {
   uint64_t cargas = 0;          // IM_LOAD / IM_LOAD_IMMEDIATE of a shader
   uint64_t por_direccion = 0;   // step 1
+  uint64_t direccion_rechazada = 0;  // step 1 address known, but other code there now
   uint64_t por_aprendizaje = 0; // step 2
   uint64_t por_microcodigo = 0; // step 3
   uint64_t por_parecido = 0;    // step 4: distinct patched VS matched by similarity

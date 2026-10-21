@@ -103,6 +103,9 @@ struct NfsmwBloqueCompartidas { float4 v[31]; };
 #define g_NdcScale                 float2(DS_COMPARTIDA_FLOAT(280), DS_COMPARTIDA_FLOAT(284))
 #define g_NdcOffset                float2(DS_COMPARTIDA_FLOAT(288), DS_COMPARTIDA_FLOAT(292))
 #define g_InputRemap(LOC)          DS_COMPARTIDA_UINT(296 + (LOC) * 4)
+// The first vertex index of the draw (the renderer's vmin): SV_VertexID counts from it. Vertex shaders that read the
+// Xenos vertex index (r0.x) add it back. Byte 488, after the 1/size pairs.
+#define g_IndiceBase               DS_COMPARTIDA_UINT(488)
 
 // deko3d: there is no specialization at bind time; the SDK (rex::deko3d::SpirvAGlsl) gives this constant its value before
 // uam compiles, and one DKSH is made per (shader, value).

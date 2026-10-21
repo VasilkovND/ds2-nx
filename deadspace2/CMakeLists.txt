@@ -26,6 +26,7 @@ set(DS2_SOURCES
     src/main.cpp
     src/ds2_disc_swap.cpp
     src/ds2_shader_dump.cpp
+    src/ds2_audio.cpp
     src/ds2_shaders.cpp
     # The shader library reader, shared with the PC tools (shaders/).
     ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp
@@ -59,7 +60,8 @@ target_compile_definitions(deadspace2 PRIVATE DS2_TARGET_TU2=1)
 # Nintendo Switch: deadspace2.nro. On the SD card: sdmc:/switch/ds2-nx/ds2-nx.nro, with disc1/, disc2/ and tu/ beside it
 # (src/ds2_app.h finds them there).
 if(REXGLUE_PLATFORM_SWITCH)
-    # Homebrew menu icon: a 256x256 JPEG made from your own disc (assets/ is ignored).
+    # Homebrew menu icon: a 256x256 JPEG made from your own disc (assets/ is ignored):
+    #   python3 tools/make_icon.py <disc1/nxeart>
     set(DS2_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg")
     set(DS2_ICON_ARG)
     if(EXISTS "${DS2_ICON}")
@@ -67,7 +69,7 @@ if(REXGLUE_PLATFORM_SWITCH)
     endif()
     rexglue_switch_add_nro(deadspace2
         NAME "Dead Space 2"
-        AUTHOR "nx-mod"
-        VERSION "0.1.0"
+        AUTHOR "VasilkovND"
+        VERSION "0.2.0 (TU2)"
         ${DS2_ICON_ARG})
 endif()

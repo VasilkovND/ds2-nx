@@ -34,6 +34,9 @@ struct ShaderRecompiler : StringBuffer
     // Dimensions each sampler is fetched with (bit 1 << TextureDimension), to fix its deko3d binding at the end.
     std::unordered_map<std::string, uint32_t> dimensionesBuscadas;
     bool usaTfetchVertice = false;
+    // A vertex fetch at a computed index (dsVfetch), and each element's position in the declaration by address.
+    bool usaLecturaManual = false;
+    std::unordered_map<uint32_t, uint32_t> elementOrdinal;
     // Forward-only jumps as `if (pc <= N)` blocks instead of `while (true) switch (pc)` (recompile()). Turned on by
     // ds_hlsl --saltos-lineales (needed so uam can compile the jump-heavy shaders).
     bool saltosLineales = false;

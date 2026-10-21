@@ -1,0 +1,46 @@
+diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
+index 5d26022..e619594 100644
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -17,6 +17,7 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
+ #include <array>
+ #include <cerrno>
+ #include <cstddef>
++#include <chrono>
+ #include <ctime>
+ #include <deque>
+ #include <limits>
+@@ -202,7 +203,33 @@ uint32_t current_thread_system_id() {
+ }
+ 
+ void MaybeYield() {
++#if defined(__SWITCH__)
++  /*
++   * Polling loops sleep instead of spinning. Horizon's yield (svcSleepThread(0)) returns at once when nothing else waits
++   * on that core, and the guest's polling loops (waits with a zero or sub-millisecond timeout, KeDelayExecutionThread
++   * under 1 ms, kernel spinlocks) all end here: Dead Space 2 made 40,000-100,000 yields a second, a large part of a
++   * core of a 3-core process that is CPU-bound. A thread that yields again within 20 us, more than 16 times in a row,
++   * is polling: from then on it sleeps 100 us per call. A lone yield, or the first few of a short wait, is unchanged.
++   */
++  thread_local std::chrono::steady_clock::time_point anterior{};
++  thread_local uint32_t seguidos = 0;
++  const auto ahora = std::chrono::steady_clock::now();
++  if (ahora - anterior < std::chrono::microseconds(20)) {
++    ++seguidos;
++  } else {
++    seguidos = 0;
++  }
++  if (seguidos > 16) {
++    const timespec espera = {0, 100000};
++    nanosleep(&espera, nullptr);
++    anterior = std::chrono::steady_clock::now() - std::chrono::microseconds(1);  // still polling at the next call
++  } else {
++    sched_yield();
++    anterior = std::chrono::steady_clock::now();
++  }
++#else
+   sched_yield();
++#endif
+   __sync_synchronize();
+ }
+ 

@@ -96,6 +96,13 @@ const char* Leer(const ds::Shader& shader, EntradaShader& e) {
       if ((size_t(elemento.instruccion) + 1) * 3 > e.microcodigo.size()) {
         return "elemento de vertices apunta fuera del microcodigo";
       }
+      // A fetch whose index is not r0.x (the vertex's own index) is read by the shader itself (ElementoVertice::manual);
+      // the translator (shaders/XenosRecomp) uses the same rule on the same word. The source register and its
+      // component are not patched by D3D, but the mask below drops the component: read before it.
+      const uint32_t w0 = e.microcodigo[size_t(elemento.instruccion) * 3];
+      const uint32_t w1 = e.microcodigo[size_t(elemento.instruccion) * 3 + 1];
+      elemento.manual = ((w0 >> 5) & 0x3F) != 0 || ((w0 >> 30) & 0x3) != 0;
+      elemento.redondeado = (w1 >> 15) & 0x1;
       e.elementos.push_back(elemento);
       for (size_t j = 0; j < 3; ++j) e.microcodigo[size_t(elemento.instruccion) * 3 + j] &= kFetchConserva[j];
     }
@@ -184,11 +191,18 @@ struct Biblioteca::Datos {
 
   std::mutex mutex;  // the maps below: the create hooks run on game threads, IM_LOAD on the ring thread
   std::unordered_map<uint32_t, const EntradaShader*> por_direccion;  // physical address of the microcode
+  // Step 1's answers already checked against the code at that address: the next load from it (about 50,000 a second,
+  // most of them repeats) is recognised by its length and three of its words, without hashing the microcode.
+  struct Validada {
+    const EntradaShader* entrada;
+    uint32_t palabras, primera, media, ultima;
+  };
+  std::unordered_map<uint32_t, Validada> validadas;
   std::unordered_map<uint64_t, const EntradaShader*> aprendidas;     // Huella(patched microcode)
   std::unordered_map<uint64_t, const EntradaShader*> por_microcodigo;  // step 3 results, nullptr included
   std::vector<uint32_t> temporal;
   Estadisticas estadisticas;
-  uint32_t avisos_objetos = 0, avisos_cargas = 0;
+  uint32_t avisos_objetos = 0, avisos_cargas = 0, avisos_direccion = 0, avisos_parecido = 0;
 };
 
 Biblioteca::Biblioteca() : datos_(std::make_unique<Datos>()) {}
@@ -297,6 +311,7 @@ void Biblioteca::RegistrarObjeto(rex::memory::Memory* memoria, uint32_t objeto, 
     }
     if (!igual) continue;
     d.por_direccion[memoria->GetPhysicalAddress(v) & 0x1FFFFFFF] = entrada;
+    d.validadas.erase(memoria->GetPhysicalAddress(v) & 0x1FFFFFFF);  // a new shader there: check it again
     return;
   }
   ++d.estadisticas.objetos_sin_direccion;
@@ -316,14 +331,43 @@ const EntradaShader* Biblioteca::Identificar(bool vertices, uint32_t fisica,
   if (!d.cargada) return nullptr;
   std::lock_guard<std::mutex> lock(d.mutex);
   ++d.estadisticas.cargas;
+  const size_t n = microcodigo.size();
+  if (fisica && n) {
+    if (auto it = d.validadas.find(fisica & 0x1FFFFFFF); it != d.validadas.end()) {
+      const Datos::Validada& v = it->second;
+      if (v.palabras == n && v.primera == microcodigo[0] && v.media == microcodigo[n / 2] &&
+          v.ultima == microcodigo[n - 1]) {
+        ++d.estadisticas.por_direccion;
+        return v.entrada;
+      }
+    }
+  }
   const uint64_t huella = Huella(vertices, microcodigo);
-  // 1. By address.
+  // 1. By address, if the code there is still that shader's: the memory of a destroyed shader can hold another one
+  // of the same length, and a wrong match here is also learned (step 2) for the rest of the session. The words
+  // outside its fetch instructions must almost all be the entry's (D3D only rewrites fetches and a few exports).
   if (fisica) {
     if (auto it = d.por_direccion.find(fisica & 0x1FFFFFFF); it != d.por_direccion.end() &&
         it->second->vertices == vertices && it->second->microcodigo.size() == microcodigo.size()) {
-      ++d.estadisticas.por_direccion;
-      if (vertices) d.aprendidas[huella] = it->second;
-      return it->second;
+      const EntradaShader& e = *it->second;
+      std::vector<bool> fetch(microcodigo.size(), false);
+      for (const ElementoVertice& el : e.elementos) {
+        for (size_t j = 0; j < 3; ++j) fetch[size_t(el.instruccion) * 3 + j] = true;
+      }
+      size_t distintas = 0;
+      for (size_t w = 0; w < microcodigo.size(); ++w) distintas += !fetch[w] && microcodigo[w] != e.microcodigo[w];
+      if (distintas <= std::max<size_t>(3, microcodigo.size() / 8)) {
+        ++d.estadisticas.por_direccion;
+        if (vertices) d.aprendidas[huella] = it->second;
+        d.validadas[fisica & 0x1FFFFFFF] = {it->second, uint32_t(n), microcodigo[0], microcodigo[n / 2],
+                                            microcodigo[n - 1]};
+        return it->second;
+      }
+      ++d.estadisticas.direccion_rechazada;
+      if (d.avisos_direccion++ < kMaxAvisos) {
+        REXLOG_WARN("[shaders] {} at {:08X} is no longer n{}: {} of {} words differ", vertices ? "VS" : "PS",
+                    fisica, e.numero, distintas, microcodigo.size());
+      }
     }
   }
   // 2. Learned patched microcode.
@@ -380,6 +424,10 @@ const EntradaShader* Biblioteca::Identificar(bool vertices, uint32_t fisica,
         if (candidato && mejor <= std::max<size_t>(3, microcodigo.size() / 8) && mejor < segundo) {
           elegido = candidato;
           parecido = true;
+          if (d.avisos_parecido++ < kMaxAvisos) {
+            REXLOG_WARN("[shaders] VS at {:08X} taken as n{} by similarity: {} words differ (next best {})", fisica,
+                        candidato->numero, mejor, segundo);
+          }
           d.aprendidas[huella] = elegido;  // later loads of it: step 2
         }
       }

@@ -1,8 +1,8 @@
 diff --git a/src/input/switch/switch_input_driver.cpp b/src/input/switch/switch_input_driver.cpp
-index ccf5e2a..9c35897 100644
+index ccf5e2a..dcc9ddb 100644
 --- a/src/input/switch/switch_input_driver.cpp
 +++ b/src/input/switch/switch_input_driver.cpp
-@@ -18,6 +18,23 @@
+@@ -18,6 +18,27 @@
  #include <rex/cvar.h>
  #include <rex/logging.h>
  #include <rex/ui/keybinds.h>
@@ -12,26 +12,88 @@ index ccf5e2a..9c35897 100644
 +REXCVAR_DEFINE_BOOL(switch_contador_fps, true, "UI/Switch",
 +                    "Contador de FPS y del peor hueco entre imagenes, arriba a la izquierda (presentador deko3d)");
 +REXCVAR_DEFINE_BOOL(switch_atajo_captura, true, "UI/Switch",
-+                    "L + R + abajo pide una captura de la salida del juego (la guarda el sistema grafico del juego) en "
++                    "ZL + ZR + abajo pide una captura de la salida del juego (la guarda el sistema grafico del juego) en "
 +                    "vez de abrir la consola (tecla `), que pasa todo el pintado al hilo de la interfaz");
 +REXCVAR_DEFINE_BOOL(switch_atajo_volcado, true, "UI/Switch",
-+                    "L + R + izquierda pide un volcado de las texturas resueltas del proximo fotograma (depuracion del "
++                    "ZL + ZR + izquierda pide un volcado de las texturas resueltas del proximo fotograma (depuracion del "
 +                    "renderizador) en vez de abrir los ajustes (F7), que pasan todo el pintado al hilo de la interfaz");
 +REXCVAR_DEFINE_BOOL(switch_volcado_pedido, false, "UI/Switch", "Volcado pedido (lo limpia quien lo hace)");
-+// Set by L + R + Down, taken (and cleared) by the game's graphics system at its next Swap.
++REXCVAR_DEFINE_BOOL(switch_atajo_omitir, true, "UI/Switch",
++                    "ZL + ZR + derecha pasa al siguiente modo de omision de dibujos del renderizador (depuracion, lo "
++                    "lee el sistema grafico del juego) en vez de abrir el menu F4");
++REXCVAR_DEFINE_BOOL(switch_omitir_pedido, false, "UI/Switch", "Siguiente modo de omision pedido (lo limpia quien lo hace)");
++// Set by ZL + ZR + Down, taken (and cleared) by the game's graphics system at its next Swap.
 +REXCVAR_DEFINE_BOOL(switch_captura_pedida, false, "UI/Switch", "Captura pedida (la limpia quien la hace)");
 +REXCVAR_DEFINE_BOOL(switch_atajo_contador_fps, true, "UI/Switch",
-+                    "L + R + arriba enciende y apaga el contador de FPS en vez de abrir el menu de depuracion (F3), "
++                    "ZL + ZR + arriba enciende y apaga el contador de FPS en vez de abrir el menu de depuracion (F3), "
 +                    "que pasa todo el pintado al hilo de la interfaz");
  #include <rex/ui/ui_event.h>
  #include <rex/ui/virtual_key.h>
  
-@@ -380,7 +397,17 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+@@ -321,15 +342,15 @@ void SwitchInputDriver::Poll(size_t index) {
+   gamepad.thumb_rx = ClampStickAxis(right.x);
+   gamepad.thumb_ry = ClampStickAxis(right.y);
+   /*
+-   * With the debug overlay open, L+R and the right stick move it (debug_overlay.cpp,
+-   * on the UI thread). While L and R are held, the game sees neither those two
+-   * buttons nor the right stick.
++   * With the debug overlay open, ZL+ZR and the right stick move it (debug_overlay.cpp,
++   * on the UI thread). While ZL and ZR are held, the game sees neither those two
++   * triggers nor the right stick.
+    */
+-  constexpr uint64_t kMoverOverlay = HidNpadButton_L | HidNpadButton_R;
++  constexpr uint64_t kMoverOverlay = HidNpadButton_ZL | HidNpadButton_ZR;
+   if ((held & kMoverOverlay) == kMoverOverlay && rex::ui::DebugOverlayAbierto()) {
+     // The XInput state fields are stored big-endian: they are rewritten whole.
+-    gamepad.buttons = static_cast<uint16_t>(
+-        buttons & ~(X_INPUT_GAMEPAD_LEFT_SHOULDER | X_INPUT_GAMEPAD_RIGHT_SHOULDER));
++    gamepad.left_trigger = 0;
++    gamepad.right_trigger = 0;
+     gamepad.thumb_rx = static_cast<int16_t>(0);
+     gamepad.thumb_ry = static_cast<int16_t>(0);
+   }
+@@ -348,15 +369,15 @@ extern "C" void RexSwitchPerfToggleAb(void);
+  *
+  * On the PC they are function keys (see RegisterBind in rex_app.cpp): F3 debug,
+  * F4 settings, F7 achievements and the tilde key for the log console. The Switch
+- * has no keyboard, so they go to combinations with L+R, which no game uses
+- * together with the D-pad:
++ * has no keyboard, so they go to combinations with the rear triggers ZL+ZR (L+R plus
++ * the D-pad clashes with the system overlay):
+  *
+- *   L + R + Up    -> debug overlay (counters, statistics)
+- *   L + R + Right -> settings
+- *   L + R + Down  -> log console
+- *   L + R + Left  -> achievements
+- *   L + R + ZL    -> GPU A/B test lap (for measuring, not for playing)
+- *   L + R + right stick -> moves the debug overlay if it is open
++ *   ZL + ZR + Up    -> debug overlay (counters, statistics)
++ *   ZL + ZR + Right -> settings
++ *   ZL + ZR + Down  -> log console
++ *   ZL + ZR + Left  -> achievements
++ *   ZL + ZR + L     -> GPU A/B test lap (for measuring, not for playing)
++ *   ZL + ZR + right stick -> moves the debug overlay if it is open
+  *                          (its position is saved; see Poll and debug_overlay.cpp)
+  *
+  * It fires once per press, not while held: each shortcut stores its bit in
+@@ -367,7 +388,7 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+     uint64_t boton;
+     rex::ui::VirtualKey tecla;
+   };
+-  constexpr uint64_t kModificador = HidNpadButton_L | HidNpadButton_R;
++  constexpr uint64_t kModificador = HidNpadButton_ZL | HidNpadButton_ZR;
+   static const Atajo kAtajos[] = {
+       {HidNpadButton_Up, rex::ui::VirtualKey::kF3},
+       {HidNpadButton_Right, rex::ui::VirtualKey::kF4},
+@@ -380,7 +401,20 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
      const uint64_t bit = uint64_t(1) << i;
      const bool ahora = modificador && (held & kAtajos[i].boton) != 0;
      const bool antes = (slot.menu_shortcuts & bit) != 0;
 -    if (ahora && !antes) {
-+    if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kF7 && REXCVAR_GET(switch_atajo_volcado)) {
++    if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kF4 && REXCVAR_GET(switch_atajo_omitir)) {
++      REXCVAR_SET(switch_omitir_pedido, true);
++      REXLOG_INFO("atajo de menu: siguiente modo de omision");
++    } else if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kF7 && REXCVAR_GET(switch_atajo_volcado)) {
 +      REXCVAR_SET(switch_volcado_pedido, true);
 +      REXLOG_INFO("atajo de menu: volcado pedido");
 +    } else if (ahora && !antes && kAtajos[i].tecla == rex::ui::VirtualKey::kOem3 && REXCVAR_GET(switch_atajo_captura)) {
@@ -45,8 +107,23 @@ index ccf5e2a..9c35897 100644
        /*
         * Each shortcut creates or destroys an ImGui menu, and the UI thread
         * draws them continuously while any is open. From this game thread a
+@@ -402,12 +436,12 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
+   }
+ 
+   /*
+-   * L+R+ZL starts the A/B test lap (switch_perf.cpp). It sends no key to the
++   * ZL+ZR+L starts the A/B test lap (switch_perf.cpp). It sends no key to the
+    * game: it talks directly to the profiler. It is kept apart from the loop
+    * above because that one translates buttons into keys and this is not a key.
+    */
+   const uint64_t kBitAb = uint64_t(1) << 8;
+-  const bool ab_ahora = modificador && (held & HidNpadButton_ZL) != 0;
++  const bool ab_ahora = modificador && (held & HidNpadButton_L) != 0;
+   const bool ab_antes = (slot.menu_shortcuts & kBitAb) != 0;
+   if (ab_ahora && !ab_antes) {
+     RexSwitchPerfToggleAb();
 diff --git a/src/ui/deko3d/presentador.cpp b/src/ui/deko3d/presentador.cpp
-index cdf084b..a9d421c 100644
+index cdf084b..52e1536 100644
 --- a/src/ui/deko3d/presentador.cpp
 +++ b/src/ui/deko3d/presentador.cpp
 @@ -2,6 +2,7 @@
@@ -67,7 +144,7 @@ index cdf084b..a9d421c 100644
  #include <cstring>
  #include <vector>
  
-+// Defined with the input driver, which toggles it with L + R + Up (switch_input_driver.cpp).
++// Defined with the input driver, which toggles it with ZL + ZR + Up (switch_input_driver.cpp).
 +REXCVAR_DECLARE(bool, switch_contador_fps);
 +
  namespace rex::deko3d {
@@ -275,3 +352,16 @@ index cdf084b..a9d421c 100644
    struct ImagenSalida {
      DkMemBlock memoria = nullptr;
      DkImage imagen{};
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index d1b2a1c..73742e6 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -427,7 +427,7 @@ void ReXApp::SetupOverlays(rex::ui::Presenter* presenter, rex::ui::ImmediateDraw
+       debug_overlay_ =
+           std::make_unique<ui::DebugOverlayDialog>(imgui_drawer_.get(), frame_stats_provider_);
+ #if REX_PLATFORM_SWITCH
+-      // The position set with L+R and the right stick, stored next to the configuration file.
++      // The position set with ZL+ZR and the right stick, stored next to the configuration file.
+       debug_overlay_->SetPositionFile(config_path_.parent_path() / "overlay_depuracion.txt");
+ #endif
+     }
