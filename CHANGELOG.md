@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.5 (TU2) — 2026-10-22
+
+- **Crash after waking from sleep.** While the console slept, the game's clock kept running, and on waking the game took
+  the whole nap as one frame: RenderWare Audio's mixer then crashed within seconds (a broken stream pool list). The
+  guest clock no longer advances while the process is suspended: any gap longer than 0.25 s counts as 0.25 s
+  (`sdk-patches/0007-guest-clock-sleep.patch`). Not yet confirmed on the console.
+- Known issue: the same audio crash was also seen once on a loading screen, without sleep; if it comes back, it needs
+  its own fix.
+
 ## 1.0.4 (TU2) — 2026-10-21
 
 - **The Russian edition is supported** (Dead Space 2 (Russia) (En,Ru), Media ID 2C199AEB, TU2

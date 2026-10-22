@@ -1,0 +1,18 @@
+diff --git a/src/core/clock.cpp b/src/core/clock.cpp
+index ae72b7a..318edf5 100644
+--- a/src/core/clock.cpp
++++ b/src/core/clock.cpp
+@@ -77,6 +77,13 @@ uint64_t UpdateGuestClock() {
+     uint64_t host_tick_delta =
+         host_tick_count > last_host_tick_count_ ? host_tick_count - last_host_tick_count_ : 0;
+     last_host_tick_count_ = host_tick_count;
++    // The guest never saw its console sleep: while the process is suspended (Switch sleep or
++    // HOME) no thread reads the clock, so the first read after it would carry the whole nap in
++    // one step, and games take that as one enormous frame (Dead Space 2's RenderWare Audio crashed
++    // within seconds of waking). Gaps longer than this are cut to it; a running game reads the
++    // clock far more often.
++    const uint64_t max_host_tick_delta = Clock::QueryHostTickFrequency() / 4;
++    host_tick_delta = std::min(host_tick_delta, max_host_tick_delta);
+     uint64_t guest_tick_delta =
+         host_tick_delta * guest_tick_ratio_.first / guest_tick_ratio_.second;
+     last_guest_tick_count_ += guest_tick_delta;

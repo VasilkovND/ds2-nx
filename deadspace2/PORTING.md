@@ -4,7 +4,7 @@ Dead Space 2 (Xbox 360, Title Update 2) on the Nintendo Switch, as a homebrew NR
 done, every problem met on the way and what fixed it, and what should carry over to the next Xbox 360 → Switch port.
 Release history: [CHANGELOG.md](../CHANGELOG.md). Installation: [INSTALL.md](../INSTALL.md).
 
-## Status (1.0.4)
+## Status (1.0.5)
 
 Playable. Tested through the early chapters, the decompression scene, a space walk and a boss fight (saves reached
 chapter 3); a full playthrough is not verified yet.
@@ -64,6 +64,7 @@ Mushihimesama Futari Switch ports do too; Xenos emulation would be a few frames 
   | 0004-fixed-flush-mode | FPCR flush-to-zero fixed on: the 45,000 per-instruction mode switches of the code become no-ops |
   | 0005-yield-backoff | `MaybeYield`: after 16 yields within 20 µs, sleep 100 µs (busy waits) |
   | 0006-xma-locks | XMA kicks without the context lock, decoder woken only when asleep (5.3) |
+  | 0007-guest-clock-sleep | The guest clock skips the time the console sleeps: a gap over 0.25 s counts as 0.25 s (RenderWare Audio crashed after waking) |
 
 ## 2. Memory, discs, title update
 
