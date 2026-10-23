@@ -9,6 +9,10 @@
 #
 # Then, from the repository root:   deadspace2/tools/build_mac.sh [path/to/Dead-Space-2-Recomp]
 # The NRO ends up in deadspace2/out/sw/deadspace2.nro (copy it as ds2-nx.nro).
+#
+# PLR_CHECK=1 builds the check version of tools/patch_local_regs.py in deadspace2/out/sw-check (slower; its calls
+# verify the register analysis at run time and log "[regcheck]" lines). LOCALREGS=0 builds without the pass (with
+# RECONFIGURE=1 when deadspace2/out/sw was configured with it).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -56,15 +60,24 @@ for p in "$ROOT"/deadspace2/sdk-patches/*.patch; do
   fi
 done
 
+BUILD=deadspace2/out/sw
+LOCAL_REGS=ON
+if [ "${PLR_CHECK:-0}" = 1 ]; then
+  BUILD=deadspace2/out/sw-check
+  LOCAL_REGS=CHECK
+elif [ "${LOCALREGS:-1}" = 0 ]; then
+  LOCAL_REGS=OFF
+fi
+
 # Configure only the first time (or with RECONFIGURE=1): afterwards Ninja re-runs CMake by itself when a CMake file
 # changes, and an incremental build of a change to deadspace2/src/ takes seconds instead of rebuilding the game.
-if [ ! -f deadspace2/out/sw/build.ninja ] || [ "${RECONFIGURE:-0}" = 1 ]; then
+if [ ! -f "$BUILD/build.ninja" ] || [ "${RECONFIGURE:-0}" = 1 ]; then
   echo "== configure"
-  cmake -S deadspace2 -B deadspace2/out/sw -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  cmake -S deadspace2 -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DDS2_LOCAL_REGS=$LOCAL_REGS \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/switch/cmake/switch-devkitA64.cmake" \
     -DREXSDK_DIR="$ROOT/sdk" -DDS2_RECOMP_DIR="$DS2_RECOMP" -DREXGLUE_SWITCH_DEKO3D=ON
 fi
 
 echo "== build ($JOBS jobs)"
-cmake --build deadspace2/out/sw -j "$JOBS"
-ls -la deadspace2/out/sw/deadspace2.nro
+cmake --build "$BUILD" -j "$JOBS"
+ls -la "$BUILD/deadspace2.nro"

@@ -6,6 +6,10 @@
 
 #include "ds2_rex_diagnostic_pch.h"
 
+#include <mutex>
+#include <string>
+#include <unordered_set>
+
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
@@ -16,6 +20,7 @@
 #endif
 
 REXCVAR_DECLARE(bool, ignore_thread_priorities);  // the SDK's (src/system/xthread.cpp): on by default
+REXCVAR_DECLARE(bool, switch_atajos_depuracion);  // the SDK's ZL + ZR shortcuts (src/input/switch/switch_input_driver.cpp)
 
 REXCVAR_DEFINE_BOOL(ds2_msr_cerrojo_global, false, "DS2",
                     "Las regiones con interrupciones apagadas del codigo recompilado (mtmsrd) como un mutex global "
@@ -24,8 +29,17 @@ REXCVAR_DEFINE_BOOL(ds2_msr_cerrojo_global, false, "DS2",
 namespace ds2::cpu {
 
 void Configurar() {
+#if !DS2_DEPURACION
+  // A release build has no debug modes (CMakeLists.txt, DS2_DEPURACION): only the FPS counter, even when ds2.toml
+  // turns the shortcuts on.
+  if (REXCVAR_GET(switch_atajos_depuracion)) {
+    REXCVAR_SET(switch_atajos_depuracion, false);
+    REXLOG_INFO("[cpu] switch_atajos_depuracion ignorado: version de lanzamiento (solo el contador de FPS)");
+  }
+#endif
   ppc_msr_cerrojo_global_() = REXCVAR_GET(ds2_msr_cerrojo_global);
   REXLOG_INFO("[cpu] regiones mtmsrd: {}", ppc_msr_cerrojo_global_() ? "mutex global (codegen)" : "estado por hilo");
+  REXLOG_INFO("[cpu] registros del invitado en variables locales (tools/patch_local_regs.py): {}", DS2_LOCAL_REGS);
 }
 
 }  // namespace ds2::cpu
@@ -63,3 +77,43 @@ void InformarSistema() {
 }
 
 }  // namespace ds2::cpu
+
+// The check build of tools/patch_local_regs.py (DS2_LOCAL_REGS=CHECK, build_mac.sh with PLR_CHECK=1): a call changed
+// registers the analysis said it keeps. Logged once per call site (its number, in the build's
+// src_tu2_nx/patch_local_regs.check.map), at most 256 sites, with each register that changed (before -> after). A
+// poisoned value a callee read shows up as a fault at an address whose low word is the site's number instead (the
+// register holds 0x5EAD5EAD:<site>).
+extern "C" void ds2_regcheck_fail(const char* function, const char* callee, int site, const char* regs,
+                                  const uint64_t* before, const PPCContext* ctx) {
+  static std::mutex mutex;
+  static std::unordered_set<int> seen;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (seen.size() >= 256 || !seen.insert(site).second) return;
+  }
+  static const PPCRegister PPCContext::*const kR[32] = {
+      &PPCContext::r0,  &PPCContext::r1,  &PPCContext::r2,  &PPCContext::r3,  &PPCContext::r4,  &PPCContext::r5,
+      &PPCContext::r6,  &PPCContext::r7,  &PPCContext::r8,  &PPCContext::r9,  &PPCContext::r10, &PPCContext::r11,
+      &PPCContext::r12, &PPCContext::r13, &PPCContext::r14, &PPCContext::r15, &PPCContext::r16, &PPCContext::r17,
+      &PPCContext::r18, &PPCContext::r19, &PPCContext::r20, &PPCContext::r21, &PPCContext::r22, &PPCContext::r23,
+      &PPCContext::r24, &PPCContext::r25, &PPCContext::r26, &PPCContext::r27, &PPCContext::r28, &PPCContext::r29,
+      &PPCContext::r30, &PPCContext::r31};
+  static const PPCRegister PPCContext::*const kF[32] = {
+      &PPCContext::f0,  &PPCContext::f1,  &PPCContext::f2,  &PPCContext::f3,  &PPCContext::f4,  &PPCContext::f5,
+      &PPCContext::f6,  &PPCContext::f7,  &PPCContext::f8,  &PPCContext::f9,  &PPCContext::f10, &PPCContext::f11,
+      &PPCContext::f12, &PPCContext::f13, &PPCContext::f14, &PPCContext::f15, &PPCContext::f16, &PPCContext::f17,
+      &PPCContext::f18, &PPCContext::f19, &PPCContext::f20, &PPCContext::f21, &PPCContext::f22, &PPCContext::f23,
+      &PPCContext::f24, &PPCContext::f25, &PPCContext::f26, &PPCContext::f27, &PPCContext::f28, &PPCContext::f29,
+      &PPCContext::f30, &PPCContext::f31};
+  std::string changed;
+  const char* p = regs;
+  for (int k = 0; *p; ++k) {
+    const char kind = *p++;
+    int n = 0;
+    while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
+    while (*p == ' ') ++p;
+    const uint64_t now = (ctx->*(kind == 'r' ? kR : kF)[n & 31]).u64;
+    if (now != before[k]) changed += fmt::format(" {}{} {:X}->{:X}", kind, n, before[k], now);
+  }
+  REXLOG_WARN("[regcheck] site {:06X} ({}): the call to {} changed{}", site, function, callee, changed);
+}

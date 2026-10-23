@@ -4,7 +4,7 @@ Dead Space 2 (Xbox 360, Title Update 2) on the Nintendo Switch, as a homebrew NR
 done, every problem met on the way and what fixed it, and what should carry over to the next Xbox 360 → Switch port.
 Release history: [CHANGELOG.md](../CHANGELOG.md). Installation: [INSTALL.md](../INSTALL.md).
 
-## Status (1.0.5)
+## Status (1.1.0)
 
 Playable. Tested through the early chapters, the decompression scene, a space walk and a boss fight (saves reached
 chapter 3); a full playthrough is not verified yet.
@@ -231,11 +231,46 @@ from busy: the decoder cannot produce frames fast enough and the video stutters.
 (~680 KB every ~2 s, ~10 ms each). A fix would be native NEON versions of the decoder's hottest functions, after a
 stack profile taken during a video (`telemetria.flag` samples from startup).
 
+### 5.5 Guest registers in host locals (1.1.0)
+
+Ported from gears2-nx 1.0.0 (`gow2/tools/patch_local_regs.py`, its `CPU_OPTIMIZATION.md` has the design). Every guest
+register is a field of `PPCContext& ctx`; GCC cannot prove a guest store does not hit it, so it reloaded and stored
+registers around every memory access. `tools/patch_local_regs.py` gives each function local copies of the registers
+it uses and writes ctx back only at calls and returns, for the registers a whole-program analysis says matter (REF,
+MOD, PRES, LIVEOUT over the call graph). It runs at configure time on the build's mirror of src_tu2
+(`tools/prepare_tree.py`: the checked-in tree is never touched; only files whose text changed are rewritten), with
+`DS2_LOCAL_REGS=ON` (default), `OFF`, or `CHECK` (`PLR_CHECK=1 tools/build_mac.sh`, in `out/sw-check`: every call
+poisons the registers it did not write back and logs `[regcheck]` if a register the analysis said is kept changed).
+
+What differs from gears2-nx:
+
+- Every function defined in src_tu2 (PDB names, not `sub_X`) uses its computed summary; hooks are the `REX_EXTERN`
+  definitions with a body in `src/` (the `DS2_ETAPA` audio macro included) and take the calling convention's word on
+  top; any defined name the sources mention gets LIVEOUT = ALL. No stack guard here, so no GUARD_REF/GUARD_MOD.
+- The save/restore helpers (`__savegprlr_N` ..., 236 of them) are inlined from their own definitions.
+- The 4 setjmp functions (Lua's protected call, libpng/JPEG errors) stay as they are but are analysed from their
+  text; with REF = MOD = ALL the whole program would lose LIVEOUT.
+- Less conservative where the code shape allows it: `x = c ? a : b` (fsel, cntlzw, divw: 8,800 lines) is a full write
+  (gears2-nx treated any line with `?` as a read), `subfe rD,rA,rA` does not read rA, and a CR field written field by
+  field (stwcx., mtcrf) is a full write. Together they cut what every function must leave exact at a return from ~140
+  volatile registers to ~30.
+- A conditional block (`if (c) {` ... `}`) gets an edge to its closing line (found by the Dante's Inferno port: a tail
+  call inside it cleared the dirty registers for the path that skips it). The pass reports calls its dataflow never
+  reaches (0): the first console build had made nested `return;` terminal, which made the code after such a block
+  unreachable; its calls lost their write-backs and Lua's parser crashed at startup.
+
+Result: NRO 49.2 → 39.0 MB. On the console (stock clocks, ~6 min each) the check build logged no `[regcheck]` and
+neither build crashed; videos no longer stutter at stock (the `Job Manager` thread keeps up with VP6). At stock the
+heavy scenes are GPU-bound (55-62 ms of GPU per frame at 307 MHz, the main thread ~40 % waiting for it), so the fps
+there did not change; a like-for-like comparison with 1.0.5 is not done yet.
+
 ## 6. Tools and how to debug
 
+- **Debugging builds only** (since 1.1.0): configure with `-DDS2_DEPURACION=ON`. A release build ignores
+  `telemetria.flag`, `sin_resplandor.flag` and `switch_atajos_depuracion`; only ZL + ZR + Up (FPS counter) answers.
 - **`telemetria.flag`** next to the NRO: screenshots every 5 s, frame dumps, GPU profile, frame traces, 1 ms stack
   sampler. Costs frames.
-- **Shortcuts** (with `switch_atajos_depuracion=true`; ZL + ZR held): Down screenshot, Left frame dump (`volcado_NN/`,
+- **Shortcuts** (with `switch_atajos_depuracion=true` in `ds2.toml`; ZL + ZR held): Down screenshot, Left frame dump (`volcado_NN/`,
   every resolve as BMP, depth with its range) and a trace of every draw of the next frame (state, vertex fetches,
   textures, depth base, resolves), Right draw-skipping modes (1 safe mode, then lights, additive, alpha-blended, quad
   lists, blended, alpha-tested) each followed by a capture, R stack sampling (the counter shows PRF), L GPU A/B lap.

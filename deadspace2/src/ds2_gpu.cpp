@@ -253,7 +253,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // telemetria.flag next to the NRO: it costs frames (the stack sampler stops every thread each millisecond).
     {
       std::error_code ec;
-      telemetry_ = std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "telemetria.flag", ec);
+      // (A release build ignores it: CMakeLists.txt, DS2_DEPURACION.)
+      telemetry_ = DS2_DEPURACION && std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "telemetria.flag", ec);
       const auto folder = rex::filesystem::GetExecutableFolder() / "logs" / "rex";
       const auto stack_flag = folder / "perfil_pilas.flag";
       if (telemetry_ && REXCVAR_GET(ds2_perfil_pilas)) {
@@ -269,7 +270,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       if (!telemetry_) {
         REXCVAR_SET(nfsmw_dk_perfil_gpu_s, 0);
       }
-      hide_glow_ = std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "sin_resplandor.flag", ec);
+      hide_glow_ = DS2_DEPURACION && std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "sin_resplandor.flag", ec);
       if (hide_glow_) REXLOG_INFO("[gpu] sin_resplandor.flag: lamp glows and coronas are not drawn");
     }
     // Before the game creates its shaders (the create hooks look the containers up in it).

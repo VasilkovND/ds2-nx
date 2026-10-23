@@ -23,19 +23,34 @@ endif()
 add_subdirectory("${REXSDK_DIR}" rexglue-sdk)
 message(STATUS "ds2: ReXGlue SDK from ${REXSDK_DIR}")
 
-# The mirror of src_tu2 with the Switch PCH.
+# The mirror of src_tu2 with the Switch PCH, and the guest registers in host locals (tools/patch_local_regs.py: ON,
+# OFF, or CHECK for the build that verifies its analysis at run time, see the script). The pass reads the hooks and
+# the native callers of guest functions from src/ and the SDK, so a change there re-runs CMake (the pass itself only
+# when the hooks or the guest names they mention changed).
+set(DS2_LOCAL_REGS "ON" CACHE STRING "Guest registers in host locals: ON, OFF or CHECK (tools/patch_local_regs.py)")
+string(TOLOWER "${DS2_LOCAL_REGS}" _ds2_local_regs)
+if(NOT _ds2_local_regs MATCHES "^(on|off|check)$")
+    message(FATAL_ERROR "DS2_LOCAL_REGS must be ON, OFF or CHECK")
+endif()
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 set(DS2_TREE "${CMAKE_BINARY_DIR}/src_tu2_nx")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../tools/prepare_tree.py"
-            "${DS2_RECOMP_DIR}/src_tu2" "${DS2_TREE}"
+            "${DS2_RECOMP_DIR}/src_tu2" "${DS2_TREE}" --local-regs ${_ds2_local_regs}
+            "${CMAKE_CURRENT_LIST_DIR}/../src" "${REXSDK_DIR}/src" "${REXSDK_DIR}/include"
     RESULT_VARIABLE _ds2_tree_rc)
 if(NOT _ds2_tree_rc EQUAL 0)
     message(FATAL_ERROR "ds2: tools/prepare_tree.py failed (${_ds2_tree_rc})")
 endif()
+message(STATUS "ds2: guest registers in host locals: ${DS2_LOCAL_REGS}")
+file(GLOB _ds2_hook_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../src/*.cpp" "${CMAKE_CURRENT_LIST_DIR}/../src/*.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${DS2_RECOMP_DIR}/src_tu2/ds2_rex_diagnostic_pch.h"
-    "${DS2_RECOMP_DIR}/src_tu2/sources.cmake")
+    "${DS2_RECOMP_DIR}/src_tu2/sources.cmake"
+    "${CMAKE_CURRENT_LIST_DIR}/../tools/prepare_tree.py"
+    "${CMAKE_CURRENT_LIST_DIR}/../tools/patch_local_regs.py"
+    "${CMAKE_CURRENT_LIST_DIR}/../tools/make_nx_pch.py"
+    ${_ds2_hook_sources})
 
 set(REXGLUE_RECOMP_DEBUG_INFO "none" CACHE STRING
     "Debug info level for generated code: line-tables-only, full, or none")

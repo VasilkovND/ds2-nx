@@ -97,6 +97,18 @@ inline i32& ppc_msr_profundidad_() {
 """
 text = text[:i] + NEW_LOCKS + text[j:]
 
+# 4. The check build of tools/patch_local_regs.py (DS2_LOCAL_REGS=CHECK): its calls report a register a callee changed
+#    though the analysis said it keeps it (defined in src/ds2_cpu.cpp).
+if "ds2_regcheck_fail" not in text:
+    text = text.rstrip() + '''
+
+//=============================================================================
+// Switch (make_nx_pch.py): the check build of tools/patch_local_regs.py.
+//=============================================================================
+extern "C" void ds2_regcheck_fail(const char* function, const char* callee, int site, const char* regs,
+                                  const uint64_t* before, const PPCContext* ctx);
+'''
+
 # Only when it changes: every unit of the recompiled tree depends on this header through the PCH, so rewriting it
 # with the same text on each configure made the next build recompile all of them (~11 minutes on a Mac).
 try:

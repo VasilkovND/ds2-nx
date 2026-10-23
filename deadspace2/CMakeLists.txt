@@ -57,7 +57,7 @@ target_include_directories(deadspace2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sha
 
 # The version (Homebrew Menu and the first lines of the log) and the commit it was built from, so a log a player sends
 # says which build made it. The commit is read when CMake configures (build_mac.sh RECONFIGURE=1 refreshes it).
-set(DS2_VERSION "1.0.5 (TU2)")
+set(DS2_VERSION "1.1.0 (TU2)")
 execute_process(COMMAND git rev-parse --short=10 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
                 OUTPUT_VARIABLE DS2_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND git status --porcelain --untracked-files=no --ignore-submodules=all WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -71,6 +71,15 @@ target_compile_definitions(deadspace2 PRIVATE DS2_VERSION="${DS2_VERSION}" DS2_C
 
 # Disc swap, title update mount and XamSwapDisc (src/ds2_disc_swap.cpp) are TU2 code.
 target_compile_definitions(deadspace2 PRIVATE DS2_TARGET_TU2=1)
+
+# Which tools/patch_local_regs.py build this is (cmake/ds2_switch.cmake), for the log's [cpu] line.
+target_compile_definitions(deadspace2 PRIVATE DS2_LOCAL_REGS="${DS2_LOCAL_REGS}")
+
+# Release builds (the default) have no debug modes: only ZL + ZR + Up (the FPS counter) answers, whatever ds2.toml
+# says, and telemetria.flag / sin_resplandor.flag next to the NRO are ignored. -DDS2_DEPURACION=ON brings them back
+# (switch_atajos_depuracion=true in ds2.toml for the ZL + ZR shortcuts), for working on the port.
+option(DS2_DEPURACION "Debug modes: ZL + ZR shortcuts, telemetria.flag, sin_resplandor.flag" OFF)
+target_compile_definitions(deadspace2 PRIVATE DS2_DEPURACION=$<BOOL:${DS2_DEPURACION}>)
 
 # Nintendo Switch: deadspace2.nro. On the SD card: sdmc:/switch/ds2-nx/ds2-nx.nro, with disc1/, disc2/ and tu/ beside it
 # (src/ds2_app.h finds them there).

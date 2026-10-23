@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 (TU2) — 2026-10-23
+
+- **Faster recompiled code.** Guest registers now live in host locals inside each function, and the context is written
+  back only at calls and returns, for the registers a whole-program analysis says the other side reads
+  (`deadspace2/tools/patch_local_regs.py`, ported from gears2-nx 1.0.0; [PORTING.md](deadspace2/PORTING.md) 5.5).
+  The NRO shrinks from 49 to 39 MB. Videos no longer stutter at stock clocks. In the heaviest scenes at stock the GPU
+  is the limit, so their frame rate is unchanged.
+- **No debug modes in the release.** Only ZL + ZR + D-pad Up (FPS counter) answers; `switch_atajos_depuracion` in
+  `ds2.toml`, `telemetria.flag` and `sin_resplandor.flag` are ignored. Building with `-DDS2_DEPURACION=ON` brings them
+  back for development.
+- Tested on the console for about 12 minutes at stock clocks (no crash); a full playthrough is not verified.
+
 ## 1.0.5 (TU2) — 2026-10-22
 
 - **Crash after waking from sleep.** While the console slept, the game's clock kept running, and on waking the game took

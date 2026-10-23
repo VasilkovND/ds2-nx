@@ -9,7 +9,7 @@ a homebrew NRO, and frames are drawn by a native deko3d renderer from the game's
 > You need your own copy of the game (both discs and Title Update 2). This repository contains no game data or
 > game code.
 
-Status: **1.0.5** — playable. Installation: [INSTALL.md](INSTALL.md). Comfortable when overclocked; about 20-30 fps at stock clocks,
+Status: **1.1.0** — playable. Installation: [INSTALL.md](INSTALL.md). Comfortable when overclocked; about 20-30 fps at stock clocks,
 with drops in the heaviest fights. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
 details, boot history and measurements in [deadspace2/PORTING.md](deadspace2/PORTING.md).
 
@@ -56,12 +56,13 @@ sdmc:/switch/ds2-nx/
     tu/                       default.xex (Disc 1) + default.xexp (Title Update 2)
     disc1/                    extracted Disc 1
     disc2/                    extracted Disc 2
-    telemetria.flag           optional, debugging only
+    telemetria.flag           optional, debugging builds only (-DDS2_DEPURACION=ON)
 ```
 
 `deadspace2/tools/stage_sd.py` makes `tu/`, `disc1/` and `disc2/` from your ISOs and title update and checks the
-hashes. An empty `telemetria.flag` turns on automatic screenshots every 5 s, frame dumps and a 1 ms CPU stack sampler;
-it costs performance, so only use it for debugging.
+hashes. In a debugging build (`-DDS2_DEPURACION=ON`), an empty `telemetria.flag` turns on automatic screenshots every
+5 s, frame dumps and a 1 ms CPU stack sampler; it costs performance. Release builds ignore it and keep only the FPS
+counter.
 
 ## Credits
 
