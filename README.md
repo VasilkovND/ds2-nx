@@ -93,5 +93,12 @@ contains code recompiled from the game and the shader library the game's own sha
 computer from your copy ([INSTALL.md](INSTALL.md)). Running homebrew requires custom firmware,
 which violates Nintendo's terms and can get a console banned.
 
+**Official source.** The only official source of this project is this repository,
+[github.com/VasilkovND/ds2-nx](https://github.com/VasilkovND/ds2-nx): its source code and its releases. I do not
+publish ready-made NRO or NSP files, and never anything with game data. Builds, NSP/XCI packages or archives offered on
+other sites (ROM sites, file hosts, forums, chats) are not made, endorsed or checked by me, may be modified, and are
+not covered by this project; distributing the game's files that way infringes its rights holders' copyright and is
+solely the responsibility of whoever does it.
+
 Source code is under the GPL-3.0 license (see [LICENSE](LICENSE)). The SDK changes are under the SDK's BSD-3-Clause
 license, and the shader translator changes under MIT.
