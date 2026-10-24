@@ -1,0 +1,119 @@
+diff --git a/include/rex/ui/deko3d/nucleo.h b/include/rex/ui/deko3d/nucleo.h
+index 18a7ed6..d4dcf95 100644
+--- a/include/rex/ui/deko3d/nucleo.h
++++ b/include/rex/ui/deko3d/nucleo.h
+@@ -157,8 +157,12 @@ class Nucleo {
+   // its end waits for every engine and invalidates the image, descriptor and shader caches. Texture uploads and
+   // descriptor writes go here, so the draws recorded before and after them in comandos() all see them (the
+   // Vulkan path's upload command buffer). Only with ConfigNucleo::kb_previos.
+-  DkCmdBuf ComandosPrevios() {
++  // copia = false: only inline descriptor writes (dkCmdBufPushData), which the 3D engine itself processes in order:
++  // they need the caches invalidated but not a barrier that waits for every engine (with partial submits that drained
++  // the GPU on each of them).
++  DkCmdBuf ComandosPrevios(bool copia = true) {
+     previos_usados_ = true;
++    previos_con_copia_ |= copia;
+     return previos_;
+   }
+   const ConfigNucleo& config() const { return config_; }
+@@ -247,6 +251,7 @@ class Nucleo {
+   DkCmdBuf comandos_ = nullptr;
+   DkCmdBuf previos_ = nullptr;
+   bool previos_usados_ = false;
++  bool previos_con_copia_ = false;
+   uint64_t ns_esperando_valla_ = 0;
+   DkMemBlock memoria_previos_ = nullptr;
+   DkMemBlock subida_ = nullptr, memoria_comandos_ = nullptr, codigo_ = nullptr, descriptores_ = nullptr,
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 6bfb3a5..c0c8b62 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -273,6 +273,7 @@ class RenderDk final : public DestinosNativos {
+   void VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest);
+   void TerminarVolcado();
+   bool volcado_pedido_ = false, volcando_ = false;
++  uint32_t dibujos_sin_envio_ = 0;  // draws recorded since the last submission (nfsmw_dk_envio_parcial)
+   DkMemBlock volcado_bloque_ = nullptr;
+   uint8_t* volcado_cpu_ = nullptr;
+   DkGpuAddr volcado_gpu_ = 0;
+diff --git a/src/ui/deko3d/nucleo.cpp b/src/ui/deko3d/nucleo.cpp
+index dba3808..ce3fc89 100644
+--- a/src/ui/deko3d/nucleo.cpp
++++ b/src/ui/deko3d/nucleo.cpp
+@@ -373,9 +373,10 @@ DkCmdList Nucleo::CerrarPrevios() {
+     return 0;
+   }
+   // Uploads (copy engine), descriptor writes and code are done and visible before comandos() runs
+-  dkCmdBufBarrier(previos_, DkBarrier_Full,
++  dkCmdBufBarrier(previos_, previos_con_copia_ ? DkBarrier_Full : DkBarrier_None,
+                   DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader);
+   previos_usados_ = false;
++  previos_con_copia_ = false;
+   return dkCmdBufFinishList(previos_);
+ }
+ 
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index f9070e6..55a75b1 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -60,6 +60,12 @@ REXCVAR_DEFINE_BOOL(nfsmw_nativo_sin_desenfoque, true, "NFSMW",
+                     "Quitar el desenfoque radial de la composicion final. Son 7 de los 12 muestreos del "
+                     "unico cuadrilatero a pantalla completa del posproceso (1,5-2,0 ms reales). Se pierde "
+                     "el difuminado de los bordes al acelerar y con el NOS: la imagen queda mas nitida");
++REXCVAR_DEFINE_INT32(nfsmw_dk_envio_parcial, 256, "NFSMW",
++                     "deko3d: cada N dibujos lo grabado del fotograma se envia ya a la GPU (Nucleo::EnviarParcial), para "
++                     "que la GPU dibuje mientras la CPU sigue grabando. 0 = un solo envio por fotograma, como antes "
++                     "(Dead Space 3 en peleas: la GPU parada 2-10 ms por fotograma esperando a que se cerrara el "
++                     "trabajo; gears2-nx 0039)")
++    .range(0, 100000);
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_z_temprana, true, "NFSMW",
+                     "Renderizador nativo (20/09): en los dibujos que prueban la profundidad pero NO la "
+                     "escriben (humo, particulas, cristales, calcomanias), declarar EarlyFragmentTests en el "
+@@ -1047,6 +1053,16 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     marca_etapa = ahora;
+     espera_etapa = espera;
+   };
++  // nfsmw_dk_envio_parcial: what the frame recorded so far goes to the GPU now, so it draws while this thread keeps
++  // recording (one submission per frame left it idle until the frame closed: 2-10 ms a frame in Dead Space 3's
++  // fights). Everything is bound again afterwards. From gears2-nx's sdk-patches/0039.
++  if (const int32_t cada = REXCVAR_GET(nfsmw_dk_envio_parcial);
++      cada > 0 && ++dibujos_sin_envio_ >= uint32_t(cada) && nucleo_.TrabajoAbierto()) {
++    dibujos_sin_envio_ = 0;
++    nucleo_.EnviarParcial();
++    OlvidarEstado();
++    g_.pase_valido = false;
++  }
+   // A guest wait for the GPU: the game may rewrite vertex memory it already drew from (DedupeVertices).
+   if (const uint32_t sinc = g_sincronizaciones_anillo.load(std::memory_order_relaxed); sinc != dedupe_sinc_vista_) {
+     dedupe_sinc_vista_ = sinc;
+diff --git a/src/x360/deko/texturas.cpp b/src/x360/deko/texturas.cpp
+index f895fc8..3611ed1 100644
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -230,7 +230,7 @@ void RenderDk::EscribirDescriptorImagen(uint32_t ranura, const DkImageView& vist
+   dkImageDescriptorInitialize(&d, &vista, false, false);
+   // In the pre-list: ordered before every draw of this submission, never under a draw that reads it (a freed slot is
+   // only reused after its fence).
+-  dkCmdBufPushData(nucleo_.ComandosPrevios(), nucleo_.DescriptoresImagen() + DkGpuAddr(ranura) * sizeof(d), &d,
++  dkCmdBufPushData(nucleo_.ComandosPrevios(false), nucleo_.DescriptoresImagen() + DkGpuAddr(ranura) * sizeof(d), &d,
+                    sizeof(d));
+ }
+ 
+@@ -360,7 +360,7 @@ bool RenderDk::CrearVacias() {
+   s.wrapMode[0] = s.wrapMode[1] = s.wrapMode[2] = DkWrapMode_ClampToEdge;
+   DkSamplerDescriptor d;
+   dkSamplerDescriptorInitialize(&d, &s);
+-  dkCmdBufPushData(nucleo_.ComandosPrevios(), nucleo_.DescriptoresSampler(), &d, sizeof(d));
++  dkCmdBufPushData(nucleo_.ComandosPrevios(false), nucleo_.DescriptoresSampler(), &d, sizeof(d));
+   siguiente_descriptor_ = kDescriptoresReservados;
+   return true;
+ }
+@@ -409,7 +409,7 @@ uint32_t RenderDk::SamplerDe(const uint32_t* f, bool puntual) {
+   DkSamplerDescriptor d;
+   dkSamplerDescriptorInitialize(&d, &s);
+   AsegurarTrabajo();
+-  dkCmdBufPushData(nucleo_.ComandosPrevios(), nucleo_.DescriptoresSampler() + DkGpuAddr(ranura) * sizeof(d), &d,
++  dkCmdBufPushData(nucleo_.ComandosPrevios(false), nucleo_.DescriptoresSampler() + DkGpuAddr(ranura) * sizeof(d), &d,
+                    sizeof(d));
+   samplers_.emplace(clave, ranura);
+   return ranura;

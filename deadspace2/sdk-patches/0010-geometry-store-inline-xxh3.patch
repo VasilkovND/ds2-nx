@@ -1,0 +1,102 @@
+diff --git a/include/rex/x360/deko/geometria.h b/include/rex/x360/deko/geometria.h
+index 1c5fe45..2a5d0af 100644
+--- a/include/rex/x360/deko/geometria.h
++++ b/include/rex/x360/deko/geometria.h
+@@ -131,6 +131,8 @@ class AlmacenGeometria {
+     uint32_t offset = 0, tam = 0;  // its block (tam 0: none)
+     uint32_t vmin = 0, vmax = 0;
+     uint32_t cambios = 0;          // content changes in a row
++    uint32_t confirmadas = 0;      // checks in a row that found it unchanged (nfsmw_dk_geometria_confianza)
++    uint8_t fase = 0;              // the next phase its sampled check reads (rotates per entry)
+     bool fases_validas = false;    // fases[] describe the stored content (ranges of more than kFases lines)
+     uint64_t fases[8] = {};        // the hash of each phase of its 64-byte lines (Huellas)
+   };
+diff --git a/src/x360/deko/geometria.cpp b/src/x360/deko/geometria.cpp
+index 11aa12f..66a469b 100644
+--- a/src/x360/deko/geometria.cpp
++++ b/src/x360/deko/geometria.cpp
+@@ -2,11 +2,21 @@
+ 
+ #include <rex/x360/deko/geometria.h>
+ 
++// The fingerprints of every vertex range, 64-byte line by line (1.4-1.9 MB a frame in Gears of War 2): XXH3 inlined
++// here instead of a call per line (the profile had it at 9 % of the GPU ring thread). Same hash values.
++#define XXH_INLINE_ALL
+ #include <xxhash.h>
+ 
+ #include <algorithm>
+ 
+ #include <rex/ui/deko3d/nucleo.h>
++#include <rex/cvar.h>
++
++REXCVAR_DEFINE_INT32(nfsmw_dk_geometria_confianza, 1, "NFSMW",
++                     "deko3d: un rango de vertices que salio igual 16 comprobaciones seguidas solo se vuelve a comprobar 1 "
++                     "de cada N fotogramas (el resto se usa el bloque guardado). 1 = comprobar siempre (por defecto: Dead Space 3 "
++                     "anima en la CPU y una pose vieja se veria). Gears of War 2: la huella era un 9 % del hilo del anillo")
++    .range(1, 8);
+ 
+ namespace rex::deko3d {
+ 
+@@ -194,6 +204,7 @@ AlmacenGeometria::Resultado AlmacenGeometria::Consultar(const uint8_t* datos, ui
+   }
+   e.fotograma = fotograma_;
+   if (nueva) {
++    e.fase = uint8_t((direccion >> 6) % kFases);
+     e.datos = direccion;
+     e.bytes = bytes;
+     e.modo = modo;
+@@ -210,17 +221,29 @@ AlmacenGeometria::Resultado AlmacenGeometria::Consultar(const uint8_t* datos, ui
+     return {};
+   }
+   e.epoca = epoca_;
++  // A range found unchanged 16 times in a row is trusted for confianza - 1 frames out of confianza (a range the game
++  // rewrites in place shows its old content for at most that long; ranges that change go to the ring as volatile).
++  static const uint32_t confianza = uint32_t(REXCVAR_GET(nfsmw_dk_geometria_confianza));
++  if (e.tam && confianza > 1 && e.confirmadas >= 16 && (fotograma_ + (e.datos >> 6)) % confianza != 0) {
++    ++estadisticas_.aciertos;
++    estadisticas_.bytes_aciertos += bytes;
++    return {&e, gpu_ + e.offset, e.vmin, e.vmax};
++  }
+   // A stored range with its phase hashes: one eighth of its lines (rotating, so every line is read at least once
+   // every kFases frames) plus the first and the last. The guard: the first kMuestrasGuardia sampled checks also hash
+   // everything, and one disagreement switches sampling off.
+   if (e.tam && e.fases_validas && muestreo_) {
+-    const uint32_t fase = uint32_t((fotograma_ + (e.datos >> 6)) % kFases);
++    // Per entry, not from the frame: with checks only 1 frame in confianza, a frame-based phase would read only some
++    // of the phases.
++    const uint32_t fase = e.fase;
++    e.fase = uint8_t((e.fase + 1) % kFases);
+     uint64_t leidos = 0;
+     const bool muestra_igual = HuellaFase(datos, bytes, fase, leidos) == e.fases[fase];
+     estadisticas_.bytes_huella += leidos;
+     ++estadisticas_.muestreos;
+     if (muestra_igual && estadisticas_.muestreos > kMuestrasGuardia) {
+       e.cambios = 0;
++      e.confirmadas += e.confirmadas < 16;
+       ++estadisticas_.aciertos;
+       estadisticas_.bytes_aciertos += bytes;
+       return {&e, gpu_ + e.offset, e.vmin, e.vmax};
+@@ -231,6 +254,7 @@ AlmacenGeometria::Resultado AlmacenGeometria::Consultar(const uint8_t* datos, ui
+       estadisticas_.bytes_huella += bytes;
+       if (completa == e.huella) {
+         e.cambios = 0;
++        e.confirmadas += e.confirmadas < 16;
+         ++estadisticas_.aciertos;
+         estadisticas_.bytes_aciertos += bytes;
+         return {&e, gpu_ + e.offset, e.vmin, e.vmax};
+@@ -259,6 +283,7 @@ AlmacenGeometria::Resultado AlmacenGeometria::Consultar(const uint8_t* datos, ui
+       std::copy(fases, fases + kFases, e.fases);
+     }
+     e.cambios = 0;
++    e.confirmadas += e.confirmadas < 16;
+     if (e.tam) {
+       ++estadisticas_.aciertos;
+       estadisticas_.bytes_aciertos += bytes;
+@@ -275,6 +300,7 @@ AlmacenGeometria::Resultado AlmacenGeometria::Consultar(const uint8_t* datos, ui
+   }
+   // Changed: a new block next time it is stable; changing again, to the ring for a while.
+   ++estadisticas_.cambios;
++  e.confirmadas = 0;
+   e.huella = huella;
+   e.fases_validas = con_fases;
+   std::copy(fases, fases + kFases, e.fases);

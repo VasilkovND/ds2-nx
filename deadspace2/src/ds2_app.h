@@ -31,6 +31,19 @@
 #include "ds2_gpu.h"
 #endif
 
+#if defined(__SWITCH__)
+#include <rex/ui/switch_apm.h>
+#endif
+// Handheld GPU clock through Horizon's own performance profiles (the ones commercial games pick; not an overclock): in
+// handheld mode the GPU runs at 307.2 MHz, and light scenes needed 28-34 ms of GPU per frame there. 460 asks for
+// 0x92220008 (GPU 460.8 MHz, CPU 1020 and memory 1331.2 as before; the SDK's switch_apm.cpp tries the pairs that keep
+// the memory clock first and puts it back if it rises). Docked (GPU 768 MHz), or with sys-clk setting the clocks,
+// nothing changes. As in ds3-nx (ds3_gpu_portatil_mhz).
+REXCVAR_DEFINE_INT32(ds2_gpu_portatil_mhz, 460, "DS2",
+                     "GPU en modo portatil por los perfiles de rendimiento de Horizon: 460 o 384 MHz; 0 = no tocar "
+                     "(307,2 MHz de serie)")
+    .range(0, 460);
+
 REXCVAR_DEFINE_STRING(ds2_disc1, "", "DS2", "Extracted Disc 1 folder. Empty: disc1/ next to the executable.");
 REXCVAR_DEFINE_STRING(ds2_disc2, "", "DS2", "Extracted Disc 2 folder. Empty: disc2/ next to the executable.");
 
@@ -90,6 +103,12 @@ class Ds2App : public rex::ReXApp {
 
   void OnPreLaunchModule() override {
     ds2::cpu::Configurar();
+#if defined(__SWITCH__)
+    if (const int32_t mhz = REXCVAR_GET(ds2_gpu_portatil_mhz); mhz > 0) {
+      RexSwitchApmPedirGpuMhz(mhz);
+      RexSwitchApmAplicar();
+    }
+#endif
     try {
       ds2::disc_swap::RegisterImport(*runtime());
     } catch (const std::exception& error) {

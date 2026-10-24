@@ -1,0 +1,83 @@
+--- a/src/core/clock.cpp
++++ b/src/core/clock.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <limits>
+ #include <mutex>
+ 
+@@ -36,10 +37,13 @@
+ std::pair<uint64_t, uint64_t> guest_tick_ratio_ = std::make_pair(1, 1);
+ 
+ // Native guest ticks.
+-uint64_t last_guest_tick_count_ = 0;
++std::atomic<uint64_t> last_guest_tick_count_{0};
+ // Last sampled host tick count.
+-uint64_t last_host_tick_count_ = Clock::QueryHostTickCount();
+-// Mutex to ensure last_host_tick_count_ and last_guest_tick_count_ are in sync
++std::atomic<uint64_t> last_host_tick_count_{Clock::QueryHostTickCount()};
++// Guards guest_tick_ratio_ (changed only when the scalar or the guest frequency changes, at startup). The two counts
++// above are atomics: UpdateGuestClock runs on every guest mftb, and with one mutex around them RenderWare Audio's two
++// mixer threads and the game's main thread spent about a fifth of their time waiting for each other in
++// svcArbitrateLock (Dead Space 3, stack samples in fights).
+ std::mutex tick_mutex_;
+ 
+ void RecomputeGuestTickScalar() {
+@@ -62,7 +66,7 @@
+ }
+ 
+ // Update the guest timer for all threads.
+-// Return a copy of the value so locking is reduced.
++// Lock-free (sdk-patches/0017 of ds3-nx): it runs on every guest mftb.
+ uint64_t UpdateGuestClock() {
+   uint64_t host_tick_count = Clock::QueryHostTickCount();
+ 
+@@ -71,28 +75,25 @@
+     return host_tick_count * guest_tick_ratio_.first / guest_tick_ratio_.second;
+   }
+ 
+-  std::unique_lock<std::mutex> lock(tick_mutex_, std::defer_lock);
+-  if (lock.try_lock()) {
+-    // Translate host tick count to guest tick count.
+-    uint64_t host_tick_delta =
+-        host_tick_count > last_host_tick_count_ ? host_tick_count - last_host_tick_count_ : 0;
+-    last_host_tick_count_ = host_tick_count;
+-    // The guest never saw its console sleep: while the process is suspended (Switch sleep or
+-    // HOME) no thread reads the clock, so the first read after it would carry the whole nap in
+-    // one step, and games take that as one enormous frame (Dead Space 2's RenderWare Audio crashed
+-    // within seconds of waking). Gaps longer than this are cut to it; a running game reads the
+-    // clock far more often.
+-    const uint64_t max_host_tick_delta = Clock::QueryHostTickFrequency() / 4;
+-    host_tick_delta = std::min(host_tick_delta, max_host_tick_delta);
+-    uint64_t guest_tick_delta =
+-        host_tick_delta * guest_tick_ratio_.first / guest_tick_ratio_.second;
+-    last_guest_tick_count_ += guest_tick_delta;
+-    return last_guest_tick_count_;
+-  } else {
+-    // Wait until another thread has finished updating the clock.
+-    lock.lock();
+-    return last_guest_tick_count_;
++  // Each caller claims the host time from the last sample to its own and adds that to the guest count; a caller whose
++  // sample is not newer than the last one only reads the count. Each thread still sees its own reads never go back.
++  uint64_t previous = last_host_tick_count_.load(std::memory_order_relaxed);
++  while (host_tick_count > previous &&
++         !last_host_tick_count_.compare_exchange_weak(previous, host_tick_count, std::memory_order_relaxed)) {
+   }
++  if (host_tick_count <= previous) {
++    return last_guest_tick_count_.load(std::memory_order_acquire);
++  }
++  // The guest never saw its console sleep: while the process is suspended (Switch sleep or
++  // HOME) no thread reads the clock, so the first read after it would carry the whole nap in
++  // one step, and games take that as one enormous frame (Dead Space 2's RenderWare Audio crashed
++  // within seconds of waking). Gaps longer than this are cut to it; a running game reads the
++  // clock far more often.
++  const uint64_t max_host_tick_delta = Clock::QueryHostTickFrequency() / 4;
++  const uint64_t host_tick_delta = std::min(host_tick_count - previous, max_host_tick_delta);
++  const auto ratio = guest_tick_ratio_;
++  const uint64_t guest_tick_delta = host_tick_delta * ratio.first / ratio.second;
++  return last_guest_tick_count_.fetch_add(guest_tick_delta, std::memory_order_acq_rel) + guest_tick_delta;
+ }
+ 
+ // Offset of the current guest system file time relative to the guest base time.

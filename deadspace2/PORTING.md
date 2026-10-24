@@ -65,6 +65,10 @@ Mushihimesama Futari Switch ports do too; Xenos emulation would be a few frames 
   | 0005-yield-backoff | `MaybeYield`: after 16 yields within 20 µs, sleep 100 µs (busy waits) |
   | 0006-xma-locks | XMA kicks without the context lock, decoder woken only when asleep (5.3) |
   | 0007-guest-clock-sleep | The guest clock skips the time the console sleeps: a gap over 0.25 s counts as 0.25 s (RenderWare Audio crashed after waking) |
+  | 0008-resolve-sizes-lru | Up to six resolved sizes per address, the least recently used dropped first (dantes-inferno-nx 0011, ds3-nx) |
+  | 0009-lock-free-guest-clock | The guest clock without its mutex: every guest `mftb` took it (ds3-nx 0017) |
+  | 0010-geometry-store-inline-xxh3 | The geometry store's per-line XXH3 inlined (gears2-nx, ds3-nx 0029) |
+  | 0011-partial-submits-descriptor-barriers | The frame's recorded work goes to the GPU every 256 draws (`nfsmw_dk_envio_parcial`), descriptor writes without a full barrier (gears2-nx 0039, ds3-nx 0023) |
 
 ## 2. Memory, discs, title update
 
@@ -263,6 +267,34 @@ Result: NRO 49.2 → 39.0 MB. On the console (stock clocks, ~6 min each) the che
 neither build crashed; videos no longer stutter at stock (the `Job Manager` thread keeps up with VP6). At stock the
 heavy scenes are GPU-bound (55-62 ms of GPU per frame at 307 MHz, the main thread ~40 % waiting for it), so the fps
 there did not change; a like-for-like comparison with 1.0.5 is not done yet.
+
+
+### 5.6 Stable 30 fps at stock clocks (from ds3-nx)
+
+Dead Space 3's port reached 30 fps nearly everywhere at stock clocks in handheld with four changes; the same ones
+apply here (same engine family, same EARS display code, same Direct3D):
+
+- **Handheld GPU 460.8 MHz** (`ds2_gpu_portatil_mhz`, 460; 0 = untouched): Horizon's own performance profile
+  0x92220008 (GPU 460.8, CPU 1020 and memory 1331.2 unchanged), the one commercial games request; not an overclock.
+  Requested through the SDK's `switch_apm.cpp` when the module launches. Docked the GPU is already at 768 MHz.
+- **Scene at 960x540** (`ds2_resolucion`: 0 = by CPU clock, 720 or 540; `src/ds2_resolution.cpp`):
+  `Displ_CreateDevice` (EARS lldisp_xenon, 0x8290C380) writes the scene size the renderer reads, u16 0x82E3CFF8 width
+  and 0x82E3CFFC height (1280x720 in HD, 1200x720 with the engine's own "reduced HD targets", 1024x768 in SD), and the
+  back buffer's at 0x82E3D014 / 0x82E3D018 (kept at 1280x720). After it, 960x540 replaces 1280x720 when chosen: about
+  56 % of the pixel work, scaled to the back buffer as the game already does for its other scene sizes. By default
+  540p below a 1.5 GHz CPU (stock), 720p above (overclocked). It applies at the next start.
+- **Direct3D's GPU wait yields, then sleeps** (`D3D::CBlocker::Check`, 0x822187C8; `ds2_espera_gpu_cesiones` 32,
+  `ds2_espera_gpu_us` 100): its db16cyc delays compile to nothing, so BlockOnFence's loop spun a whole core away from
+  the ring thread it waits for. Same function and hook as ds3-nx (`ds3_D3D_GpuWaitStep`) and gears2-nx.
+- **Audio threads raised** (`ds2_prioridad_mezclador`, 0x2E, `src/ds2_audio.cpp`): RenderWare Audio's mixer threads
+  (`rw::audio::core::Dac::XenonThread`, and whoever calls MixWithGain / CopyWithGain) and XAudio2's processing thread
+  (`LEAPCORE::CGraphManager::ThreadProc`) each raise themselves once above the game's 0x3B, below the ring thread and
+  the XMA decoder. At 1020 MHz Dead Space 3's mixers got their slice too late and frames went out as silence.
+- **SDK patches 0008-0011** (table in section 1): partial GPU submits so the GPU draws while the frame is still being
+  recorded, the lock-free guest clock, the inlined geometry hash, resolve sizes kept by recency.
+
+Not measured on the console yet for Dead Space 2. To compare, `ds2_resolucion = 720`, `ds2_gpu_portatil_mhz = 0`,
+`ds2_espera_gpu_us = 0` and `nfsmw_dk_envio_parcial = 0` in `ds2.toml` each bring the old behaviour back.
 
 ## 6. Tools and how to debug
 

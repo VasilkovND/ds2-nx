@@ -1,0 +1,102 @@
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -262,6 +262,7 @@
+     ImagenDk imagen;
+     uint32_t formato_guest = 0;
+     bool escrita = false;
++    uint64_t uso = 0;  // uso_resueltas_ when last resolved or sampled: the least recent size goes first
+   };
+   // The frame dump (PedirVolcado): from one Swap to the next, each resolved texture written is copied to a read-back
+   // block; at the next Swap the GPU is waited for and they are written as BMPs (destinos.cpp, TerminarVolcado).
+@@ -479,9 +480,12 @@
+   // The other sizes resolved to the same address, kept instead of destroyed. Dead Space 2 resolves 1280x360 and
+   // 1280x720 to one address every frame: each resolve destroyed and recreated the other's texture (175 times in
+   // 10 s), and the effects that sample the older one read an empty image (half the screen, in the decompression
+-  // scene). Key: base, width, height, host format. At most kOtrasPorBase per address.
++  // scene). Key: base, width, height, host format. At most kOtrasPorBase per address, the least recently used
++  // dropped first: Dante's Inferno resolves five sizes to one address, and dropping by key order (the smallest
++  // heights kept) destroyed the 1280x720 and 1280x360 ones of every frame again.
+   std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, Resuelta> resueltas_otras_;
+-  static constexpr uint32_t kOtrasPorBase = 4;
++  static constexpr uint32_t kOtrasPorBase = 6;
++  uint64_t uso_resueltas_ = 0;
+   // Read-backs: kBytesLecturaRanura per work slot in one CPU-cached, GPU-uncached block
+   std::vector<LecturasRanura> lecturas_;
+   DkMemBlock lectura_bloque_ = nullptr;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -903,6 +903,7 @@
+   if (!profundidad && !FormatoResueltaDk(formato, formato_host)) {
+     formato_host = DkImageFormat_RGBA8_Unorm;  // a depth copy's or an unknown guest format: as before
+   }
++  ++uso_resueltas_;
+   if (auto it = resueltas_.find(base); it != resueltas_.end()) {
+     Resuelta& r = it->second;
+     if (r.imagen.ancho == ancho && r.imagen.alto == alto && r.imagen.formato == formato_host) {
+@@ -911,6 +912,7 @@
+       }
+       r.formato_guest = formato;
+       r.imagen.intercambio_rb = intercambio_rb;
++      r.uso = uso_resueltas_;
+       return &r;
+     }
+     // Another size or format at the same address: this one is kept for its own size (resueltas_otras_), and the
+@@ -923,25 +925,33 @@
+       DestruirImagen(o->second.imagen);
+       resueltas_otras_.erase(o);
+     }
+-    uint32_t de_la_base = 0;
+-    for (auto o = resueltas_otras_.lower_bound(std::make_tuple(base, 0u, 0u, 0u));
+-         o != resueltas_otras_.end() && std::get<0>(o->first) == base;) {
+-      if (++de_la_base >= kOtrasPorBase) {
+-        DestruirImagen(o->second.imagen);
+-        o = resueltas_otras_.erase(o);
+-      } else {
+-        ++o;
++    const auto nueva = std::make_tuple(base, ancho, alto, uint32_t(formato_host));
++    for (;;) {
++      // Room for the old one: the least recently used other size goes (never the one about to come back).
++      uint32_t de_la_base = 0;
++      auto menos_usada = resueltas_otras_.end();
++      for (auto o = resueltas_otras_.lower_bound(std::make_tuple(base, 0u, 0u, 0u));
++           o != resueltas_otras_.end() && std::get<0>(o->first) == base; ++o) {
++        ++de_la_base;
++        if (o->first != nueva && (menos_usada == resueltas_otras_.end() || o->second.uso < menos_usada->second.uso)) {
++          menos_usada = o;
++        }
++      }
++      if (de_la_base < kOtrasPorBase || menos_usada == resueltas_otras_.end()) {
++        break;
+       }
++      DestruirImagen(menos_usada->second.imagen);
++      resueltas_otras_.erase(menos_usada);
+     }
+     resueltas_otras_.emplace(vieja, std::move(r));
+     resueltas_.erase(it);
+     SombraMinimoResueltaEscrita(base);
+-    const auto nueva = std::make_tuple(base, ancho, alto, uint32_t(formato_host));
+     if (auto o = resueltas_otras_.find(nueva); o != resueltas_otras_.end()) {
+       Resuelta vuelta = std::move(o->second);
+       resueltas_otras_.erase(o);
+       vuelta.formato_guest = formato;
+       vuelta.imagen.intercambio_rb = intercambio_rb;
++      vuelta.uso = uso_resueltas_;
+       ++generacion_texturas_;  // that address is sampled from this image again
+       return &resueltas_.emplace(base, std::move(vuelta)).first->second;
+     }
+@@ -957,6 +967,7 @@
+     return nullptr;
+   }
+   r.formato_guest = formato;
++  r.uso = uso_resueltas_;
+   r.imagen.intercambio_rb = intercambio_rb;
+   // Cleared once: a resolve that covers only part of it (a sub-rectangle, a narrower one) left the rest as whatever
+   // the memory held, sampled as colored noise.
+@@ -993,6 +1004,7 @@
+          std::get<2>(o->first) == alto;
+          ++o) {
+       if (o->second.escrita) {
++        o->second.uso = ++uso_resueltas_;
+         return &o->second.imagen;
+       }
+     }

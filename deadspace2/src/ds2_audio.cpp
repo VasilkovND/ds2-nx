@@ -243,9 +243,58 @@ void ConGanancia(uint8_t* dst, const uint8_t* src, float gain, uint32_t n, bool 
 
 }  // namespace
 
+// ---- The audio threads' priority (from ds3-nx, src/ds3_audio.cpp). The game's audio threads run at Horizon 0x3B, the
+// band of its main thread and job workers; when those keep the cores busy (always at stock clocks, and more so once the
+// GPU is no longer the limit) an audio thread gets its time slice too late and the frame goes out as silence. On the
+// Xbox 360 they run time-critical. Each raises itself once to ds2_prioridad_mezclador, above the game's threads and
+// below the ring thread (0x2C) and the XMA decoder (0x2B): RenderWare Audio's mixer threads (rw::audio::core::Dac::
+// XenonThread, and the threads that call MixWithGain / CopyWithGain) and XAudio2's processing thread
+// (LEAPCORE::CGraphManager::ThreadProc), which the game's audio callback waits on. They block on events between
+// frames, so they cannot keep a core from the others. Dead Space 3 lost up to a third of its sound frames in fights at
+// stock clocks before this.
+
+REXCVAR_DEFINE_INT32(ds2_prioridad_mezclador, 0x2E, "DS2",
+                     "Prioridad de Horizon de los hilos de mezcla de audio del juego (0x2C-0x3A); 0 = la de los "
+                     "demas hilos del juego (0x3B)")
+    .range(0, 0x3B);
+
+#if defined(__SWITCH__)
+extern "C" bool RexSwitchSetCurrentThreadPriorityOk(int priority);
+#endif
+
+namespace {
+void ElevarHiloAudio(const char* que) {
+  thread_local bool hecho = false;
+  if (hecho) return;
+  hecho = true;
+#if defined(__SWITCH__)
+  const int32_t prioridad = REXCVAR_GET(ds2_prioridad_mezclador);
+  if (prioridad >= 0x2C && prioridad < 0x3B) {
+    const bool ok = RexSwitchSetCurrentThreadPriorityOk(prioridad);
+    REXLOG_INFO("[audio] {} a la prioridad 0x{:X}: {}", que, prioridad, ok ? "hecho" : "FALLO");
+  }
+#else
+  (void)que;
+#endif
+}
+}  // namespace
+
+REX_EXTERN(__imp__rw__audio__core__Dac__XenonThread);
+REX_EXTERN(rw__audio__core__Dac__XenonThread) {
+  ElevarHiloAudio("hilo de mezcla de RenderWare Audio (Dac)");
+  __imp__rw__audio__core__Dac__XenonThread(ctx, base);
+}
+
+REX_EXTERN(__imp__LEAPCORE__CGraphManager__ThreadProc);
+REX_EXTERN(LEAPCORE__CGraphManager__ThreadProc) {
+  ElevarHiloAudio("hilo de XAudio2 (CGraphManager)");
+  __imp__LEAPCORE__CGraphManager__ThreadProc(ctx, base);
+}
+
 // void MixWithGain(float* dst, float* src, float gain, unsigned count)
 REX_EXTERN(__imp__rw__audio__core__MixWithGain);
 REX_EXTERN(rw__audio__core__MixWithGain) {
+  ElevarHiloAudio("hilo de mezcla");
   const bool tiempos = REXCVAR_GET(ds2_audio_tiempos);
   const uint64_t inicio = tiempos ? Ticks() : 0;
   if (REXCVAR_GET(ds2_audio_nativo)) {
@@ -262,6 +311,7 @@ REX_EXTERN(rw__audio__core__MixWithGain) {
 // void CopyWithGain(float* dst, float* src, float gain, unsigned count)
 REX_EXTERN(__imp__rw__audio__core__CopyWithGain);
 REX_EXTERN(rw__audio__core__CopyWithGain) {
+  ElevarHiloAudio("hilo de mezcla");
   if (REXCVAR_GET(ds2_audio_nativo)) {
     ConGanancia(REX_RAW_ADDR(ctx.r3.u32), REX_RAW_ADDR(ctx.r4.u32), float(ctx.f1.f64), ctx.r6.u32, false);
     return;

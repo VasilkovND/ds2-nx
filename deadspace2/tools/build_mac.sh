@@ -49,16 +49,23 @@ if [ ! -f sdk/thirdparty/uam/uam_api.h ]; then
   (cd sdk && python3 tools/switch_setup.py)
 fi
 
-# Fixes to the SDK that this game needs and that are not upstream yet (deadspace2/sdk-patches/).
-for p in "$ROOT"/deadspace2/sdk-patches/*.patch; do
-  [ -f "$p" ] || continue
-  if git -C sdk apply --reverse --check "$p" 2>/dev/null; then
-    echo "== sdk patch already applied: $(basename "$p")"
-  else
+# Fixes to the SDK that this game needs and that are not upstream yet (deadspace2/sdk-patches/), applied in order.
+# Several touch the same files, so a patch cannot be checked on its own once later ones are in: a clean SDK gets the
+# whole series, and the series' hash in deadspace2/out/sdk-patches.stamp says it is already there.
+PATCH_STAMP=deadspace2/out/sdk-patches.stamp
+PATCH_HASH="$(cat "$ROOT"/deadspace2/sdk-patches/*.patch | shasum -a 256 | cut -d' ' -f1)"
+if [ -f "$PATCH_STAMP" ] && [ "$(cat "$PATCH_STAMP")" = "$PATCH_HASH" ]; then
+  echo "== sdk patches already applied"
+elif git -C sdk diff --quiet --ignore-submodules -- . ':!thirdparty'; then
+  for p in "$ROOT"/deadspace2/sdk-patches/*.patch; do
     echo "== sdk patch: $(basename "$p")"
     git -C sdk apply "$p"
-  fi
-done
+  done
+  mkdir -p deadspace2/out && echo "$PATCH_HASH" > "$PATCH_STAMP"
+else
+  echo "sdk/ has changes that are not this patch series: reset it (git -C sdk checkout -- .) and run again"
+  exit 1
+fi
 
 BUILD=deadspace2/out/sw
 LOCAL_REGS=ON

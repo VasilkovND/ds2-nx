@@ -6,12 +6,14 @@
 
 #include "ds2_rex_diagnostic_pch.h"
 
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <unordered_set>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include <rex/thread.h>
 
 #include "ds2_cpu.h"
 
@@ -55,6 +57,38 @@ REX_EXTERN(EA__Thread__SetThreadPriority) {
     return;
   }
   __imp__EA__Thread__SetThreadPriority(ctx, base);
+}
+
+// Direct3D's GPU wait step, D3D::CBlocker::Check (0x822187C8): BlockOnFence and the other Direct3D waits call it in a
+// loop until the GPU (here the ring thread) has passed a fence; it answers 1 while still waiting. On the Xbox 360 its
+// db16cyc delays cost one hardware thread of six; here they compile to nothing and the loop takes a whole core from the
+// threads it waits for (the ring thread, the audio mixers, the job workers). While it answers "still waiting" the
+// thread yields the first ds2_espera_gpu_cesiones times and then sleeps ds2_espera_gpu_us: a Horizon sleep often lasts
+// far longer than asked, so short waits (most) do not pay for one. The same hook as ds3-nx's (ds3_D3D_GpuWaitStep) and
+// gears2-nx's (sub_82977688), same function.
+REXCVAR_DEFINE_INT32(ds2_espera_gpu_us, 100, "DS2",
+                     "Microsegundos que duerme la espera activa de Direct3D a la GPU (D3D::CBlocker::Check) tras las "
+                     "cesiones; 0 = girar como en la Xbox 360")
+    .range(0, 2000);
+REXCVAR_DEFINE_INT32(ds2_espera_gpu_cesiones, 32, "DS2",
+                     "Veces que la espera de Direct3D a la GPU solo cede el nucleo antes de dormir")
+    .range(0, 100000);
+
+REX_EXTERN(__imp__D3D__CBlocker__Check);
+REX_EXTERN(D3D__CBlocker__Check) {
+  thread_local uint32_t seguidas = 0;  // "still waiting" answers in a row on this thread
+  __imp__D3D__CBlocker__Check(ctx, base);
+  if (ctx.r3.u32 != 1) {  // the GPU got there
+    seguidas = 0;
+    return;
+  }
+  const int32_t us = REXCVAR_GET(ds2_espera_gpu_us);
+  if (us <= 0) return;
+  if (++seguidas <= uint32_t(REXCVAR_GET(ds2_espera_gpu_cesiones))) {
+    rex::thread::MaybeYield();
+  } else {
+    rex::thread::Sleep(std::chrono::microseconds(us));
+  }
 }
 
 namespace ds2::cpu {
