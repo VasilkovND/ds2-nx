@@ -27,6 +27,7 @@
 
 #include "ds2_cpu.h"
 #include "ds2_disc_swap.h"
+#include "ds2_menu.h"
 #if DS2_DEKO3D
 #include "ds2_gpu.h"
 #endif
@@ -103,6 +104,7 @@ class Ds2App : public rex::ReXApp {
 
   void OnPreLaunchModule() override {
     ds2::cpu::Configurar();
+    ds2::menu::Instalar(*runtime());
 #if defined(__SWITCH__)
     if (const int32_t mhz = REXCVAR_GET(ds2_gpu_portatil_mhz); mhz > 0) {
       RexSwitchApmPedirGpuMhz(mhz);

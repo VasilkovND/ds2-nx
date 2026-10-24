@@ -69,6 +69,7 @@ Mushihimesama Futari Switch ports do too; Xenos emulation would be a few frames 
   | 0009-lock-free-guest-clock | The guest clock without its mutex: every guest `mftb` took it (ds3-nx 0017) |
   | 0010-geometry-store-inline-xxh3 | The geometry store's per-line XXH3 inlined (gears2-nx, ds3-nx 0029) |
   | 0011-partial-submits-descriptor-barriers | The frame's recorded work goes to the GPU every 256 draws (`nfsmw_dk_envio_parcial`), descriptor writes without a full barrier (gears2-nx 0039, ds3-nx 0023) |
+  | 0012-overlay-text-and-controller-filter | Text lines the presenter paints over the frame, and a filter that takes the controller from the game (the options menu; ds3-nx 0028) |
 
 ## 2. Memory, discs, title update
 
@@ -283,6 +284,8 @@ apply here (same engine family, same EARS display code, same Direct3D):
   back buffer's at 0x82E3D014 / 0x82E3D018 (kept at 1280x720). After it, 960x540 replaces 1280x720 when chosen: about
   56 % of the pixel work, scaled to the back buffer as the game already does for its other scene sizes. By default
   540p below a 1.5 GHz CPU (stock), 720p above (overclocked). It applies at the next start.
+  The options menu (`src/ds2_menu.cpp`, ZL + ZR + Minus; painted by the presenter, sdk-patches/0012, the game sees the
+  controller idle while it is open) saves the choice in `ds2_resolucion.txt`, which comes before `ds2_resolucion`.
 - **Direct3D's GPU wait yields, then sleeps** (`D3D::CBlocker::Check`, 0x822187C8; `ds2_espera_gpu_cesiones` 32,
   `ds2_espera_gpu_us` 100): its db16cyc delays compile to nothing, so BlockOnFence's loop spun a whole core away from
   the ring thread it waits for. Same function and hook as ds3-nx (`ds3_D3D_GpuWaitStep`) and gears2-nx.

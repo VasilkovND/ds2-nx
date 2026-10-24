@@ -1,0 +1,323 @@
+--- a/src/ui/deko3d/presentador.cpp
++++ b/src/ui/deko3d/presentador.cpp
+@@ -5,6 +5,7 @@
+ #include <rex/cvar.h>
+ #include <rex/logging.h>
+ #include <rex/logging/api.h>
++#include <rex/ui/superposicion.h>
+ #include <rex/ui/surface_switch.h>
+ 
+ #include <switch.h>
+@@ -14,6 +15,8 @@
+ #include <cstddef>
+ #include <cstdio>
+ #include <cstring>
++#include <mutex>
++#include <string>
+ #include <vector>
+ 
+ // Defined with the input driver, which toggles it with ZL + ZR + Up (switch_input_driver.cpp).
+@@ -184,6 +187,83 @@
+   }
+ }
+ 
++// ---- The overlay (rex/ui/superposicion.h): a game's options menu, a few lines in the same dot font
++
++constexpr uint32_t kMenuColumnas = 44;
++constexpr uint32_t kMenuFilas = 8;
++constexpr uint32_t kMenuAncho = (kMenuColumnas + 2) * 6;  // a character of margin each side
++constexpr uint32_t kMenuAlto = (kMenuFilas + 1) * 9;      // half a line of margin above and below
++
++struct Superposicion {
++  std::mutex candado;
++  std::vector<std::string> lineas;
++  uint64_t version = 0;
++};
++Superposicion& LaSuperposicion() {
++  static Superposicion s;
++  return s;
++}
++
++// Upper case, digits and a little punctuation; the counter's glyphs for what they share.
++const uint8_t* GlifoMenu(char c) {
++  static const uint8_t kLetras[26][7] = {
++      {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E},
++      {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}, {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E},
++      {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}, {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10},
++      {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F}, {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11},
++      {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}, {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C},
++      {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}, {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F},
++      {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}, {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11},
++      {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10},
++      {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}, {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11},
++      {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},
++      {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04},
++      {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}, {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11},
++      {0x11, 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}};
++  static const uint8_t kMayor[7] = {0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08};
++  static const uint8_t kDosPuntos[7] = {0, 0x0C, 0x0C, 0, 0x0C, 0x0C, 0};
++  static const uint8_t kBarra[7] = {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10};
++  static const uint8_t kAbre[7] = {0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02};
++  static const uint8_t kCierra[7] = {0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08};
++  static const uint8_t kGuion[7] = {0, 0, 0, 0x1F, 0, 0, 0};
++  static const uint8_t kMas[7] = {0, 0x04, 0x04, 0x1F, 0x04, 0x04, 0};
++  static const uint8_t kExclamacion[7] = {0x04, 0x04, 0x04, 0x04, 0x04, 0, 0x04};
++  static const uint8_t kComa[7] = {0, 0, 0, 0, 0x0C, 0x04, 0x08};
++  static const uint8_t kPor[7] = {0, 0, 0x11, 0x0A, 0x04, 0x0A, 0x11};
++  if (c >= 'A' && c <= 'Z') return kLetras[c - 'A'];
++  switch (c) {
++    case '>': return kMayor;
++    case ':': return kDosPuntos;
++    case '/': return kBarra;
++    case '(': return kAbre;
++    case ')': return kCierra;
++    case '-': return kGuion;
++    case '+': return kMas;
++    case '!': return kExclamacion;
++    case ',': return kComa;
++    case 'x': return kPor;
++    default: return GlifoContador(c);  // digits, '.', space
++  }
++}
++
++// The lines as RGBA8 texels: white on black, a character of margin.
++void RasterizarMenu(const std::vector<std::string>& lineas, uint8_t* destino) {
++  std::memset(destino, 0, kMenuAncho * kMenuAlto * 4);
++  for (uint32_t i = 0; i < kMenuAncho * kMenuAlto; ++i) destino[i * 4 + 3] = 0xFF;
++  for (uint32_t l = 0; l < kMenuFilas && l < lineas.size(); ++l) {
++    for (uint32_t i = 0; i < kMenuColumnas && i < lineas[l].size(); ++i) {
++      const uint8_t* glifo = GlifoMenu(lineas[l][i]);
++      for (uint32_t fila = 0; fila < 7; ++fila) {
++        for (uint32_t columna = 0; columna < 5; ++columna) {
++          if (!((glifo[fila] >> (4 - columna)) & 1)) continue;
++          uint8_t* t = destino + ((l * 9 + 5 + fila) * kMenuAncho + (i + 1) * 6 + columna) * 4;
++          t[0] = t[1] = t[2] = 0xFF;
++        }
++      }
++    }
++  }
++}
++
+ // ---- The presenter
+ 
+ class PresentadorDeko3d final : public Presenter {
+@@ -201,6 +281,8 @@
+     proveedor_.dispositivo().EsperarInactiva();
+     proveedor_.dispositivo().DestruirBloque(contador_memoria_);
+     contador_memoria_ = nullptr;
++    proveedor_.dispositivo().DestruirBloque(menu_memoria_);
++    menu_memoria_ = nullptr;
+     for (ImagenSalida& s : salidas_) {
+       proveedor_.dispositivo().DestruirBloque(s.memoria);
+       s.memoria = nullptr;
+@@ -215,7 +297,7 @@
+     config.kb_comandos = 256;
+     config.mb_codigo = 1;
+     config.mb_trozo_imagenes = 1;
+-    config.descriptores_imagen = kGuestOutputMailboxSize + 1;  // + the FPS counter's
++    config.descriptores_imagen = kGuestOutputMailboxSize + 2;  // + the FPS counter's and the overlay's
+     config.descriptores_sampler = 2;                          // linear (the output) and nearest (the counter)
+     config.kb_consultas = 4;
+     nucleo_.Crear(proveedor_.dispositivo(), config);
+@@ -249,6 +331,27 @@
+       dkCmdBufPushData(nucleo_.comandos(), nucleo_.DescriptoresImagen() + kGuestOutputMailboxSize * sizeof(descriptor),
+                        &descriptor, sizeof(descriptor));
+     }
++    // The overlay's image and its descriptor, after the counter's.
++    {
++      Dispositivo& d = proveedor_.dispositivo();
++      DkImageLayoutMaker m;
++      dkImageLayoutMakerDefaults(&m, d.dispositivo());
++      m.format = DkImageFormat_RGBA8_Unorm;
++      m.dimensions[0] = kMenuAncho;
++      m.dimensions[1] = kMenuAlto;
++      DkImageLayout disposicion;
++      dkImageLayoutInitialize(&disposicion, &m);
++      menu_memoria_ = d.CrearBloque(uint32_t(dkImageLayoutGetSize(&disposicion)),
++                                    DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image, "superposicion");
++      dkImageInitialize(&menu_imagen_, &disposicion, menu_memoria_, 0);
++      DkImageView v;
++      dkImageViewDefaults(&v, &menu_imagen_);
++      DkImageDescriptor descriptor;
++      dkImageDescriptorInitialize(&descriptor, &v, false, false);
++      dkCmdBufPushData(nucleo_.comandos(),
++                       nucleo_.DescriptoresImagen() + (kGuestOutputMailboxSize + 1) * sizeof(descriptor), &descriptor,
++                       sizeof(descriptor));
++    }
+     nucleo_.TerminarTrabajo();
+     return InitializeCommonSurfaceIndependent();
+   }
+@@ -391,6 +494,7 @@
+     if (contador) {
+       ActualizarContador(c);
+     }
++    const bool menu = menu_memoria_ && ActualizarMenu(c);
+     DkImageView vista;
+     dkImageViewDefaults(&vista, &cadena_.Imagen(imagen));
+     dkCmdBufBindRenderTarget(c, &vista, nullptr);
+@@ -448,6 +552,9 @@
+     if (contador) {
+       PintarContador(c, ancho, alto);
+     }
++    if (menu) {
++      PintarMenu(c, ancho, alto);
++    }
+     nucleo_.TerminarTrabajo();
+ 
+     if (execute_ui_drawers) {
+@@ -515,9 +622,56 @@
+     dkCmdBufBindUniformBuffer(c, DkStage_Vertex, 0, ubo.gpu, sizeof(datos));
+     const DkResHandle h = dkMakeTextureHandle(kGuestOutputMailboxSize, 1);  // its image, the nearest sampler
+     dkCmdBufBindTextures(c, DkStage_Fragment, 0, &h, 1);
++    dkCmdBufDraw(c, DkPrimitive_TriangleStrip, 4, 1, 0, 0);
++  }
++
++  // The overlay: new text into its image when it changed; false when there is none to paint.
++  bool ActualizarMenu(DkCmdBuf c) {
++    Superposicion& s = LaSuperposicion();
++    std::vector<std::string> lineas;
++    {
++      std::lock_guard<std::mutex> cerrojo(s.candado);
++      if (s.lineas.empty()) return false;
++      if (s.version == menu_version_) return true;
++      lineas = s.lineas;
++      menu_version_ = s.version;
++    }
++    const Subida subida = nucleo_.Reservar(kMenuAncho * kMenuAlto * 4, 256);
++    if (!subida) return true;
++    RasterizarMenu(lineas, subida.cpu);
++    DkImageView v;
++    dkImageViewDefaults(&v, &menu_imagen_);
++    const DkCopyBuf origen = {subida.gpu, 0, 0};
++    const DkImageRect rect = {0, 0, 0, kMenuAncho, kMenuAlto, 1};
++    dkCmdBufCopyBufferToImage(c, &origen, &v, &rect, 0);
++    dkCmdBufBarrier(c, DkBarrier_Full, DkInvalidateFlags_Image);
++    return true;
++  }
++
++  // The overlay in the middle of the screen, scaled up by whole steps.
++  void PintarMenu(DkCmdBuf c, uint32_t ancho, uint32_t alto) {
++    const uint32_t escala = std::max<uint32_t>(2, std::min(ancho * 9 / 10 / kMenuAncho, alto / 3 / kMenuAlto));
++    const float w = float(kMenuAncho * escala) / float(ancho) * 2, h = float(kMenuAlto * escala) / float(alto) * 2;
++    const float x0 = -w / 2, y0 = h / 2;
++    const float datos[8] = {x0, y0, x0 + w, y0 - h, 0, 0, 1, 1};
++    const Subida ubo = nucleo_.Reservar(sizeof(datos), DK_UNIFORM_BUF_ALIGNMENT);
++    if (!ubo) return;
++    std::memcpy(ubo.cpu, datos, sizeof(datos));
++    EstadoSinProfundidad(c, false);
++    dkCmdBufBindVtxAttribState(c, nullptr, 0);
++    dkCmdBufBindVtxBufferState(c, nullptr, 0);
++    const DkShader* par[] = {&vs_, &fs_};
++    dkCmdBufBindShaders(c, DkStageFlag_GraphicsMask, par, 2);
++    dkCmdBufBindUniformBuffer(c, DkStage_Vertex, 0, ubo.gpu, sizeof(datos));
++    const DkResHandle h2 = dkMakeTextureHandle(kGuestOutputMailboxSize + 1, 1);  // its image, the nearest sampler
++    dkCmdBufBindTextures(c, DkStage_Fragment, 0, &h2, 1);
+     dkCmdBufDraw(c, DkPrimitive_TriangleStrip, 4, 1, 0, 0);
+   }
+ 
++  DkMemBlock menu_memoria_ = nullptr;
++  DkImage menu_imagen_{};
++  uint64_t menu_version_ = 0;
++
+   DkMemBlock contador_memoria_ = nullptr;
+   DkImage contador_imagen_{};
+   bool contador_escrito_ = false;
+@@ -805,3 +959,13 @@
+ }
+ 
+ }  // namespace rex::deko3d
++
++namespace rex::ui {
++void FijarSuperposicion(std::vector<std::string> lineas) {
++  auto& s = rex::deko3d::LaSuperposicion();
++  std::lock_guard<std::mutex> cerrojo(s.candado);
++  if (lineas == s.lineas) return;
++  s.lineas = std::move(lineas);
++  ++s.version;
++}
++}  // namespace rex::ui
+--- a/src/input/switch/switch_input_driver.cpp
++++ b/src/input/switch/switch_input_driver.cpp
+@@ -48,6 +48,10 @@
+ 
+ #include <switch.h>
+ 
++#include <atomic>
++
++#include <rex/input/filtro_mando.h>
++
+ // Face buttons (1.0.1). By default each Switch button acts as the Xbox 360 button with the same
+ // letter: A accepts and B goes back, as in other Switch games. With true they go by position, as on
+ // an Xbox pad: the bottom one (B on the Switch) acts as A, the mapping of 1.0.0. It applies at once;
+@@ -295,6 +299,10 @@
+   initialized_ = true;
+   return X_STATUS_SUCCESS;
+ }
++
++namespace {
++std::atomic<rex::input::FiltroMando> g_filtro_mando{nullptr};
++}  // namespace
+ 
+ void SwitchInputDriver::Poll(size_t index) {
+   Slot& slot = *slots_[index];
+@@ -321,6 +329,15 @@
+   const uint64_t held = padGetButtons(&slot.pad);
+   DispatchMenuShortcuts(slot, held);
+   X_INPUT_GAMEPAD gamepad{};
++  // The game's own menu (rex/input/filtro_mando.h) takes this controller: the game sees it idle.
++  if (const rex::input::FiltroMando filtro = g_filtro_mando.load(std::memory_order_acquire);
++      filtro && filtro(index, held)) {
++    if (std::memcmp(&gamepad, &slot.state.gamepad, sizeof(gamepad)) != 0) {
++      slot.state.gamepad = gamepad;
++      slot.state_changed = true;
++    }
++    return;
++  }
+   uint16_t buttons = 0;
+   const auto& frontales =
+       REXCVAR_GET(input_xbox_layout) ? kFrontalesPorPosicion : kFrontalesPorLetra;
+@@ -728,3 +745,7 @@
+ }
+ 
+ }  // namespace rex::input::nx
++
++namespace rex::input {
++void FijarFiltroMando(FiltroMando filtro) { nx::g_filtro_mando.store(filtro, std::memory_order_release); }
++}  // namespace rex::input
+--- /dev/null
++++ b/include/rex/ui/superposicion.h
+@@ -0,0 +1,15 @@
++// A few lines of text the deko3d presenter paints over the guest output (a game's options menu), centered in a black
++// box with the FPS counter's dot font: no ImGui and no UI drawer, so presentation stays on the game's thread (a UI
++// drawer moves every paint to the UI thread; Dead Space 3's screen went black that way). Upper-case letters, digits,
++// space and . : / ( ) - + > ! , x. Thread-safe; an empty list takes it away.
++
++#pragma once
++
++#include <string>
++#include <vector>
++
++namespace rex::ui {
++
++void FijarSuperposicion(std::vector<std::string> lineas);
++
++}  // namespace rex::ui
+--- /dev/null
++++ b/include/rex/input/filtro_mando.h
+@@ -0,0 +1,16 @@
++// A game's own use of the controller before the game sees it (an options menu opened with a button combination). The
++// Switch input driver calls the filter on every poll of a connected controller with the buttons held (HidNpadButton_*
++// bits) and the controller's slot; if it returns true the game sees that controller idle (no buttons, centered
++// sticks) for that poll.
++
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++namespace rex::input {
++
++using FiltroMando = bool (*)(size_t ranura, uint64_t botones);
++void FijarFiltroMando(FiltroMando filtro);
++
++}  // namespace rex::input

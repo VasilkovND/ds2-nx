@@ -29,6 +29,7 @@ set(DS2_SOURCES
     src/ds2_audio.cpp
     src/ds2_cpu.cpp
     src/ds2_resolution.cpp
+    src/ds2_menu.cpp
     src/ds2_shaders.cpp
     # The shader library reader, shared with the PC tools (shaders/).
     ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp

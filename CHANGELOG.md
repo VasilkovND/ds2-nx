@@ -7,14 +7,16 @@ Stock clocks, from the Dead Space 3 port (ds3-nx), aiming at a stable 30 fps wit
 
 - **Handheld GPU at 460.8 MHz** through Horizon's own performance profile (the one commercial games use; CPU and memory
   clocks unchanged, not an overclock). `ds2_gpu_portatil_mhz = 0` keeps the stock 307.2 MHz.
-- **960x540 scene at stock clocks**, scaled to the 1280x720 screen: about half the pixel work. Chosen by the CPU clock
-  (720p from 1.5 GHz up); `ds2_resolucion = 720` or `540` in `ds2.toml` forces it.
+- **960x540 scene at stock clocks**, scaled to the 1280x720 screen: about half the pixel work. **ZL + ZR + Minus** opens an
+  options menu over the game to choose 720p or 540p (saved in `ds2_resolucion.txt`, applied at the next start). Without
+  a saved choice: `ds2_resolucion` in `ds2.toml`, else by the CPU clock (720p from 1.5 GHz up).
 - **Direct3D's wait for the GPU no longer spins a core**: it yields, then sleeps 100 µs.
 - **Audio threads above the game's** (`ds2_prioridad_mezclador`, 0x2E): RenderWare Audio's mixer threads and XAudio2's
   processing thread, so the sound keeps up when the game keeps the cores busy (Dead Space 3 lost up to a third of its
   sound frames in fights at stock clocks without it).
 - **SDK**: partial GPU submits (the GPU starts drawing before the frame is fully recorded), a lock-free guest clock,
-  the geometry hash inlined, resolved texture sizes kept by recency (`sdk-patches/0008`-`0011`).
+  the geometry hash inlined, resolved texture sizes kept by recency, and the overlay text and controller filter the
+  menu uses (`sdk-patches/0008`-`0012`).
 - `tools/build_mac.sh` applies the SDK patch series as a whole (several touch the same files) and records it in
   `deadspace2/out/sdk-patches.stamp`; an SDK patched by an older version must be reset first
   (`git -C sdk checkout -- .`).
