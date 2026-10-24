@@ -70,6 +70,8 @@ Mushihimesama Futari Switch ports do too; Xenos emulation would be a few frames 
   | 0010-geometry-store-inline-xxh3 | The geometry store's per-line XXH3 inlined (gears2-nx, ds3-nx 0029) |
   | 0011-partial-submits-descriptor-barriers | The frame's recorded work goes to the GPU every 256 draws (`nfsmw_dk_envio_parcial`), descriptor writes without a full barrier (gears2-nx 0039, ds3-nx 0023) |
   | 0012-overlay-text-and-controller-filter | Text lines the presenter paints over the frame, and a filter that takes the controller from the game (the options menu; ds3-nx 0028) |
+  | 0013-flush-log-on-focus-change | The log is flushed when the focus changes or the applet resumes (sleep, HOME) |
+  | 0014-depth-resolves-cropped-and-stacked | Depth resolves read smaller are cropped, slices read as one taller texture stacked (ds3-nx 0022) |
 
 ## 2. Memory, discs, title update
 
@@ -295,6 +297,17 @@ apply here (same engine family, same EARS display code, same Direct3D):
   the XMA decoder. At 1020 MHz Dead Space 3's mixers got their slice too late and frames went out as silence.
 - **SDK patches 0008-0011** (table in section 1): partial GPU submits so the GPU draws while the frame is still being
   recorded, the lock-free guest clock, the inlined geometry hash, resolve sizes kept by recency.
+
+First console run (540p, stock): the scene see-through and textures on the wrong surfaces, as Dead Space 3 was before
+its run 16. Two of that run's fixes apply: `EmulateClear` clears depth through c1-c3 only when the clear's PS writes
+them (`ds2_borrado_solo_salidas`; the old rule came from Dead Space 2's own 720p frames, where those bases missed the
+scene depth), and sdk-patches/0014 crops depth resolves read smaller.
+
+The same run crashed in RenderWare Audio (`StreamPool::AcquireStream` following a garbage next, 0x31 / 1.0f): the
+global stream pool list (head 0x82E838B8, node at pool+12, next +0, prev +4) is linked by game threads under the System
+lock and walked by the mixer outside it (ExecuteCommands runs the commands between its locked sections).
+`src/ds2_audio.cpp` checks the list by its back links before every walk (AcquireStream and both PlayHandlers),
+re-reads a link that does not point back for a moment (one still being published), and then cuts it, logged.
 
 Not measured on the console yet for Dead Space 2. To compare, `ds2_resolucion = 720`, `ds2_gpu_portatil_mhz = 0`,
 `ds2_espera_gpu_us = 0` and `nfsmw_dk_envio_parcial = 0` in `ds2.toml` each bring the old behaviour back.

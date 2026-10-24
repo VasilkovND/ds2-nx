@@ -1,0 +1,113 @@
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -248,6 +248,16 @@
+   // a copy of its top-left corner at the fetch's size, so normalized coordinates cover what the game means.
+   const ImagenDk* ResueltaRecortada(const ImagenDk& resuelta, uint32_t ancho, uint32_t alto);
+   std::unordered_map<uint64_t, ConvertidaSigno> recortadas_;
++  // Depth resolves of one size laid one after another in memory and fetched as one taller texture (Dead Space 3's
++  // shadow cascades: three 960x960 resolves 0x384000 bytes apart, read as 960x2880): an image of the fetch's size with
++  // each slice copied to its rows, and the serie and version of the resolve each slice came from.
++  struct ApiladaDk {
++    ImagenDk imagen;
++    uint64_t series[4] = {};
++    uint64_t versiones[4] = {};
++  };
++  const ImagenDk* ResueltaApilada(uint32_t base, const ImagenDk& primera, uint32_t alto);
++  std::unordered_map<uint64_t, ApiladaDk> apiladas_;
+   std::set<uint32_t> sesgos_vistos_;  // depth-only target widths whose bias was logged (Dibujar)
+   // A 3D texture whose slices are resolved textures (Dead Space 2's color grading LUT, Copiar): its host image and the
+   // version of each slice it holds.
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -352,8 +352,10 @@
+   }
+   ConvertidaSigno& c = recortadas_[(resuelta.serie << 28) | (uint64_t(ancho) << 14) | alto];
+   if (!c.imagen.viva) {
+-    if (!CrearImagen(c.imagen, DkImageType_2D, resuelta.formato, ancho, alto, 1, 1,
+-                     DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine, "resuelta recortada")) {
++    // A depth one is copied on the 3D engine as depth (gl_FragDepth, Copiar3D): no 2D engine use.
++    const uint32_t flags =
++        resuelta.profundidad ? DkImageFlags_UsageRender : DkImageFlags_UsageRender | DkImageFlags_Usage2DEngine;
++    if (!CrearImagen(c.imagen, DkImageType_2D, resuelta.formato, ancho, alto, 1, 1, flags, "resuelta recortada")) {
+       return nullptr;
+     }
+     REXLOG_INFO("[deko3d] resuelta {}x{} leida como {}x{}: copia de su esquina", resuelta.ancho, resuelta.alto, ancho,
+@@ -369,6 +371,55 @@
+     ++c.imagen.version;
+   }
+   return &c.imagen;
++}
++
++const ImagenDk* RenderDk::ResueltaApilada(uint32_t base, const ImagenDk& primera, uint32_t alto) {
++  const uint32_t ancho = primera.ancho, alto_corte = primera.alto, cortes = alto / alto_corte;
++  // A 32-bit depth resolve of ancho x alto_corte texels: the next one starts right after it (tiled or not, the
++  // macro tiles of 32 rows end with it when alto_corte is a multiple of 32).
++  const uint32_t bytes_corte = ancho * alto_corte * 4;
++  if (apiladas_.size() > 16) {
++    for (auto& [clave, a] : apiladas_) {
++      DestruirImagen(a.imagen);
++    }
++    apiladas_.clear();
++  }
++  ApiladaDk& a = apiladas_[(uint64_t(base) << 28) | (uint64_t(ancho) << 14) | alto];
++  if (!a.imagen.viva) {
++    if (!CrearImagen(a.imagen, DkImageType_2D, primera.formato, ancho, alto, 1, 1, DkImageFlags_UsageRender,
++                     "resueltas apiladas")) {
++      return nullptr;
++    }
++    // Slices not resolved yet read as the far plane, as a new resolved texture does.
++    a.imagen.borrado_z = 1.0f;
++    a.imagen.borrado_estencil = 0;
++    a.imagen.borrado_pendiente = true;
++    HacerBorradoPendiente(a.imagen);
++    std::fill(std::begin(a.series), std::end(a.series), 0);
++    REXLOG_INFO("[deko3d] resueltas de profundidad {}x{} en {:08X} leidas como {}x{}: {} apiladas", ancho, alto_corte,
++                base, ancho, alto, cortes);
++  }
++  bool copiada = false;
++  for (uint32_t k = 0; k < cortes; ++k) {
++    const ImagenDk* corte = k ? TexturaResuelta(base + k * bytes_corte, ancho, alto_corte) : &primera;
++    if (!corte || !corte->profundidad || corte->ancho != ancho || corte->alto != alto_corte) {
++      continue;
++    }
++    if (a.series[k] == corte->serie && a.versiones[k] == corte->version) {
++      continue;
++    }
++    if (!Copiar3D(*corte, 0, 0, ancho, alto_corte, a.imagen, 0, k * alto_corte)) {
++      return nullptr;
++    }
++    a.series[k] = corte->serie;
++    a.versiones[k] = corte->version;
++    copiada = true;
++  }
++  if (copiada) {
++    OlvidarEstado();  // the copies bound their own target and shaders; the draw binds its pass again
++    ++a.imagen.version;
++  }
++  return &a.imagen;
+ }
+ 
+ uint32_t RenderDk::VaciaDe(uint16_t tipo_shader) const {
+@@ -580,9 +631,20 @@
+   if (!cubo && !volumen) {
+     const uint32_t ancho_fetch = (f[2] & 0x1FFF) + 1, alto_fetch = ((f[2] >> 13) & 0x1FFF) + 1;
+     if (const ImagenDk* resuelta = TexturaResuelta(base & 0x1FFFFFFF, ancho_fetch, alto_fetch)) {
++      // Read taller than it is, at its own width: depth resolves stacked in memory (Dead Space 3's shadow cascades).
++      // Sampled alone, the first cascade was stretched over all of them: wrong sun shadows everywhere.
++      if (resuelta->profundidad && ancho_fetch == resuelta->ancho && alto_fetch > resuelta->alto &&
++          alto_fetch % resuelta->alto == 0 && alto_fetch / resuelta->alto <= 4) {
++        if (const ImagenDk* apilada = ResueltaApilada(base & 0x1FFFFFFF, *resuelta, alto_fetch)) {
++          resuelta = apilada;
++          valido_hasta = fotograma_ ? fotograma_ - 1 : 0;  // looked at again on every draw, as the corners below
++        }
++      }
+       // Read smaller than it is: its corner of the fetch's size (Dead Space 2's 320x180 blur levels live in
+-      // 640-wide textures; sampled whole, the final image came out in stretched vertical strips).
+-      if (!resuelta->profundidad && ancho_fetch <= resuelta->ancho && alto_fetch <= resuelta->alto &&
++      // 640-wide textures; sampled whole, the final image came out in stretched vertical strips). Depth too: Dead
++      // Space 3's half-size depth is resolved 640 wide and read as 576x360; sampled whole, its ambient occlusion and
++      // depth of field were squeezed to 0.9 of the screen (outlines of the characters beside them).
++      if (ancho_fetch <= resuelta->ancho && alto_fetch <= resuelta->alto &&
+           (ancho_fetch < resuelta->ancho || alto_fetch < resuelta->alto)) {
+         if (const ImagenDk* recortada = ResueltaRecortada(*resuelta, ancho_fetch, alto_fetch)) {
+           resuelta = recortada;

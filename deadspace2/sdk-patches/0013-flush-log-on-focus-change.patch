@@ -1,0 +1,19 @@
+diff --git a/src/ui/windowed_app_context_switch.cpp b/src/ui/windowed_app_context_switch.cpp
+index 7755dc3..cee51fb 100644
+--- a/src/ui/windowed_app_context_switch.cpp
++++ b/src/ui/windowed_app_context_switch.cpp
+@@ -131,10 +131,14 @@ void SwitchWindowedAppContext::OnAppletHook(int hook_type) {
+       break;
+     case AppletHookType_OnFocusState:
+       REXLOG_INFO("Switch: {}", FocusStateName(appletGetFocusState()));
++      // Written to the SD now: going to sleep or HOME the process is suspended right after, and a game that dies on
++      // waking would otherwise leave a log that ends minutes earlier, with no sign of the sleep at all.
++      rex::FlushLogging();
+       focus_changed_ = true;
+       break;
+     case AppletHookType_OnResume:
+       REXLOG_INFO("Switch: resumed");
++      rex::FlushLogging();
+       focus_changed_ = true;
+       break;
+     case AppletHookType_OnExitRequest:

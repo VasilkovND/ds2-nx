@@ -14,10 +14,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include <rex/memory.h>
+#include <rex/thread.h>
 
 #if defined(__SWITCH__)
 #include <switch.h>
@@ -317,4 +320,99 @@ REX_EXTERN(rw__audio__core__CopyWithGain) {
     return;
   }
   __imp__rw__audio__core__CopyWithGain(ctx, base);
+}
+
+// ---- RenderWare Audio's stream pool list. Every StreamPool is linked into one global doubly linked list (head at
+// 0x82E838B8; each node at pool+12: next at +0, prev at +4). StreamPool::CreateInstance links a new pool in from a game
+// thread under the System lock, but the mixer thread walks the list outside it: System::ExecuteCommands runs the
+// commands (SndPlayer1 / GenericPlayer::PlayHandler -> StreamPool::AcquireStream) between its locked sections. On the
+// Xbox 360 the new node's links were visible before the head pointing at it; on the Switch's ARM cores they need not
+// be, and a pool freed while still linked leaves recycled memory in the chain. The mixer then followed a garbage next
+// (0x3F800000, a float 1.0, or a branch instruction) and faulted: the crash after waking from sleep and on some loads.
+// Before each walk the list is checked by its back links; a node whose next does not point back to it is re-read for a
+// moment (a link still being published), and then cut there, logged, instead of followed.
+REXCVAR_DEFINE_BOOL(ds2_audio_lista_pools_segura, true, "DS2",
+                    "Comprobar la lista de pools de streams de RenderWare Audio antes de recorrerla en el hilo de "
+                    "mezcla, y cortarla en un enlace roto en vez de fallar");
+
+namespace {
+
+constexpr uint32_t kCabezaPools = 0x82E838B8;
+
+bool GuestLegible(const uint8_t* p, size_t n) {
+#if defined(__SWITCH__)
+  MemoryInfo info{};
+  u32 pagina = 0;
+  if (R_FAILED(svcQueryMemory(&info, &pagina, uintptr_t(p)))) return false;
+  return info.type != MemType_Unmapped && (info.perm & Perm_R) && uintptr_t(p) + n <= info.addr + info.size;
+#else
+  (void)p;
+  (void)n;
+  return true;
+#endif
+}
+
+std::mutex g_pools_cerrojo;  // one checker at a time (the mixer threads)
+std::atomic<uint32_t> g_pools_cortes{0};
+
+// Is the link nodo -> siguiente sound: readable and pointing back?
+bool EnlaceSano(uint8_t* base, uint32_t nodo, uint32_t siguiente) {
+  if (siguiente == 0) return true;
+  if (siguiente & 3) return false;
+  uint8_t* p = REX_RAW_ADDR(siguiente);
+  if (!GuestLegible(p, 8)) return false;
+  return rex::memory::load_and_swap<uint32_t>(p + 4) == nodo;
+}
+
+void SanearListaPools(uint8_t* base) {
+  if (!REXCVAR_GET(ds2_audio_lista_pools_segura)) return;
+  std::lock_guard<std::mutex> cerrojo(g_pools_cerrojo);
+  uint8_t* cabeza = REX_RAW_ADDR(kCabezaPools);
+  uint32_t nodo = rex::memory::load_and_swap<uint32_t>(cabeza);
+  if (nodo == 0) return;
+  if ((nodo & 3) || !GuestLegible(REX_RAW_ADDR(nodo), 8)) {
+    rex::memory::store_and_swap<uint32_t>(cabeza, 0);
+    REXLOG_WARN("[audio] lista de pools: la cabeza {:08X} no se puede leer; lista vaciada (corte {})", nodo,
+                g_pools_cortes.fetch_add(1) + 1);
+    return;
+  }
+  for (int i = 0; i < 512 && nodo; ++i) {
+    uint8_t* p = REX_RAW_ADDR(nodo);
+    uint32_t siguiente = rex::memory::load_and_swap<uint32_t>(p);
+    bool sano = EnlaceSano(base, nodo, siguiente);
+    for (int intento = 0; !sano && intento < 64; ++intento) {  // a link another core is still publishing
+      std::atomic_thread_fence(std::memory_order_acquire);
+      rex::thread::MaybeYield();
+      siguiente = rex::memory::load_and_swap<uint32_t>(p);
+      sano = EnlaceSano(base, nodo, siguiente);
+    }
+    if (!sano) {
+      rex::memory::store_and_swap<uint32_t>(p, 0);
+      REXLOG_WARN("[audio] lista de pools: enlace roto en el nodo {:08X} (siguiente {:08X}, posicion {}); la lista "
+                  "se corta ahi (corte {})",
+                  nodo, siguiente, i, g_pools_cortes.fetch_add(1) + 1);
+      return;
+    }
+    nodo = siguiente;
+  }
+}
+
+}  // namespace
+
+REX_EXTERN(__imp__rw__audio__core__StreamPool__AcquireStream);
+REX_EXTERN(rw__audio__core__StreamPool__AcquireStream) {
+  SanearListaPools(base);
+  __imp__rw__audio__core__StreamPool__AcquireStream(ctx, base);
+}
+
+REX_EXTERN(__imp__rw__audio__core__SndPlayer1__PlayHandler);
+REX_EXTERN(rw__audio__core__SndPlayer1__PlayHandler) {
+  SanearListaPools(base);
+  __imp__rw__audio__core__SndPlayer1__PlayHandler(ctx, base);
+}
+
+REX_EXTERN(__imp__rw__audio__core__GenericPlayer__PlayHandler);
+REX_EXTERN(rw__audio__core__GenericPlayer__PlayHandler) {
+  SanearListaPools(base);
+  __imp__rw__audio__core__GenericPlayer__PlayHandler(ctx, base);
 }

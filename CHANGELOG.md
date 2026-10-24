@@ -17,6 +17,16 @@ Stock clocks, from the Dead Space 3 port (ds3-nx), aiming at a stable 30 fps wit
 - **SDK**: partial GPU submits (the GPU starts drawing before the frame is fully recorded), a lock-free guest clock,
   the geometry hash inlined, resolved texture sizes kept by recency, and the overlay text and controller filter the
   menu uses (`sdk-patches/0008`-`0012`).
+- **540p rendering fixed (from ds3-nx's run 16)**: a Direct3D color clear no longer clears depth through c1-c3 targets
+  its pixel shader does not write (at 960x540 the game's EDRAM layout put them on the scene depth, and the scene came
+  out see-through, textures over the wrong surfaces; `ds2_borrado_solo_salidas = false` restores the old rule), and
+  depth resolves read smaller or as a stack of slices are cropped or stacked (`sdk-patches/0014`). Not yet confirmed on
+  the console.
+- **RenderWare Audio crash** (the mixer following a broken stream pool link: after sleep and on some loads): the list is
+  checked by its back links before each walk and cut at a broken link instead of followed, logged as `[audio] lista de
+  pools`; `ds2_audio_lista_pools_segura = false` turns it off.
+- The log is written to the SD when the console sleeps, goes HOME or resumes (`sdk-patches/0013`): a crash on waking
+  no longer leaves a log that ends minutes earlier.
 - `tools/build_mac.sh` applies the SDK patch series as a whole (several touch the same files) and records it in
   `deadspace2/out/sdk-patches.stamp`; an SDK patched by an older version must be reset first
   (`git -C sdk checkout -- .`).

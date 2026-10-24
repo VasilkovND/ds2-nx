@@ -112,6 +112,9 @@ REXCVAR_DECLARE(bool, nfsmw_dk_borrado_color_aplazado);
 REXCVAR_DECLARE(bool, nfsmw_dk_borrado_z_aplazado);
 
 // Automatic data collection while the renderer is being brought up: nothing to press on the console.
+REXCVAR_DEFINE_BOOL(ds2_borrado_solo_salidas, true, "DS2",
+                    "Borrados de Direct3D: borrar la profundidad por c1-c3 solo si el PS del borrado escribe en ellos "
+                    "(como la Xbox 360; ds3-nx). false = como antes (todos los c1-c3 con mascara)");
 REXCVAR_DEFINE_INT32(ds2_auto_captura_s, 5, "DS2",
                      "Cada cuantos segundos se guarda una captura reducida (640x360) en capturas/auto_NNNN.bmp; 0 = nunca");
 REXCVAR_DEFINE_INT32(ds2_auto_volcado_primero_s, 120, "DS2",
@@ -1427,6 +1430,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     for (uint32_t i = 1; i < 4 && !depth_only; ++i) {
       const uint32_t b = base.rb_color_info[i] & 0xFFF;
       if (!((mask >> (i * 4)) & 0xF) || (c0_written && b == c0_base)) continue;
+      // Only targets the clear's PS exports: the Xenos leaves the others alone (ds3-nx, run 16). Direct3D can leave
+      // c1-c3 bound on a base with mask FFFF while its PS writes oC0 only; taken as depth clears, a color clear wiped
+      // the scene's depth and stencil there. At 1280x720 those bases happened to miss the scene depth; at 960x540 the
+      // game lays its EDRAM out differently and the scene came out see-through, textures over the wrong surfaces.
+      if (REXCVAR_GET(ds2_borrado_solo_salidas) && ps_ && !((ps_->salidas >> i) & 0x1)) continue;
       if (std::find(aliased_depth, aliased_depth + n_aliased, b) != aliased_depth + n_aliased) continue;
       aliased_depth[n_aliased++] = b;
       clear_depth_at(b, what);
