@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (TU2) — 2026-10-24
 
-Stock clocks, from the Dead Space 3 port (ds3-nx), aiming at a stable 30 fps without overclocking
-([PORTING.md](deadspace2/PORTING.md) 5.6). Not measured on the console yet.
+**Playable at stock clocks.** Without overclocking (handheld, CPU 1020 MHz) the game now holds 29-30 fps in most
+places at 540p; the heaviest scenes (~3,000 draws) still drop to about 20 fps, bound by the GPU. Most of this comes from
+the Dead Space 3 port (ds3-nx); details in [PORTING.md](deadspace2/PORTING.md) 5.6.
+
+**Resolution menu.** While playing, press **ZL + ZR + Minus**: an options menu opens over the game (the game ignores
+the controller while it is open). **Up / Down** choose **720P** (1280x720, for overclocked consoles) or **540P** (960x540,
+for stock clocks), **A** saves, **B** closes. The choice is kept in `ds2_resolucion.txt` next to the NRO and applies at
+the **next start** of the game. Without a saved choice: `ds2_resolucion` in `ds2.toml`, else 540p below a 1.5 GHz CPU
+and 720p above.
 
 - **Handheld GPU at 460.8 MHz** through Horizon's own performance profile (the one commercial games use; CPU and memory
   clocks unchanged, not an overclock). `ds2_gpu_portatil_mhz = 0` keeps the stock 307.2 MHz.
@@ -20,11 +27,11 @@ Stock clocks, from the Dead Space 3 port (ds3-nx), aiming at a stable 30 fps wit
 - **540p rendering fixed (from ds3-nx's run 16)**: a Direct3D color clear no longer clears depth through c1-c3 targets
   its pixel shader does not write (at 960x540 the game's EDRAM layout put them on the scene depth, and the scene came
   out see-through, textures over the wrong surfaces; `ds2_borrado_solo_salidas = false` restores the old rule), and
-  depth resolves read smaller or as a stack of slices are cropped or stacked (`sdk-patches/0014`). Not yet confirmed on
-  the console.
+  depth resolves read smaller or as a stack of slices are cropped or stacked (`sdk-patches/0014`). Confirmed on the
+  console.
 - **RenderWare Audio crash** (the mixer following a broken stream pool link: after sleep and on some loads): the list is
   checked by its back links before each walk and cut at a broken link instead of followed, logged as `[audio] lista de
-  pools`; `ds2_audio_lista_pools_segura = false` turns it off.
+  pools`; `ds2_audio_lista_pools_segura = false` turns it off. Not yet confirmed after sleep on the console.
 - The log is written to the SD when the console sleeps, goes HOME or resumes (`sdk-patches/0013`): a crash on waking
   no longer leaves a log that ends minutes earlier.
 - `tools/build_mac.sh` applies the SDK patch series as a whole (several touch the same files) and records it in

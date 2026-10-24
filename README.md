@@ -9,8 +9,9 @@ a homebrew NRO, and frames are drawn by a native deko3d renderer from the game's
 > You need your own copy of the game (both discs and Title Update 2). This repository contains no game data or
 > game code.
 
-Status: **1.1.0** — playable. Installation: [INSTALL.md](INSTALL.md). Comfortable when overclocked; about 20-30 fps at stock clocks,
-with drops in the heaviest fights. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
+Status: **1.2.0** — playable. Installation: [INSTALL.md](INSTALL.md). Overclocked: 720p, close to the game's 30 fps cap.
+Stock clocks: 540p (ZL + ZR + Minus opens the resolution menu), 29-30 fps in most places, about 20 fps in the heaviest
+scenes. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
 details, boot history and measurements in [deadspace2/PORTING.md](deadspace2/PORTING.md).
 
 ## Layout

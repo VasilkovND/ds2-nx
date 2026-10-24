@@ -4,7 +4,7 @@ Dead Space 2 (Xbox 360, Title Update 2) on the Nintendo Switch, as a homebrew NR
 done, every problem met on the way and what fixed it, and what should carry over to the next Xbox 360 → Switch port.
 Release history: [CHANGELOG.md](../CHANGELOG.md). Installation: [INSTALL.md](../INSTALL.md).
 
-## Status (1.1.0)
+## Status (1.2.0)
 
 Playable. Tested through the early chapters, the decompression scene, a space walk and a boss fight (saves reached
 chapter 3); a full playthrough is not verified yet.
@@ -13,6 +13,7 @@ chapter 3); a full playthrough is not verified yet.
 | --- | --- | --- |
 | Light scenes (≤ 1,000 draws) | ~27-29 fps, GPU-bound (28-34 ms GPU per frame) | 30 fps (the game's cap) |
 | Heavy fights (1,800-2,700 draws) | 12-16 fps, CPU-bound (the game's main thread) | comfortable |
+| 1.2.0, stock, 540p, GPU 460.8 MHz | 29-30 fps up to ~1,100 draws, 26-29 at 1,600-2,000, ~20 at ~3,000 (GPU 44-49 ms) | 720p |
 
 ## Architecture
 
