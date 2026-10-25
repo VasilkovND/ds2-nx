@@ -1,0 +1,13 @@
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -562,7 +562,9 @@
+     cara0 = true;
+     Avisar(39, "cubo leido como 2D: se usa su primera cara");
+   }
+-  if (dimension != uint32_t(xenos::DataDimension::k2DOrStacked) && !cubo && !volumen) {
++  // (Not the cube read as 2D above: this check gave it the empty texture after all, with the "1D" warning beside the
++  // cube one: the likely cause of the black floor in Dead Space 2's chapter 8.)
++  if (dimension != uint32_t(xenos::DataDimension::k2DOrStacked) && !cubo && !volumen && !cara0) {
+     Avisar(30, "texturas 1D todavia no soportadas: se usa una vacia");
+     return VaciaDe(tipo_shader);
+   }
