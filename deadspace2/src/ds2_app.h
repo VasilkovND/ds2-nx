@@ -82,6 +82,9 @@ class Ds2App : public rex::ReXApp {
 
   void OnPostInitLogging() override {
     ds2::cpu::InformarSistema();
+    // The SDK sends the controllers zero vibration unless input_vibracion is on; on, the game's own vibration
+    // setting decides (the game stops asking for vibration when it is off). ds2.toml can still turn it off.
+    DefaultFlag("input_vibracion", "true");
 #if !DS2_DEKO3D
     // NVK build: ReXGlue's Xenos emulation draws the game.
     DefaultFlag("gpu_plugin", "xenos");

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Brightness setting works**: the game sets its brightness as a gamma ramp (`Displ_SetGamma` ->
+  `D3DDevice_SetGammaRamp`), which the Xbox 360 applied in its display output and the Switch's output ignored. The
+  ramp Direct3D keeps after that call now goes to the renderer, which applies it to the presented image
+  (`nfsmw_nativo_rampa_gamma = false` turns it off). The picture also gets the Xbox 360's own output gamma.
+- **Vibration setting works**: the SDK sent the controllers zero vibration unless `input_vibracion` was on, so the game's
+  vibration option changed nothing. It is on by default now; the game's own setting turns vibration on and off
+  (`input_vibracion = false` in `ds2.toml` still silences it).
+
 ## 1.2.1 (TU2) — 2026-10-25
 
 Fixes from players' logs. Only the NRO changes: the shader library and its cache stay as they are.

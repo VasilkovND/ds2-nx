@@ -131,6 +131,11 @@ REXCVAR_DEFINE_BOOL(ds2_perfil_pilas, true, "DS2",
 namespace ds2::gpu {
 namespace {
 
+// The gamma ramp D3DDevice_SetGammaRamp left (ds2_cpu.cpp hooks it), waiting for the ring thread's next present.
+std::mutex g_rampa_cerrojo;
+std::array<std::array<uint16_t, 3>, 256> g_rampa{};
+bool g_rampa_nueva = false;
+
 namespace xenos = rex::graphics::xenos;
 using rex::X_STATUS;  // X_STATUS_SUCCESS and X_STATUS_UNSUCCESSFUL need it too
 using Clock = std::chrono::steady_clock;
@@ -726,6 +731,15 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         counter_.fetch_add(1, std::memory_order_relaxed);
         if (EnsureRenderer()) {
           // VdSwap describes the frontbuffer in fetch constant 0; an empty TexturaSwap finds nothing (black).
+          {
+            std::lock_guard<std::mutex> cerrojo(g_rampa_cerrojo);
+            if (g_rampa_nueva) {
+              g_rampa_nueva = false;
+              destinos_->RampaGamma(g_rampa);
+              REXLOG_INFO("[gpu] gamma ramp from the game: 0 -> {:03X}, 128 -> {:03X}, 255 -> {:03X} (of 3FF)",
+                          g_rampa[0][0], g_rampa[128][0], g_rampa[255][0]);
+            }
+          }
           destinos_->Presentar(presenter_.get(), rex::x360::LeerTexturaSwap(registers_.data()), 1280, 720);
           if (REXCVAR_GET(switch_omitir_pedido)) {
             REXCVAR_SET(switch_omitir_pedido, false);
@@ -1885,6 +1899,17 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 
 std::unique_ptr<rex::system::IGraphicsSystem> CreateGraphicsSystem() {
   return std::make_unique<RingGraphicsSystem>();
+}
+
+void PonerRampaGamma(const uint8_t* rampa_be) {
+  std::lock_guard<std::mutex> cerrojo(g_rampa_cerrojo);
+  for (uint32_t c = 0; c < 3; ++c) {
+    for (uint32_t i = 0; i < 256; ++i) {
+      const uint8_t* v = rampa_be + (c * 256 + i) * 2;
+      g_rampa[i][c] = uint16_t(((uint16_t(v[0]) << 8) | v[1]) >> 6);
+    }
+  }
+  g_rampa_nueva = true;
 }
 
 }  // namespace ds2::gpu

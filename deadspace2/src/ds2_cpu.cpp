@@ -16,6 +16,9 @@
 #include <rex/thread.h>
 
 #include "ds2_cpu.h"
+#if DS2_DEKO3D
+#include "ds2_gpu.h"
+#endif
 
 #if defined(__SWITCH__)
 #include <switch.h>
@@ -89,6 +92,21 @@ REX_EXTERN(D3D__CBlocker__Check) {
   } else {
     rex::thread::Sleep(std::chrono::microseconds(us));
   }
+}
+
+// D3DDevice_SetGammaRamp(device, flags, ramp): Direct3D corrects the game's ramp (GammaRampCorrected) and keeps it in
+// the device at +15216 (1536 bytes) for the display output; Displ_SetGamma calls it with the in-game brightness. The
+// Switch's output never saw it, so the brightness setting did nothing. After the original, the device's copy goes to
+// the renderer (ds2_gpu.cpp, applied at the next present; nfsmw_nativo_rampa_gamma = false turns it off there).
+REX_EXTERN(__imp__D3DDevice_SetGammaRamp_8221C480);
+REX_EXTERN(D3DDevice_SetGammaRamp_8221C480) {
+  const uint32_t dispositivo = ctx.r3.u32;
+  __imp__D3DDevice_SetGammaRamp_8221C480(ctx, base);
+#if DS2_DEKO3D
+  ds2::gpu::PonerRampaGamma(REX_RAW_ADDR(dispositivo + 15216));
+#else
+  (void)dispositivo;
+#endif
 }
 
 namespace ds2::cpu {
