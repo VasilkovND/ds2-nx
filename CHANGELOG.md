@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Crash right after waking from sleep** (abort, "la cola de deko3d esta en error"): an achievement unlocked after
+  waking opened the SDK's achievement toast, whose ImGui dialog moves presentation to the UI thread, and the deko3d
+  queue went into error. The toast is off, as in ds3-nx; achievements still unlock and are saved.
+- **Stuck on "insert disc 2"** with disc 2 on the SD card: at chapter 4 the game waits for its stream manager to go
+  idle before it swaps discs, and on a player's console it never did, so `XamSwapDisc` was never called. The wait is
+  logged (`DS2_DISC_WAIT_STREAMS`, with the stream manager's two queues) and after 10 s
+  (`ds2_espera_streams_disco_s`) the swap goes on anyway.
+- **RenderWare Audio stream pool list**: a broken link at the head now empties the list (after a 44-minute sleep the
+  head itself was a freed pool, and cutting after it still crashed).
+
 ## 1.2.0 (TU2) — 2026-10-24
 
 **Playable at stock clocks.** Without overclocking (handheld, CPU 1020 MHz) the game now holds 29-30 fps in most

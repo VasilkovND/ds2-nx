@@ -18,6 +18,7 @@
 #include <rex/rex_app.h>
 #include <rex/runtime.h>
 #include <rex/system.h>
+#include <rex/ui/overlay/achievement_notification.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -116,6 +117,15 @@ class Ds2App : public rex::ReXApp {
     } catch (const std::exception& error) {
       Fail(error.what());
     }
+  }
+
+  // No achievement toast (as ds3-nx, run 17). Its ImGui dialog, created with the first achievement, is a UI drawer
+  // for the rest of the session, and with one the presenter paints from the UI thread on request: on a console here
+  // the first achievement after waking from sleep switched presentation over and the deko3d queue went into error
+  // ("la cola de deko3d esta en error"), then abort(). The achievement is still unlocked and saved.
+  std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
+    REXLOG_INFO("ds2: achievement toast off (it would move presentation to the UI thread)");
+    return nullptr;
   }
 
  private:

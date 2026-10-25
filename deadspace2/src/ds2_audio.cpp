@@ -387,10 +387,18 @@ void SanearListaPools(uint8_t* base) {
       sano = EnlaceSano(base, nodo, siguiente);
     }
     if (!sano) {
-      rex::memory::store_and_swap<uint32_t>(p, 0);
-      REXLOG_WARN("[audio] lista de pools: enlace roto en el nodo {:08X} (siguiente {:08X}, posicion {}); la lista "
-                  "se corta ahi (corte {})",
-                  nodo, siguiente, i, g_pools_cortes.fetch_add(1) + 1);
+      // At the head the broken one may be the head itself (a pool freed while still linked: after a long sleep the
+      // mixer faulted on the head's own fields right after its next was cut), so the whole list goes. RenderWare
+      // Audio creates pools again as streams start; a sound that needed one of the dropped pools does not play.
+      if (i == 0) {
+        rex::memory::store_and_swap<uint32_t>(cabeza, 0);
+      } else {
+        rex::memory::store_and_swap<uint32_t>(p, 0);
+      }
+      REXLOG_WARN("[audio] lista de pools: enlace roto en el nodo {:08X} (siguiente {:08X}, posicion {}); {} (corte {})",
+                  nodo, siguiente, i, i == 0 ? "lista vaciada" : "la lista se corta ahi",
+                  g_pools_cortes.fetch_add(1) + 1);
+      rex::FlushLogging();
       return;
     }
     nodo = siguiente;

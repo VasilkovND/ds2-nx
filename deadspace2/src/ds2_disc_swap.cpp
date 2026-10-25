@@ -15,6 +15,7 @@
 #include "ds2_rex_diagnostic_pch.h"
 #include "ds2_disc_swap.h"
 
+#include <rex/cvar.h>
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
@@ -26,6 +27,8 @@
 #include <rex/thread.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <stdexcept>
@@ -192,5 +195,82 @@ REX_EXTERN(__imp__XamSwapDisc) {
     REXLOG_INFO("DS2_DISC_COMPLETE disc={} event={:08X}", requested, event_address);
   } catch (const std::exception& error) {
     REXLOG_ERROR("DS2_DISC_FAILED requested={} reason={}", requested, error.what());
+  }
+}
+
+// ---- The swap at chapter 4, step by step (EARS::Modules::MultiDiscManager, DeadSpace/src/modules/multidisc):
+// OnEnterStateWaitingForStreams stops the audio streams and shows the "insert disc 2" popup; each tick
+// OnTickStateWaitingForStreams waits until EARS::Framework::StreamManager::IsIdle (its two queues at +128 and +136
+// empty) and then enters OnEnterStateWaitingForDisc, which removes disc 1's bigfiles and calls XSwapDisc ->
+// XamSwapDisc (the handler above). A player's console stayed on the popup for minutes with XamSwapDisc never called:
+// the stream manager never went idle. Its queues are logged while the game waits, and after
+// ds2_espera_streams_disco_s seconds IsIdle answers "idle" for the swap (a load still queued for disc 1 could never
+// finish anyway: the game removes disc 1's bigfiles next).
+REXCVAR_DEFINE_INT32(ds2_espera_streams_disco_s, 10, "DS2",
+                     "Cambio de disco: segundos que se espera a que el gestor de streams quede libre antes de seguir "
+                     "igualmente; 0 = esperar siempre, como el juego")
+    .range(0, 600);
+
+namespace {
+std::atomic<bool> g_esperando_streams{false};
+std::atomic<int64_t> g_espera_desde_ms{0};
+std::atomic<int64_t> g_ultimo_aviso_ms{0};
+
+int64_t AhoraMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+}  // namespace
+
+REX_EXTERN(__imp__EARS__Modules__MultiDiscManager__DetermineDisc);
+REX_EXTERN(EARS__Modules__MultiDiscManager__DetermineDisc) {
+  __imp__EARS__Modules__MultiDiscManager__DetermineDisc(ctx, base);
+  REXLOG_INFO("DS2_DISC_DETECTED disc={}", ctx.r3.u32);
+}
+
+REX_EXTERN(__imp__EARS__Modules__MultiDiscManager__OnEnterStateWaitingForStreams);
+REX_EXTERN(EARS__Modules__MultiDiscManager__OnEnterStateWaitingForStreams) {
+  REXLOG_INFO("DS2_DISC_WAIT_STREAMS: the game asks for the other disc; waiting for its streams to finish");
+  rex::FlushLogging();
+  __imp__EARS__Modules__MultiDiscManager__OnEnterStateWaitingForStreams(ctx, base);
+  g_espera_desde_ms.store(AhoraMs());
+  g_ultimo_aviso_ms.store(0);
+  g_esperando_streams.store(true);
+}
+
+REX_EXTERN(__imp__EARS__Modules__MultiDiscManager__OnEnterStateWaitingForDisc);
+REX_EXTERN(EARS__Modules__MultiDiscManager__OnEnterStateWaitingForDisc) {
+  g_esperando_streams.store(false);
+  REXLOG_INFO("DS2_DISC_WAIT_DISC: streams done after {} ms; removing the bigfiles and swapping",
+              AhoraMs() - g_espera_desde_ms.load());
+  __imp__EARS__Modules__MultiDiscManager__OnEnterStateWaitingForDisc(ctx, base);
+}
+
+REX_EXTERN(__imp__EARS__Modules__MultiDiscManager__OnExitStateWaitingForDisc);
+REX_EXTERN(EARS__Modules__MultiDiscManager__OnExitStateWaitingForDisc) {
+  __imp__EARS__Modules__MultiDiscManager__OnExitStateWaitingForDisc(ctx, base);
+  REXLOG_INFO("DS2_DISC_SWAP_DONE");
+  rex::FlushLogging();
+}
+
+// bool StreamManager::IsIdle() const: both queues empty.
+REX_EXTERN(__imp__EARS__Framework__StreamManager__IsIdle);
+REX_EXTERN(EARS__Framework__StreamManager__IsIdle) {
+  const uint32_t gestor = ctx.r3.u32;
+  __imp__EARS__Framework__StreamManager__IsIdle(ctx, base);
+  if (ctx.r3.u32 & 0xFF || !g_esperando_streams.load(std::memory_order_relaxed)) return;
+  const int64_t ahora = AhoraMs();
+  const int64_t esperado = ahora - g_espera_desde_ms.load();
+  if (ahora - g_ultimo_aviso_ms.load() >= 2000) {
+    g_ultimo_aviso_ms.store(ahora);
+    REXLOG_WARN("DS2_DISC_WAIT_STREAMS: not idle after {} ms (stream manager {:08X}: +128 {:08X}, +136 {:08X})",
+                esperado, gestor, REX_LOAD_U32(gestor + 128), REX_LOAD_U32(gestor + 136));
+  }
+  const int32_t limite = REXCVAR_GET(ds2_espera_streams_disco_s);
+  if (limite > 0 && esperado >= int64_t(limite) * 1000) {
+    REXLOG_WARN("DS2_DISC_WAIT_STREAMS: {} s without the streams finishing; going on with the swap", limite);
+    rex::FlushLogging();
+    ctx.r3.u64 = 1;
   }
 }
