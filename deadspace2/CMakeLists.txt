@@ -59,7 +59,7 @@ target_include_directories(deadspace2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sha
 
 # The version (Homebrew Menu and the first lines of the log) and the commit it was built from, so a log a player sends
 # says which build made it. The commit is read when CMake configures (build_mac.sh RECONFIGURE=1 refreshes it).
-set(DS2_VERSION "1.2.1 (TU2)")
+set(DS2_VERSION "1.2.2 (TU2)")
 execute_process(COMMAND git rev-parse --short=10 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
                 OUTPUT_VARIABLE DS2_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND git status --porcelain --untracked-files=no --ignore-submodules=all WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.2.2 (TU2) — 2026-10-25
+
+The game's own brightness and vibration settings now work. Only the NRO changes.
 
 - **Brightness setting works**: the game sets its brightness as a gamma ramp (`Displ_SetGamma` ->
   `D3DDevice_SetGammaRamp`), which the Xbox 360 applied in its display output and the Switch's output ignored. The
