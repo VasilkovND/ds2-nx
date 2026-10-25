@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 (TU2) — 2026-10-25
+
+Fixes from players' logs. Only the NRO changes: the shader library and its cache stay as they are.
 
 - **Crash right after waking from sleep** (abort, "la cola de deko3d esta en error"): an achievement unlocked after
   waking opened the SDK's achievement toast, whose ImGui dialog moves presentation to the UI thread, and the deko3d
