@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.2.4 (TU2) — 2026-10-25
+
+Gentler vibration with a strength setting, and sound that no longer goes missing for the rest of a session. Only the NRO
+changes.
 
 - **Vibration strength**: the game only has vibration on / off, and its values are for the Xbox 360 pad's motors, which
   the Switch's HD Rumble plays much harder. Vibration is now at 50 % by default, and the options menu (ZL + ZR + Minus)

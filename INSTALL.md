@@ -1,4 +1,4 @@
-# Установка ds2-nx 1.2.3 (Dead Space 2 для Nintendo Switch)
+# Установка ds2-nx 1.2.4 (Dead Space 2 для Nintendo Switch)
 
 ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в виде homebrew-программы. Готовых файлов не
 распространяется: программа и шейдеры собираются у вас на компьютере, а игра берётся **из вашей собственной копии**
@@ -42,7 +42,7 @@ ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в в
 4. **Исходники и сборка:**
 
    ```
-   git clone --branch v1.2.3 https://github.com/VasilkovND/ds2-nx
+   git clone --branch v1.2.4 https://github.com/VasilkovND/ds2-nx
    cd ds2-nx
    deadspace2/tools/build_mac.sh
    ```
@@ -111,11 +111,14 @@ sdmc:/switch/ds2-nx/
 
 Счётчик FPS включается и выключается сочетанием **ZL + ZR + вверх на крестовине**.
 
-**Меню разрешения: ZL + ZR + Минус** (во время игры). Пока меню открыто, игра не реагирует на кнопки:
+**Меню настроек: ZL + ZR + Минус** (во время игры). Пока меню открыто, игра не реагирует на кнопки:
 
-- **вверх / вниз** — выбрать **720P** (1280×720, для консоли с разгоном) или **540P** (960×540, для стоковых частот);
-- **A** — сохранить, **B** — закрыть меню;
-- выбор сохраняется в `ds2_resolucion.txt` рядом с программой и включается при **следующем запуске** игры.
+- **вверх / вниз** — выбрать строку, **влево / вправо** — изменить значение;
+- **RESOLUTION**: **720P** (1280×720, для консоли с разгоном) или **540P** (960×540, для стоковых частот); сохраняется в
+  `ds2_resolucion.txt` рядом с программой и включается при **следующем запуске** игры;
+- **VIBRATION**: сила вибрации 0 / 25 / 50 / 75 / 100 % (по умолчанию 50 %), меняется сразу; сохраняется в
+  `ds2_vibracion.txt`;
+- **A** — сохранить, **B** — закрыть меню.
 
 Без сохранённого выбора программа сама берёт 540p на стоковых частотах и 720p с разгоном (процессор от 1,5 ГГц).
 В портативном режиме программа просит у системы официальный профиль с GPU 460,8 МГц (как коммерческие игры; это не
@@ -140,7 +143,7 @@ sdmc:/switch/ds2-nx/
 
 ---
 
-# Installing ds2-nx 1.2.3 (Dead Space 2 for Nintendo Switch)
+# Installing ds2-nx 1.2.4 (Dead Space 2 for Nintendo Switch)
 
 ds2-nx is a native Switch port of Dead Space 2 (Xbox 360) as a homebrew program. **No prebuilt files are
 distributed**: you build the program and the shaders on your computer, from **your own copy** of the game (the two
@@ -166,7 +169,7 @@ xcode-select --install                        # macOS only
 brew install cmake ninja python git           # macOS (Homebrew); on Linux, your distribution's packages
 # devkitPro: https://github.com/devkitPro/pacman/releases (macOS pkg) or https://devkitpro.org/wiki/Getting_Started
 sudo dkp-pacman -S switch-dev deko3d
-git clone --branch v1.2.3 https://github.com/VasilkovND/ds2-nx
+git clone --branch v1.2.4 https://github.com/VasilkovND/ds2-nx
 cd ds2-nx
 deadspace2/tools/build_mac.sh                 # -> deadspace2/out/sw/deadspace2.nro
 ```
@@ -218,10 +221,11 @@ reports English by default; for Russian, put a `ds2.toml` with the line `user_la
 Start any installed game **while holding R** (title takeover: full memory; the album/applet mode does not have
 enough) and choose **Dead Space 2** in the Homebrew Menu. **ZL + ZR + D-pad Up** shows or hides the FPS counter.
 
-**Resolution menu: ZL + ZR + Minus** while playing (the game ignores the controller while it is open). **Up / Down**
-choose **720P** (1280x720, overclocked consoles) or **540P** (960x540, stock clocks), **A** saves, **B** closes. The
-choice is kept in `ds2_resolucion.txt` next to the NRO and applies at the **next start**; without one, 540p below a
-1.5 GHz CPU and 720p above. In handheld mode the program asks for Horizon's own 460.8 MHz GPU profile (as commercial
+**Options menu: ZL + ZR + Minus** while playing (the game ignores the controller while it is open). **Up / Down**
+choose the row, **Left / Right** change it, **A** saves, **B** closes. **RESOLUTION**: **720P** (1280x720, overclocked
+consoles) or **540P** (960x540, stock clocks), kept in `ds2_resolucion.txt` next to the NRO and applied at the **next
+start**; without one, 540p below a 1.5 GHz CPU and 720p above. **VIBRATION**: 0 / 25 / 50 / 75 / 100 % (50 % by
+default), felt at once, kept in `ds2_vibracion.txt`. In handheld mode the program asks for Horizon's own 460.8 MHz GPU profile (as commercial
 games do; not an overclock). Overclocked (e.g. sys-clk): 720p close to the game's 30 fps cap. Stock clocks at 540p:
 29-30 fps in most places, about 20 fps in the heaviest scenes. If something goes wrong, send the whole `sdmc:/switch/ds2-nx/logs/` folder (with
 `logs/rex/`) and say where and what happened: the first log lines record the build, the firmware and how it was started.
