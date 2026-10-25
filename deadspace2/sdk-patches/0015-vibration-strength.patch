@@ -1,0 +1,32 @@
+--- a/src/input/switch/switch_input_driver.cpp
++++ b/src/input/switch/switch_input_driver.cpp
+@@ -60,6 +60,11 @@
+                     "Face buttons by position, as on an Xbox pad (the bottom button, B, acts as A). "
+                     "false = by letter: A accepts and B goes back");
+ 
++REXCVAR_DEFINE_DOUBLE(input_vibracion_fuerza, 1.0, "Input",
++                      "Fuerza de la vibracion en el Switch: multiplica la del juego (1 = tal cual, 0,5 = la mitad). "
++                      "Los valores del juego son para los motores del mando de la Xbox 360, mas suaves que el HD "
++                      "Rumble a la misma amplitud");
++
+ namespace rex::ui {
+ // rex/ui/overlay/debug_overlay.h (not included here because it pulls in ImGui).
+ bool DebugOverlayAbierto();
+@@ -642,11 +647,13 @@
+   }
+ 
+   // XInput's left motor is the heavy low-frequency one, the right motor the
+-  // light high-frequency one.
+-  HidVibrationValue value{};
+-  value.amp_low = float(uint16_t(vibration->left_motor_speed)) / 65535.0f;
++  // light high-frequency one. The game's values are for the Xbox 360 pad's motors; a full-speed motor there is
++  // much gentler than the Switch's HD Rumble at full amplitude, so they are scaled by input_vibracion_fuerza.
++  const float fuerza = float(std::clamp(REXCVAR_GET(input_vibracion_fuerza), 0.0, 1.0));
++  HidVibrationValue value{};
++  value.amp_low = float(uint16_t(vibration->left_motor_speed)) / 65535.0f * fuerza;
+   value.freq_low = 160.0f;
+-  value.amp_high = float(uint16_t(vibration->right_motor_speed)) / 65535.0f;
++  value.amp_high = float(uint16_t(vibration->right_motor_speed)) / 65535.0f * fuerza;
+   value.freq_high = 320.0f;
+   std::array<HidVibrationValue, 2> values = {value, value};
+   if (R_FAILED(hidSendVibrationValues(slot->vibration_handles.data(), values.data(),

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Vibration strength**: the game only has vibration on / off, and its values are for the Xbox 360 pad's motors, which
+  the Switch's HD Rumble plays much harder. Vibration is now at 50 % by default, and the options menu (ZL + ZR + Minus)
+  has a VIBRATION row: Left / Right pick 0 / 25 / 50 / 75 / 100 % (felt at once), A saves it to `ds2_vibracion.txt`.
+  New SDK patch 0015 (`input_vibracion_fuerza`).
+
 ## 1.2.3 (TU2) — 2026-10-25
 
 The disc 2 swap works (confirmed on the console) and the audio crash after sleep is fixed at its cause. Only the NRO
