@@ -330,7 +330,10 @@ REX_EXTERN(rw__audio__core__CopyWithGain) {
 // be, and a pool freed while still linked leaves recycled memory in the chain. The mixer then followed a garbage next
 // (0x3F800000, a float 1.0, or a branch instruction) and faulted: the crash after waking from sleep and on some loads.
 // Before each walk the list is checked by its back links; a node whose next does not point back to it is re-read for a
-// moment (a link still being published), and then cut there, logged, instead of followed.
+// moment (a link still being published), and then cut there, logged, instead of followed. The cut is undone as soon as
+// the link is sound again: a game thread linking or unlinking a pool can be caught between its two stores for longer
+// than the re-reads, and a cut kept for good dropped every pool after it (run of 2026-10-25: one cut at position 0,
+// then sounds that never started, "AcquireStream sin pool", for the rest of the session).
 REXCVAR_DEFINE_BOOL(ds2_audio_lista_pools_segura, true, "DS2",
                     "Comprobar la lista de pools de streams de RenderWare Audio antes de recorrerla en el hilo de "
                     "mezcla, y cortarla en un enlace roto en vez de fallar");
@@ -355,6 +358,13 @@ bool GuestLegible(const uint8_t* p, size_t n) {
 std::mutex g_pools_cerrojo;  // one checker at a time (the mixer threads)
 std::atomic<uint32_t> g_pools_cortes{0};
 
+// The link the last cut removed, to put back once it is sound (under g_pools_cerrojo).
+struct Corte {
+  uint32_t nodo = 0;
+  uint32_t siguiente = 0;
+};
+Corte g_corte;
+
 // Is the link nodo -> siguiente sound: readable and pointing back?
 bool EnlaceSano(uint8_t* base, uint32_t nodo, uint32_t siguiente) {
   if (siguiente == 0) return true;
@@ -364,9 +374,38 @@ bool EnlaceSano(uint8_t* base, uint32_t nodo, uint32_t siguiente) {
   return rex::memory::load_and_swap<uint32_t>(p + 4) == nodo;
 }
 
+// Is nodo still in the list (reachable from the head over sound links)?
+bool EnLista(uint8_t* base, uint32_t buscado) {
+  uint32_t nodo = rex::memory::load_and_swap<uint32_t>(REX_RAW_ADDR(kCabezaPools));
+  for (int i = 0; i < 512 && nodo; ++i) {
+    if ((nodo & 3) || !GuestLegible(REX_RAW_ADDR(nodo), 8)) return false;
+    if (nodo == buscado) return true;
+    const uint32_t siguiente = rex::memory::load_and_swap<uint32_t>(REX_RAW_ADDR(nodo));
+    if (!EnlaceSano(base, nodo, siguiente)) return false;
+    nodo = siguiente;
+  }
+  return false;
+}
+
+// Puts the last cut link back if the list still ends at its node and the link is sound now.
+void RepararCorte(uint8_t* base) {
+  if (!g_corte.nodo) return;
+  uint8_t* p = REX_RAW_ADDR(g_corte.nodo);
+  if (!GuestLegible(p, 8) || !EnLista(base, g_corte.nodo) || rex::memory::load_and_swap<uint32_t>(p) != 0) {
+    g_corte = {};  // the node left the list, or the game linked something after it: nothing to put back
+    return;
+  }
+  if (!EnlaceSano(base, g_corte.nodo, g_corte.siguiente)) return;
+  rex::memory::store_and_swap<uint32_t>(p, g_corte.siguiente);
+  REXLOG_INFO("[audio] lista de pools: enlace {:08X} -> {:08X} sano otra vez; restaurado", g_corte.nodo,
+              g_corte.siguiente);
+  g_corte = {};
+}
+
 void SanearListaPools(uint8_t* base) {
   if (!REXCVAR_GET(ds2_audio_lista_pools_segura)) return;
   std::lock_guard<std::mutex> cerrojo(g_pools_cerrojo);
+  RepararCorte(base);
   uint8_t* cabeza = REX_RAW_ADDR(kCabezaPools);
   uint32_t nodo = rex::memory::load_and_swap<uint32_t>(cabeza);
   if (nodo == 0) return;
@@ -388,8 +427,9 @@ void SanearListaPools(uint8_t* base) {
     }
     if (!sano) {
       rex::memory::store_and_swap<uint32_t>(p, 0);
+      g_corte = {nodo, siguiente};
       REXLOG_WARN("[audio] lista de pools: enlace roto en el nodo {:08X} (siguiente {:08X}, posicion {}); la lista "
-                  "se corta ahi (corte {})",
+                  "se corta ahi hasta que vuelva a estar sano (corte {})",
                   nodo, siguiente, i, g_pools_cortes.fetch_add(1) + 1);
       rex::FlushLogging();
       return;

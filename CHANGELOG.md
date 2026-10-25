@@ -6,6 +6,9 @@
   the Switch's HD Rumble plays much harder. Vibration is now at 50 % by default, and the options menu (ZL + ZR + Minus)
   has a VIBRATION row: Left / Right pick 0 / 25 / 50 / 75 / 100 % (felt at once), A saves it to `ds2_vibracion.txt`.
   New SDK patch 0015 (`input_vibracion_fuerza`).
+- **Sounds that stopped starting for the rest of a session**: the stream pool list check cut the list for good when it
+  caught a game thread halfway through linking or unlinking a pool, and every pool after the cut was lost: from then on
+  many sounds never started ("AcquireStream sin pool" in the log). The cut now lasts only until the link is sound again.
 
 ## 1.2.3 (TU2) — 2026-10-25
 
