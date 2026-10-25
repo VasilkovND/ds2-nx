@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.2.3 (TU2) — 2026-10-25
+
+The disc 2 swap works (confirmed on the console) and the audio crash after sleep is fixed at its cause. Only the NRO
+changes.
 
 - **Disc 2 swap works**: the port's XamSwapDisc handler never took effect. The SDK defines that export itself (a stub
   that returns success without changing `d:` or signalling the game's event) and the linker kept the SDK's, so at
