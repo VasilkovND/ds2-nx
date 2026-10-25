@@ -166,36 +166,42 @@ void Prepare(rex::Runtime& runtime, const std::filesystem::path& update_director
 REX_EXTERN(__imp__XamSwapDisc);
 
 namespace ds2::disc_swap {
-// The XEX's import thunk for XamSwapDisc (0x82B0857C in TU2) is bound to the kernel's export when the module
-// loads; bind it to the handler below instead, as the PC build does.
+// The XEX's import thunk for XamSwapDisc (0x82B0857C in TU2), bound as the PC build does. On the Switch build the
+// symbol is the SDK's own export (a stub), so the swap itself happens in the XSwapDisc hook below.
 void RegisterImport(rex::Runtime& runtime) {
   if (!runtime.function_dispatcher()->SetFunction(0x82B0857C, __imp__XamSwapDisc))
     throw std::runtime_error("Cannot register DS2 TU2 swap import");
 }
 }  // namespace ds2::disc_swap
 
-// XamSwapDisc(disc number, completion event, ...): the game's request for the other disc. Point d: at it
-// and signal the event, as the console does once the new disc is in.
-REX_EXTERN(__imp__XamSwapDisc) {
+// XSwapDisc(disc number, event handle, ...): the XDK's wrapper the game calls for the other disc (from
+// MultiDiscManager::OnEnterStateWaitingForDisc). It ends in the XamSwapDisc import, and a REX_EXTERN of
+// __imp__XamSwapDisc here never took effect: the SDK defines that export itself (xam_info.cpp, a stub that returns
+// success without touching d: or the event) and the linker kept the SDK's, so the game waited on its event forever
+// with "insert disc 2" on screen. The game's own XSwapDisc is hooked instead: after it (and the stub) return, d:
+// points at the requested disc and the game's event is signalled, as the console does once the new disc is in.
+REX_EXTERN(__imp__XSwapDisc_8296A500);
+REX_EXTERN(XSwapDisc_8296A500) {
   using namespace ds2::disc_swap;
   const uint32_t requested = ctx.r3.u32;
-  const uint32_t event_address = ctx.r4.u32;
-  ctx.r3.u64 = X_STATUS_UNSUCCESSFUL;
-  REXLOG_INFO("DS2_DISC_REQUEST requested={} current={} event={:08X}", requested, current_disc, event_address);
+  const uint32_t event_handle = ctx.r4.u32;
+  REXLOG_INFO("DS2_DISC_REQUEST requested={} current={} event_handle={:08X}", requested, current_disc, event_handle);
+  __imp__XSwapDisc_8296A500(ctx, base);
   try {
-    if (!fs || !event_address) throw std::runtime_error("Swap has no mount state or completion event");
-    auto* kernel = rex::system::kernel_state();
-    auto event = rex::system::XObject::GetNativeObject(kernel, base + event_address);
-    if (!event || event->type() != rex::system::XObject::Type::Event)
-      throw std::runtime_error("Invalid swap completion event");
-    auto lock = rex::thread::global_critical_region::AcquireDirect();
-    if (!Select(requested)) throw std::runtime_error("Requested disc unavailable or alias transaction failed");
-    static_cast<rex::system::XEvent*>(event.get())->Set(1, false);
-    ctx.r3.u64 = X_STATUS_SUCCESS;
-    REXLOG_INFO("DS2_DISC_COMPLETE disc={} event={:08X}", requested, event_address);
+    if (!fs) throw std::runtime_error("Swap has no mount state");
+    {
+      auto lock = rex::thread::global_critical_region::AcquireDirect();
+      if (!Select(requested)) throw std::runtime_error("Requested disc unavailable or alias transaction failed");
+    }
+    auto event = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XEvent>(event_handle);
+    if (!event) throw std::runtime_error("Invalid swap completion event handle");
+    event->Set(1, false);
+    ctx.r3.u64 = 0;  // ERROR_SUCCESS
+    REXLOG_INFO("DS2_DISC_COMPLETE disc={} event_handle={:08X}", requested, event_handle);
   } catch (const std::exception& error) {
     REXLOG_ERROR("DS2_DISC_FAILED requested={} reason={}", requested, error.what());
   }
+  rex::FlushLogging();
 }
 
 // ---- The swap at chapter 4, step by step (EARS::Modules::MultiDiscManager, DeadSpace/src/modules/multidisc):

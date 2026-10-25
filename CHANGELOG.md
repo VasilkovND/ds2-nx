@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Disc 2 swap works**: the port's XamSwapDisc handler never took effect. The SDK defines that export itself (a stub
+  that returns success without changing `d:` or signalling the game's event) and the linker kept the SDK's, so at
+  chapter 4 the game waited forever on "insert disc 2". The swap now hooks the game's own `XSwapDisc` (0x8296A500):
+  `d:` is pointed at disc 2 and the game's event signalled (`DS2_DISC_REQUEST` / `DS2_DISC_COMPLETE` in the log).
 - **The RenderWare Audio crash after sleep, found**: every one of these crashes was `StreamPool::AcquireStream` called
   with no pool. `SndPlayer1::PlayHandler` looks up the pool for a sound's codec and, when none matches, passes 0; the
   pool's flags were then read at guest 0x31. A null pool now answers "no stream" (the path the game takes when a pool
