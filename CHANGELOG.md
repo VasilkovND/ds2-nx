@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **The RenderWare Audio crash after sleep, found**: every one of these crashes was `StreamPool::AcquireStream` called
+  with no pool. `SndPlayer1::PlayHandler` looks up the pool for a sound's codec and, when none matches, passes 0; the
+  pool's flags were then read at guest 0x31. A null pool now answers "no stream" (the path the game takes when a pool
+  is full: that sound does not start), logged as `[audio] StreamPool::AcquireStream sin pool`. The list guard goes back
+  to cutting after a broken link, keeping the head (emptying the list made the lookup fail every time).
+
 ## 1.2.2 (TU2) — 2026-10-25
 
 The game's own brightness and vibration settings now work. Only the NRO changes.
