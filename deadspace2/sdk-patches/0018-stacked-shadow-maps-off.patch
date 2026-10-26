@@ -1,0 +1,22 @@
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -36,6 +36,10 @@
+                      "Renderizador nativo: MB de la cache de texturas antes de soltar las que no se usan desde hace "
+                      "120 fotogramas (hasta quedar en el 75 %)")
+     .range(64, 2048);
++REXCVAR_DEFINE_BOOL(nfsmw_dk_apiladas_copiar, false, "NFSMW",
++                    "deko3d: copiar las resueltas de profundidad apiladas (cascadas de sombra leidas como una textura "
++                    "mas alta). false = la textura apilada queda en el plano lejano: sin esas sombras (Dead Space 2 "
++                    "solo las usa en la pelea final; sospechosas de dejarla a oscuras)");
+ REXCVAR_DEFINE_BOOL(nfsmw_dk_cubo_cara0, false, "NFSMW",
+                     "deko3d: un cubo que un shader lee como textura 2D da su primera cara, como en la Xenos. false = "
+                     "una textura vacia, como antes (Dead Space 2: sospechosa de oscurecer la pelea final)");
+@@ -362,7 +366,7 @@
+                 base, ancho, alto, cortes);
+   }
+   bool copiada = false;
+-  for (uint32_t k = 0; k < cortes; ++k) {
++  for (uint32_t k = 0; k < cortes && REXCVAR_GET(nfsmw_dk_apiladas_copiar); ++k) {
+     const ImagenDk* corte = k ? TexturaResuelta(base + k * bytes_corte, ancho, alto_corte) : &primera;
+     if (!corte || !corte->profundidad || corte->ancho != ancho || corte->alto != alto_corte) {
+       continue;
