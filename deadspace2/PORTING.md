@@ -4,7 +4,7 @@ Dead Space 2 (Xbox 360, Title Update 2) on the Nintendo Switch, as a homebrew NR
 done, every problem met on the way and what fixed it, and what should carry over to the next Xbox 360 → Switch port.
 Release history: [CHANGELOG.md](../CHANGELOG.md). Installation: [INSTALL.md](../INSTALL.md).
 
-## Status (1.2.4)
+## Status (1.2.5)
 
 Playable. Tested through the early chapters, the decompression scene, a space walk and a boss fight (saves reached
 chapter 3); a full playthrough is not verified yet.

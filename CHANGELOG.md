@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.2.5 (TU2) — 2026-10-26
+
+Cutscenes at the end of chapter 11 and the door after the lift work again (confirmed on the console). Only the NRO
+changes.
 
 - **Cutscenes at the end of chapter 11 and the door after the lift ("wait")**: the stream pool list check still cut
   one real link of the list (the same nodes in chapters 8 and 11), and every sound stream after it stopped starting,
