@@ -1,0 +1,186 @@
+Real occlusion queries for the deko3d renderer (from ds3-nx ds3/sdk-patches/0031, unchanged). Dead Space 2's final
+fight is thought to measure how much of ghost Nicole is on screen with them; a fixed "visible" count is the suspect
+for its black screen.
+
+diff -ru a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+--- a/include/rex/x360/deko/render.h	2026-10-22 17:45:13
++++ b/include/rex/x360/deko/render.h	2026-10-22 17:50:17
+@@ -25,6 +25,7 @@
+ 
+ #include <array>
+ #include <cstdint>
++#include <deque>
+ #include <memory>
+ #include <mutex>
+ #include <string>
+@@ -161,12 +162,15 @@
+   bool Copiar(const RegistrosCopia& registros) override;
+   bool Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) override;
+   void RampaGamma(const std::array<std::array<uint16_t, 3>, 256>& rampa) override;
+-  void EmpezarOclusion(uint32_t base) override { (void)base; }
++  void EmpezarOclusion(uint32_t base) override;
+   bool TerminarOclusion(uint32_t base, uint64_t& muestras) override {
+     (void)base;
+     muestras = 0;
+-    return false;  // not measured yet: the system answers the game with its "visible" value
++    return false;  // only the asynchronous form is measured: the system answers the game with its "visible" value
+   }
++  uint64_t TerminarOclusionAsincrona(uint32_t base) override;
++  bool ResultadoOclusion(uint64_t ticket, uint64_t& muestras) override;
++  void EnviarOclusiones() override;
+   void EstadisticasOclusion(uint64_t valores[5]) const override;
+   bool Dibujar(const PeticionDibujo& peticion) override;  // nfsmw_dk_dibujos.cpp
+   void PedirVolcado() override { volcado_pedido_ = true; }
+@@ -513,6 +517,25 @@
+   uint8_t* lectura_cpu_ = nullptr;
+   DkGpuAddr lectura_gpu_ = 0;
+   uint64_t lecturas_hechas_ = 0, lecturas_escritas_ = 0, lecturas_sin_sitio_ = 0;
++  // Occlusion queries: the GPU's samples-passed counter reported at each query's start and end (16 bytes each, a
++  // pair per query) into a CPU-cached block. A query's count is read once its work's fence has passed.
++  struct ConsultaDk {
++    uint32_t par = 0;          // pair index in oclusion_bloque_
++    uint64_t ticket = 0;
++    uint64_t trabajo = 0;      // the work its end was recorded in
++    uint64_t dibujados = 0;    // dibujados_ at its start: a query no draw went into is not counted
++  };
++  static constexpr uint32_t kParesOclusion = 4096;
++  DkMemBlock oclusion_bloque_ = nullptr;
++  uint8_t* oclusion_cpu_ = nullptr;
++  DkGpuAddr oclusion_gpu_ = 0;
++  uint32_t oclusion_siguiente_ = 0;
++  std::unordered_map<uint32_t, ConsultaDk> oclusion_abiertas_;     // by base: started, not ended
++  std::deque<ConsultaDk> oclusion_pendientes_;                     // ended, the GPU has not finished them
++  std::unordered_map<uint64_t, uint64_t> oclusion_listas_;         // by ticket: counted, not asked for yet
++  uint64_t oclusion_ticket_ = 0;
++  uint64_t oclusion_stats_[5] = {};  // as EstadisticasOclusion
++  void LeerOclusionesTerminadas();
+   // GPU time: timestamps at the start and the end of each work's command list (the pre-list's uploads before it are
+   // not counted). Totals since start, as TiempoGpu gives them.
+   std::vector<std::vector<uint8_t>> marcas_;  // per slot: the category starting at each timestamp
+diff -ru a/include/rex/x360/destinos.h b/include/rex/x360/destinos.h
+--- a/include/rex/x360/destinos.h	2026-10-22 17:49:18
++++ b/include/rex/x360/destinos.h	2026-10-22 17:50:17
+@@ -93,6 +93,22 @@
+   // that structure, in host samples and from an earlier frame, or false if there is none yet.
+   virtual void EmpezarOclusion(uint32_t base) = 0;
+   virtual bool TerminarOclusion(uint32_t base, uint64_t& muestras) = 0;
++  // Asynchronous form (Gears of War 2's Direct3D waits for each result): TerminarOclusionAsincrona records the end
++  // of the query EmpezarOclusion started at base and returns its ticket (0: not counted, no draw went into it or no
++  // room); ResultadoOclusion gives that query's own count once the GPU has done it (false: not yet). Tickets never
++  // asked for again are forgotten after a while.
++  virtual uint64_t TerminarOclusionAsincrona(uint32_t base) {
++    (void)base;
++    return 0;
++  }
++  virtual bool ResultadoOclusion(uint64_t ticket, uint64_t& muestras) {
++    (void)ticket;
++    (void)muestras;
++    return false;
++  }
++  // The game waits for a query of the work still being recorded (nothing more comes until it has its count): that
++  // work is submitted now.
++  virtual void EnviarOclusiones() {}
+   // Accumulated: spans counted on the host, spans without room, published queries, published samples and
+   // the maximum of a single query.
+   virtual void EstadisticasOclusion(uint64_t valores[5]) const = 0;
+diff -ru a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+--- a/src/x360/deko/destinos.cpp	2026-10-22 17:45:13
++++ b/src/x360/deko/destinos.cpp	2026-10-22 17:50:17
+@@ -428,6 +428,9 @@
+   lectura_bloque_ = nucleo_.CrearBloqueLectura(kRanuras * kBytesLecturaRanura, "lecturas de vuelta (por ranura)");
+   lectura_cpu_ = static_cast<uint8_t*>(dkMemBlockGetCpuAddr(lectura_bloque_));
+   lectura_gpu_ = dkMemBlockGetGpuAddr(lectura_bloque_);
++  oclusion_bloque_ = nucleo_.CrearBloqueLectura(kParesOclusion * 32, "consultas de oclusion");
++  oclusion_cpu_ = static_cast<uint8_t*>(dkMemBlockGetCpuAddr(oclusion_bloque_));
++  oclusion_gpu_ = dkMemBlockGetGpuAddr(oclusion_bloque_);
+   if (REXCVAR_GET(nfsmw_dk_perfil_gpu_s) > 0) {
+     perfil_bloque_ = nucleo_.CrearBloqueLectura(kMarcasPerfil * 32, "perfil de la GPU por dibujo");
+     perfil_cpu_ = static_cast<uint8_t*>(dkMemBlockGetCpuAddr(perfil_bloque_));
+@@ -2613,7 +2616,86 @@
+ 
+ // ---- Statistics for the system's report
+ 
+-void RenderDk::EstadisticasOclusion(uint64_t valores[5]) const { std::fill(valores, valores + 5, 0); }
++// ---- Occlusion queries
++
++void RenderDk::EmpezarOclusion(uint32_t base) {
++  LeerOclusionesTerminadas();
++  // Every pair may still be waited for (the GPU far behind): this query is not counted, the game gets "visible".
++  if (oclusion_pendientes_.size() + oclusion_abiertas_.size() + 1 >= kParesOclusion) {
++    ++oclusion_stats_[1];
++    oclusion_abiertas_.erase(base);
++    return;
++  }
++  AsegurarTrabajo();
++  ConsultaDk c;
++  c.par = oclusion_siguiente_;
++  c.dibujados = dibujados_;
++  oclusion_siguiente_ = (oclusion_siguiente_ + 1) % kParesOclusion;
++  dkCmdBufReportCounter(nucleo_.comandos(), DkCounter_SamplesPassed, oclusion_gpu_ + uint64_t(c.par) * 32);
++  oclusion_abiertas_[base] = c;
++}
++
++uint64_t RenderDk::TerminarOclusionAsincrona(uint32_t base) {
++  const auto it = oclusion_abiertas_.find(base);
++  if (it == oclusion_abiertas_.end()) {
++    return 0;
++  }
++  ConsultaDk c = it->second;
++  oclusion_abiertas_.erase(it);
++  // Its box was not drawn (a shader the library lacks, a skipped draw): no count, the game sees it visible.
++  if (dibujados_ == c.dibujados || !nucleo_.TrabajoAbierto()) {
++    return 0;
++  }
++  dkCmdBufReportCounter(nucleo_.comandos(), DkCounter_SamplesPassed, oclusion_gpu_ + uint64_t(c.par) * 32 + 16);
++  c.ticket = ++oclusion_ticket_;
++  c.trabajo = trabajo_;
++  oclusion_pendientes_.push_back(c);
++  ++oclusion_stats_[0];
++  return c.ticket;
++}
++
++bool RenderDk::ResultadoOclusion(uint64_t ticket, uint64_t& muestras) {
++  LeerOclusionesTerminadas();
++  const auto it = oclusion_listas_.find(ticket);
++  if (it == oclusion_listas_.end()) {
++    return false;
++  }
++  muestras = it->second;
++  oclusion_listas_.erase(it);
++  ++oclusion_stats_[2];
++  oclusion_stats_[3] += muestras;
++  oclusion_stats_[4] = std::max(oclusion_stats_[4], muestras);
++  return true;
++}
++
++void RenderDk::EnviarOclusiones() {
++  if (nucleo_.TrabajoAbierto() && !oclusion_pendientes_.empty() && oclusion_pendientes_.back().trabajo == trabajo_) {
++    CerrarTrabajo();  // the next draw opens another
++  }
++}
++
++void RenderDk::LeerOclusionesTerminadas() {
++  while (!oclusion_pendientes_.empty()) {
++    const ConsultaDk& c = oclusion_pendientes_.front();
++    if ((nucleo_.TrabajoAbierto() && c.trabajo == trabajo_) || !nucleo_.TrabajoTerminado(c.trabajo)) {
++      break;
++    }
++    dkMemBlockFlushCpuCache(oclusion_bloque_, c.par * 32, 32);
++    uint64_t inicio = 0, fin = 0;
++    std::memcpy(&inicio, oclusion_cpu_ + size_t(c.par) * 32, 8);
++    std::memcpy(&fin, oclusion_cpu_ + size_t(c.par) * 32 + 16, 8);
++    oclusion_listas_[c.ticket] = fin >= inicio ? fin - inicio : 0;
++    oclusion_pendientes_.pop_front();
++  }
++  // Tickets the system gave up on (it answered "visible" after waiting too long): forgotten.
++  if (oclusion_listas_.size() > kParesOclusion) {
++    for (auto it = oclusion_listas_.begin(); it != oclusion_listas_.end();) {
++      it = it->first + kParesOclusion < oclusion_ticket_ ? oclusion_listas_.erase(it) : std::next(it);
++    }
++  }
++}
++
++void RenderDk::EstadisticasOclusion(uint64_t valores[5]) const { std::copy(oclusion_stats_, oclusion_stats_ + 5, valores); }
+ 
+ EstadisticasDibujos RenderDk::EstadisticasDeDibujos() const {
+   EstadisticasDibujos e;

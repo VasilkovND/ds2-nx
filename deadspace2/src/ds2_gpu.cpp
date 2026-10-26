@@ -33,6 +33,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <iterator>
 #include <mutex>
 #include <vector>
@@ -112,6 +113,9 @@ REXCVAR_DECLARE(bool, nfsmw_dk_borrado_color_aplazado);
 REXCVAR_DECLARE(bool, nfsmw_dk_borrado_z_aplazado);
 
 // Automatic data collection while the renderer is being brought up: nothing to press on the console.
+REXCVAR_DEFINE_BOOL(ds2_oclusion_real, true, "DS2",
+                    "Contar en la GPU las muestras de las consultas de oclusion del juego (sdk-patches/0017) en vez de "
+                    "contestar siempre 'visible'. La pelea final mide con ellas cuanto de Nicole se ve");
 REXCVAR_DEFINE_INT32(ds2_omitir_efectos, 0, "DS2",
                      "Diagnostico desde el menu (ZL + ZR + Menos): no dibujar un tipo de dibujo. 0 = nada, 1 luces, "
                      "2 aditivos, 3 con transparencia, 4 listas de cuadrados, 5 todo lo mezclado, 6 con prueba de alfa")
@@ -1808,7 +1812,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 #endif
 
   // EVENT_WRITE_ZPD, as the SDK's CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD: D3D marks the
-  // structure with 0xFFFFFEED on Issue(END), and the counts are faked.
+  // structure with 0xFFFFFEED on Issue(END). With ds2_oclusion_real the renderer counts on the GPU the samples drawn
+  // between begin and end (sdk-patches/0017, as ds3-nx); the game is answered at once, never kept waiting for the GPU,
+  // with the count the same structure got last time (a frame or two old; the fixed "visible" count the first time).
+  // The suspect for the black final fight (the room stops being drawn, a square around ghost Nicole stays): the game
+  // measures how much of her is on screen, and always "visible" would keep its hallucination at the maximum.
   void OcclusionQuery(uint32_t address) {
     if (!address) {
       return;
@@ -1818,11 +1826,44 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     const bool end_via_z_pass = counts->ZPass_A == kQueryFinished || counts->ZPass_B == kQueryFinished;
     const bool end_via_z_fail = counts->ZFail_A == kQueryFinished || counts->ZFail_B == kQueryFinished;
     std::memset(counts, 0, sizeof(*counts));
-    if (end_via_z_pass || end_via_z_fail) {
-      counts->ZPass_A = kFakeSampleCount;
-      counts->Total_A = kFakeSampleCount;
+    const uint32_t query = address & ~UINT32_C(0x3F);
+    const bool real = destinos_ && REXCVAR_GET(ds2_oclusion_real);
+    if (real) PollQueries();
+    if (!end_via_z_pass && !end_via_z_fail) {
+      if (real) destinos_->EmpezarOclusion(query);
+      return;
     }
+    uint32_t n = kFakeSampleCount;
+    if (real) {
+      if (const uint64_t ticket = destinos_->TerminarOclusionAsincrona(query)) {
+        pending_queries_.push_back({query, ticket});
+        if (pending_queries_.size() > 4096) pending_queries_.pop_front();
+      }
+      if (const auto it = query_counts_.find(query); it != query_counts_.end()) n = it->second;
+    }
+    counts->ZPass_A = n;
+    counts->Total_A = n;
   }
+
+  // The GPU's counts that came back, in order, kept by structure for the next time the game ends that query.
+  void PollQueries() {
+    while (!pending_queries_.empty()) {
+      uint64_t samples = 0;
+      if (!destinos_->ResultadoOclusion(pending_queries_.front().ticket, samples)) {
+        break;  // the later ones are in later work
+      }
+      query_counts_[pending_queries_.front().query] = uint32_t(std::min<uint64_t>(samples, INT32_MAX));
+      pending_queries_.pop_front();
+    }
+    if (query_counts_.size() > 8192) query_counts_.clear();
+  }
+
+  struct PendingQuery {
+    uint32_t query;   // the 64-byte structure
+    uint64_t ticket;  // the renderer's
+  };
+  std::deque<PendingQuery> pending_queries_;               // ended, the GPU has not counted them yet
+  std::unordered_map<uint32_t, uint32_t> query_counts_;  // by structure: the last count the GPU gave
 
   rex::ui::WindowedAppContext* app_context_ = nullptr;
   std::unique_ptr<rex::ui::GraphicsProvider> provider_;
