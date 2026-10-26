@@ -1,13 +1,25 @@
 --- a/src/x360/deko/texturas.cpp
 +++ b/src/x360/deko/texturas.cpp
-@@ -562,7 +562,9 @@
+@@ -36,6 +36,9 @@
+                      "Renderizador nativo: MB de la cache de texturas antes de soltar las que no se usan desde hace "
+                      "120 fotogramas (hasta quedar en el 75 %)")
+     .range(64, 2048);
++REXCVAR_DEFINE_BOOL(nfsmw_dk_cubo_cara0, false, "NFSMW",
++                    "deko3d: un cubo que un shader lee como textura 2D da su primera cara, como en la Xenos. false = "
++                    "una textura vacia, como antes (Dead Space 2: sospechosa de oscurecer la pelea final)");
+ // The Vulkan path's texture checks, same names and defaults (nfsmw_nativo_dibujos.cpp is not in the deko3d build).
+ REXCVAR_DEFINE_INT32(nfsmw_nativo_huellas_muestreo, 8, "NFSMW",
+                      "Renderizador nativo: las texturas ESTABLES se recomprueban con la huella de una muestra (primer y "
+@@ -562,7 +565,11 @@
      cara0 = true;
      Avisar(39, "cubo leido como 2D: se usa su primera cara");
    }
 -  if (dimension != uint32_t(xenos::DataDimension::k2DOrStacked) && !cubo && !volumen) {
-+  // (Not the cube read as 2D above: this check gave it the empty texture after all, with the "1D" warning beside the
-+  // cube one: the likely cause of the black floor in Dead Space 2's chapter 8.)
-+  if (dimension != uint32_t(xenos::DataDimension::k2DOrStacked) && !cubo && !volumen && !cara0) {
++  // The cube read as 2D gets the empty texture here unless nfsmw_dk_cubo_cara0 (this check gave it the empty one even
++  // when it was meant to read the face, with the "1D" warning beside the cube one). Off by default: Dead Space 2's
++  // additive glows read cubes that way, and their first face is the suspect for the dark final fight.
++  if (dimension != uint32_t(xenos::DataDimension::k2DOrStacked) && !cubo && !volumen &&
++      !(cara0 && REXCVAR_GET(nfsmw_dk_cubo_cara0))) {
      Avisar(30, "texturas 1D todavia no soportadas: se usa una vacia");
      return VaciaDe(tipo_shader);
    }
