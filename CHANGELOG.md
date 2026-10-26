@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Cutscenes at the end of chapter 11 and the door after the lift ("wait")**: the stream pool list check still cut
+  one real link of the list (the same nodes in chapters 8 and 11), and every sound stream after it stopped starting,
+  the ones cutscenes wait for among them. A link into the pools' own memory zone is now followed whatever its back link
+  says; only links that cannot be a pool are cut.
+- A cube texture read as 2D now gets its first face; a check right after it returned the empty texture anyway (SDK
+  patch 0016).
+
 ## 1.2.4 (TU2) — 2026-10-25
 
 Gentler vibration with a strength setting, and sound that no longer goes missing for the rest of a session. Only the NRO

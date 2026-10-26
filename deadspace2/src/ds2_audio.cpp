@@ -334,6 +334,11 @@ REX_EXTERN(rw__audio__core__CopyWithGain) {
 // the link is sound again: a game thread linking or unlinking a pool can be caught between its two stores for longer
 // than the re-reads, and a cut kept for good dropped every pool after it (run of 2026-10-25: one cut at position 0,
 // then sounds that never started, "AcquireStream sin pool", for the rest of the session).
+// But that cut was no race: the same link, BEE4D91C -> BEA8D81C at position 0, was cut in chapter 8 and again in
+// chapter 11 (2026-10-26), and never became "sound". The list holds nodes whose back link is not the node before them,
+// and cutting there silenced the streams a cutscene waits for: two cutscenes at the end of chapter 11 broke and a door
+// after the lift stayed on "wait". A link into the same 256 MB as its node is followed now whatever its back link says;
+// only what cannot be a pool is cut (unaligned, unreadable, or elsewhere, as 0x3F800000 and the branch instructions).
 REXCVAR_DEFINE_BOOL(ds2_audio_lista_pools_segura, true, "DS2",
                     "Comprobar la lista de pools de streams de RenderWare Audio antes de recorrerla en el hilo de "
                     "mezcla, y cortarla en un enlace roto en vez de fallar");
@@ -365,13 +370,22 @@ struct Corte {
 };
 Corte g_corte;
 
-// Is the link nodo -> siguiente sound: readable and pointing back?
+std::atomic<uint32_t> g_pools_sin_vuelta{0};
+
+// Is the link nodo -> siguiente sound: readable, and pointing back or into its node's 256 MB?
 bool EnlaceSano(uint8_t* base, uint32_t nodo, uint32_t siguiente) {
   if (siguiente == 0) return true;
   if (siguiente & 3) return false;
   uint8_t* p = REX_RAW_ADDR(siguiente);
   if (!GuestLegible(p, 8)) return false;
-  return rex::memory::load_and_swap<uint32_t>(p + 4) == nodo;
+  const uint32_t vuelta = rex::memory::load_and_swap<uint32_t>(p + 4);
+  if (vuelta == nodo) return true;
+  if ((siguiente >> 28) != (nodo >> 28)) return false;
+  if (g_pools_sin_vuelta.fetch_add(1) < 4) {
+    REXLOG_INFO("[audio] lista de pools: {:08X} -> {:08X} vuelve a {:08X}, no al nodo; se sigue (misma zona)", nodo,
+                siguiente, vuelta);
+  }
+  return true;
 }
 
 // Is nodo still in the list (reachable from the head over sound links)?
