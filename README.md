@@ -11,7 +11,7 @@ a homebrew NRO, and frames are drawn by a native deko3d renderer from the game's
 
 Status: **1.2.5** — playable. Installation: [INSTALL.md](INSTALL.md). Overclocked: 720p, close to the game's 30 fps cap.
 Stock clocks: 540p (ZL + ZR + Minus opens the options menu: resolution, vibration strength), 29-30 fps in most
-places, about 20 fps in the heaviest scenes. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
+places. What changed, the controls and the known issues are in [CHANGELOG.md](CHANGELOG.md);
 details, boot history and measurements in [deadspace2/PORTING.md](deadspace2/PORTING.md).
 
 ## Layout
