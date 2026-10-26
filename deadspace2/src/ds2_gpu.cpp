@@ -113,9 +113,13 @@ REXCVAR_DECLARE(bool, nfsmw_dk_borrado_color_aplazado);
 REXCVAR_DECLARE(bool, nfsmw_dk_borrado_z_aplazado);
 
 // Automatic data collection while the renderer is being brought up: nothing to press on the console.
-REXCVAR_DEFINE_BOOL(ds2_oclusion_real, true, "DS2",
+REXCVAR_DEFINE_BOOL(ds2_oclusion_real, false, "DS2",
                     "Contar en la GPU las muestras de las consultas de oclusion del juego (sdk-patches/0017) en vez de "
-                    "contestar siempre 'visible'. La pelea final mide con ellas cuanto de Nicole se ve");
+                    "contestar con ds2_oclusion_muestras");
+REXCVAR_DEFINE_INT32(ds2_oclusion_muestras, 0, "DS2",
+                     "Muestras con las que se contesta cada consulta de oclusion sin ds2_oclusion_real. 0 = nada "
+                     "visible: la pelea final se quedaba a oscuras con Nicole en pantalla contestando 1000 (lo que "
+                     "contesta el SDK) y con la cuenta real. 1000 = como antes");
 REXCVAR_DEFINE_INT32(ds2_omitir_efectos, 0, "DS2",
                      "Diagnostico desde el menu (ZL + ZR + Menos): no dibujar un tipo de dibujo. 0 = nada, 1 luces, "
                      "2 aditivos, 3 con transparencia, 4 listas de cuadrados, 5 todo lo mezclado, 6 con prueba de alfa")
@@ -1833,7 +1837,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       if (real) destinos_->EmpezarOclusion(query);
       return;
     }
-    uint32_t n = kFakeSampleCount;
+    uint32_t n = real ? kFakeSampleCount : uint32_t(std::max(REXCVAR_GET(ds2_oclusion_muestras), 0));
     if (real) {
       if (const uint64_t ticket = destinos_->TerminarOclusionAsincrona(query)) {
         pending_queries_.push_back({query, ticket});
@@ -1843,6 +1847,17 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
     counts->ZPass_A = n;
     counts->Total_A = n;
+    // What the game is told: every 1000 ended queries, how many got a GPU count and a few of the answers.
+    ++consultas_terminadas_;
+    if (real && n != kFakeSampleCount) ++consultas_medidas_;
+    if (respuestas_.size() < 12) respuestas_.push_back(n);
+    if (consultas_terminadas_ % 1000 == 0) {
+      std::string lista;
+      for (uint32_t v : respuestas_) lista += fmt::format(" {}", v);
+      REXLOG_INFO("[gpu] consultas de oclusion: {} terminadas, {} con cuenta de la GPU, {} pendientes; ultimas:{}",
+                  consultas_terminadas_, consultas_medidas_, pending_queries_.size(), lista);
+      respuestas_.clear();
+    }
   }
 
   // The GPU's counts that came back, in order, kept by structure for the next time the game ends that query.
@@ -1864,6 +1879,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   };
   std::deque<PendingQuery> pending_queries_;               // ended, the GPU has not counted them yet
   std::unordered_map<uint32_t, uint32_t> query_counts_;  // by structure: the last count the GPU gave
+  uint64_t consultas_terminadas_ = 0, consultas_medidas_ = 0;  // the log's summary of what the game is told
+  std::vector<uint32_t> respuestas_;
 
   rex::ui::WindowedAppContext* app_context_ = nullptr;
   std::unique_ptr<rex::ui::GraphicsProvider> provider_;
