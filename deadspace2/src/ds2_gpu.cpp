@@ -116,10 +116,10 @@ REXCVAR_DECLARE(bool, nfsmw_dk_borrado_z_aplazado);
 REXCVAR_DEFINE_BOOL(ds2_oclusion_real, false, "DS2",
                     "Contar en la GPU las muestras de las consultas de oclusion del juego (sdk-patches/0017) en vez de "
                     "contestar con ds2_oclusion_muestras");
-REXCVAR_DEFINE_INT32(ds2_oclusion_muestras, 0, "DS2",
-                     "Muestras con las que se contesta cada consulta de oclusion sin ds2_oclusion_real. 0 = nada "
-                     "visible: la pelea final se quedaba a oscuras con Nicole en pantalla contestando 1000 (lo que "
-                     "contesta el SDK) y con la cuenta real. 1000 = como antes");
+REXCVAR_DEFINE_INT32(ds2_oclusion_muestras, 1000, "DS2",
+                     "Muestras con las que se contesta cada consulta de oclusion sin ds2_oclusion_real (1000, como el "
+                     "SDK). La pelea final se queda a oscuras con Nicole en pantalla con 1000, con 0 y con la cuenta "
+                     "real: no son las consultas");
 REXCVAR_DEFINE_INT32(ds2_omitir_efectos, 0, "DS2",
                      "Diagnostico desde el menu (ZL + ZR + Menos): no dibujar un tipo de dibujo. 0 = nada, 1 luces, "
                      "2 aditivos, 3 con transparencia, 4 listas de cuadrados, 5 todo lo mezclado, 6 con prueba de alfa")
