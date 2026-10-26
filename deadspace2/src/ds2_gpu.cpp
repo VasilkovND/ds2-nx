@@ -112,6 +112,10 @@ REXCVAR_DECLARE(bool, nfsmw_dk_borrado_color_aplazado);
 REXCVAR_DECLARE(bool, nfsmw_dk_borrado_z_aplazado);
 
 // Automatic data collection while the renderer is being brought up: nothing to press on the console.
+REXCVAR_DEFINE_INT32(ds2_omitir_efectos, 0, "DS2",
+                     "Diagnostico desde el menu (ZL + ZR + Menos): no dibujar un tipo de dibujo. 0 = nada, 1 luces, "
+                     "2 aditivos, 3 con transparencia, 4 listas de cuadrados, 5 todo lo mezclado, 6 con prueba de alfa")
+    .range(0, 6);
 REXCVAR_DEFINE_BOOL(ds2_borrado_solo_salidas, true, "DS2",
                     "Borrados de Direct3D: borrar la profundidad por c1-c3 solo si el PS del borrado escribe en ellos "
                     "(como la Xbox 360; ds3-nx). false = como antes (todos los c1-c3 con mascara)");
@@ -1117,7 +1121,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     const uint32_t mask = Register(g::XE_GPU_REG_RB_COLOR_MASK);
     const uint32_t prim = Register(g::XE_GPU_REG_VGT_DRAW_INITIATOR) & 0x3F;
     const uint32_t colorctl = Register(g::XE_GPU_REG_RB_COLORCONTROL);
-    switch (skip_mode_ - 1) {  // mode 1 is the safe mode, which skips nothing
+    // The debug modes (ZL + ZR + Right) or, without one, the options menu's SKIP row (ds2_omitir_efectos).
+    const uint32_t modo = skip_mode_ > 1 ? skip_mode_ : uint32_t(REXCVAR_GET(ds2_omitir_efectos)) + 1;
+    switch (modo - 1) {  // mode 1 is the safe mode, which skips nothing
       case 1:
         // The light volumes add ONE+ONE; their stencil-marking passes write no color (mask 0) in depth-only mode.
         return blend == 0x01010101 || (!(mask & 0xF) && (Register(g::XE_GPU_REG_RB_DEPTHCONTROL) & 0x1));
@@ -1241,7 +1247,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       ++sin_ps_;
       return;
     }
-    if (skip_mode_ > 1 && SkippedByMode()) {
+    if ((skip_mode_ > 1 || REXCVAR_GET(ds2_omitir_efectos) > 0) && SkippedByMode()) {
       ++skipped_by_mode_;
       return;
     }

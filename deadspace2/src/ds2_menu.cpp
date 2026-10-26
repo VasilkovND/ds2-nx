@@ -32,7 +32,8 @@
 
 #include "ds2_resolution.h"
 
-REXCVAR_DECLARE(double, input_vibracion_fuerza);  // the SDK's (src/input/switch/switch_input_driver.cpp)
+REXCVAR_DECLARE(double, input_vibracion_fuerza);
+REXCVAR_DECLARE(int32_t, ds2_omitir_efectos);  // ds2_gpu.cpp: a kind of draw left out (diagnosis, not saved)  // the SDK's (src/input/switch/switch_input_driver.cpp)
 
 namespace ds2::menu {
 namespace {
@@ -52,11 +53,15 @@ constexpr uint64_t kCombinacion = 0, kArriba = 0, kAbajo = 0, kIzquierda = 0, kD
 
 // The vibration strengths offered, in percent of the game's.
 constexpr std::array<uint32_t, 5> kFuerzas = {0, 25, 50, 75, 100};
+// The SKIP row: which kind of draw is left out (ds2_omitir_efectos), to find what breaks a scene. Not saved.
+constexpr std::array<const char*, 7> kOmitir = {"OFF",          "LIGHTS",        "ADDITIVE", "ALPHA-BLENDED",
+                                                "QUAD LISTS",   "ALL BLENDED",   "ALPHA-TESTED"};
+constexpr uint32_t kFilas = 3;
 
 struct Estado {
   std::mutex candado;
   bool abierto = false;
-  uint32_t fila = 0;        // 0: resolution, 1: vibration
+  uint32_t fila = 0;        // 0: resolution, 1: vibration, 2: skip
   uint32_t resolucion = 0;  // 0: 720p, 1: 540p
   uint32_t fuerza = 2;      // index into kFuerzas
   std::string aviso;        // the last line: what happened
@@ -120,6 +125,8 @@ void Pintar(const Estado& e) {
       "    NOW " + ahora + ", SAVED " + (guardada ? std::to_string(guardada) + "P" : std::string("AUTO")) +
           " (APPLIES AT THE NEXT START)",
       std::string(e.fila == 1 ? "> " : "  ") + "VIBRATION:   < " + std::to_string(kFuerzas[e.fuerza]) + "% >",
+      std::string(e.fila == 2 ? "> " : "  ") + "SKIP:        < " +
+          kOmitir[uint32_t(REXCVAR_GET(ds2_omitir_efectos)) % kOmitir.size()] + " >  (TEST, NOT SAVED)",
       "UP/DOWN: ROW   LEFT/RIGHT: CHANGE   A: SAVE   B: CLOSE",
       e.aviso,
   };
@@ -150,12 +157,17 @@ bool Filtro(size_t ranura, uint64_t botones) {
     return true;
   }
   if (nuevos & (kArriba | kAbajo)) {
-    e.fila = e.fila ? 0 : 1;
+    e.fila = (nuevos & kAbajo) ? (e.fila + 1) % kFilas : (e.fila + kFilas - 1) % kFilas;
     e.aviso.clear();
     Pintar(e);
   } else if (nuevos & (kIzquierda | kDerecha)) {
     const bool derecha = (nuevos & kDerecha) != 0;
-    if (e.fila == 0) {
+    if (e.fila == 2) {
+      const int32_t n = int32_t(kOmitir.size());
+      const int32_t ahora = REXCVAR_GET(ds2_omitir_efectos);
+      REXCVAR_SET(ds2_omitir_efectos, (ahora + (derecha ? 1 : n - 1)) % n);
+      REXLOG_INFO("ds2: omitir {}", kOmitir[REXCVAR_GET(ds2_omitir_efectos)]);
+    } else if (e.fila == 0) {
       e.resolucion = e.resolucion ? 0 : 1;
     } else if (derecha && e.fuerza + 1 < kFuerzas.size()) {
       ++e.fuerza;
