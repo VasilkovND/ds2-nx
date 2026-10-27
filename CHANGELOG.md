@@ -2,9 +2,9 @@
 
 ## 1.3.0 (TU2) — 2026-10-27
 
-The whole game can be played through: the final fight (chapter 15) can now be beaten (confirmed on the console).
-Some rendering defects remain in it. At stock clocks the game runs at 540p and a stable 30 fps. With a mild overclock it
-runs at 720p. Only the NRO changes.
+A stable, playable release: the whole game can be played through, and the final fight (chapter 15) can now be beaten
+(confirmed on the console). Some rendering defects remain in it. At stock clocks the game runs at 540p and a stable
+30 fps. With a mild overclock it runs at 720p, also at 30 fps. Only the NRO changes.
 
 - **The final fight's ghost scenes**: in this fight the game clears and redraws a box around ghost Nicole and around each
   ghost necromorph. It uses Direct3D clears that touch only colour and stencil (depthcontrol 8701). These were done over

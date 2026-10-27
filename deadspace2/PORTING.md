@@ -6,8 +6,9 @@ Release history: [CHANGELOG.md](../CHANGELOG.md). Installation: [INSTALL.md](../
 
 ## Status (1.3.0)
 
-Playable from start to end: the final fight (chapter 15) can be beaten. Some rendering defects remain there. In 1.3.0
-it runs at a stable 30 fps at 540p at stock clocks and at 720p with a mild overclock. The table below is older measurements.
+Stable and playable from start to end: the final fight (chapter 15) can be beaten. Some rendering defects remain
+there. In 1.3.0 the game runs at 540p and a stable 30 fps at stock clocks, and at 720p and 30 fps with a mild
+overclock. The table below holds older measurements.
 
 | | Stock clocks (CPU 1020 MHz, GPU 307 MHz) | Overclocked (CPU 1785 MHz, GPU 614-768 MHz) |
 | --- | --- | --- |

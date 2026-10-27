@@ -1,6 +1,8 @@
 # Установка ds2-nx 1.3.0 (Dead Space 2 для Nintendo Switch)
 
-ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в виде homebrew-программы. Готовых файлов не
+ds2-nx — нативный порт Dead Space 2 (Xbox 360) для Switch в виде homebrew-программы. Версия 1.3.0 стабильная и
+играбельная: игру можно пройти целиком. На стоке игра идёт в 540p с 30 fps, при небольшом разгоне — в 720p с 30 fps.
+Готовых файлов не
 распространяется: программа и шейдеры собираются у вас на компьютере, а игра берётся **из вашей собственной копии**
 (два диска Xbox 360 и Title Update 2).
 
@@ -122,8 +124,9 @@ sdmc:/switch/ds2-nx/
 
 Без сохранённого выбора программа сама берёт 540p на стоковых частотах и 720p с разгоном (процессор от 1,5 ГГц).
 В портативном режиме программа просит у системы официальный профиль с GPU 460,8 МГц (как коммерческие игры; это не
-разгон). С разгоном (например, sys-clk) игра идёт в 720p близко к 30 fps, на которых она ограничена. На стоковых
-частотах в 540p — 29–30 fps в большинстве мест, в самых тяжёлых сценах около 20 fps.
+разгон). Версия 1.3.0 стабильная и играбельная: игру можно пройти целиком. На стоковых частотах игра идёт в 540p со
+стабильными 30 fps (на них игра ограничена). При небольшом разгоне (например, через sys-clk) игра идёт в 720p, тоже
+с 30 fps.
 
 ## Если что-то не так
 
@@ -138,14 +141,16 @@ sdmc:/switch/ds2-nx/
 | `missing .../dxc (set VULKAN_BIN)` | Не установлен Vulkan SDK, или укажите `VULKAN_BIN` |
 | Чёрный экран в игре | Нет файлов шейдеров рядом с программой (шаг 3) |
 | Программа сразу закрывается | Проверьте `tu/`, `disc1/`, `disc2/` и запуск через игру с R |
-| На стоковых частотах тормозит | Откройте меню ZL + ZR + Минус, выберите 540P, нажмите A и перезапустите игру |
+| Тормозит на стоковых частотах (выбрано 720P) | Откройте меню ZL + ZR + Минус, выберите 540P, нажмите A и перезапустите игру |
 | Другие проблемы | Приложите к сообщению об ошибке всю папку `sdmc:/switch/ds2-nx/logs/` (вместе с `logs/rex/`) и опишите, где и что произошло. В первой строке лога записаны версия сборки, прошивка и режим запуска |
 
 ---
 
 # Installing ds2-nx 1.3.0 (Dead Space 2 for Nintendo Switch)
 
-ds2-nx is a native Switch port of Dead Space 2 (Xbox 360) as a homebrew program. **No prebuilt files are
+ds2-nx is a native Switch port of Dead Space 2 (Xbox 360) as a homebrew program. 1.3.0 is stable and playable: the
+whole game can be played through, at 540p and 30 fps at stock clocks, and at 720p and 30 fps with a mild overclock.
+**No prebuilt files are
 distributed**: you build the program and the shaders on your computer, from **your own copy** of the game (the two
 Xbox 360 discs and Title Update 2).
 
@@ -226,8 +231,9 @@ choose the row, **Left / Right** change it, **A** saves, **B** closes. **RESOLUT
 consoles) or **540P** (960x540, stock clocks), kept in `ds2_resolucion.txt` next to the NRO and applied at the **next
 start**; without one, 540p below a 1.5 GHz CPU and 720p above. **VIBRATION**: 0 / 25 / 50 / 75 / 100 % (50 % by
 default), felt at once, kept in `ds2_vibracion.txt`. In handheld mode the program asks for Horizon's own 460.8 MHz GPU profile (as commercial
-games do; not an overclock). Overclocked (e.g. sys-clk): 720p close to the game's 30 fps cap. Stock clocks at 540p:
-29-30 fps in most places, about 20 fps in the heaviest scenes. If something goes wrong, send the whole `sdmc:/switch/ds2-nx/logs/` folder (with
+games do; not an overclock). 1.3.0 is stable and playable: the whole game can be played through. At stock clocks it
+runs at 540p and a stable 30 fps (the game's cap). With a mild overclock (e.g. sys-clk) it runs at 720p, also at 30 fps.
+If something goes wrong, send the whole `sdmc:/switch/ds2-nx/logs/` folder (with
 `logs/rex/`) and say where and what happened: the first log lines record the build, the firmware and how it was started.
 
 ---
