@@ -1,0 +1,101 @@
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -305,6 +305,14 @@
+   void CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool borrara);
+   // A pending depth clear (ImagenDk::borrado_pendiente) recorded now on its own: before a copy or a swap reads it.
+   void HacerBorradoPendiente(ImagenDk& destino);
++  // A clear of a rectangle smaller than the target, done now inside it (Copiar and BorrarProfundidad clear whole
++  // targets otherwise). The final fight of Dead Space 2 clears only the box of ghost Nicole's room.
++  void BorrarRectangulo(ImagenDk& destino, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const float* color,
++                        float z, uint8_t estencil);
++  bool RectanguloParcial(const ImagenDk& destino, int32_t x0, int32_t y0, int32_t x1, int32_t y1) const {
++    return x0 > 0 || y0 > 0 || x1 < int32_t(destino.ancho) || y1 < int32_t(destino.alto);
++  }
++  std::unordered_set<uint64_t> borrados_rectangulo_vistos_;  // BorrarRectangulo: each rectangle logged once
+   // The rows of a clear: the useful area, if known.
+   uint32_t AltoDeBorrado(const ImagenDk& destino) const;
+   // The clear of a bound target (index `i` among the bound colors, or depth) on rows [desde, hasta).
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1242,6 +1242,17 @@
+       borrar_color = false;
+     }
+   }
++  if (borrar_color && RectanguloParcial(*destino_render, x0, y0, x1, y1)) {
++    // Only the copy's rectangle (Direct3D's clear with its own box): the rest of the target keeps what it has.
++    const uint64_t valor = uint64_t(reg.rb_color_clear) | (uint64_t(reg.rb_color_clear_lo) << 32);
++    float color[4];
++    for (uint32_t j = 0; j < 4; ++j) {
++      color[j] = float((valor >> (j * 8)) & 0xFF) * (1.0f / 255.0f);
++    }
++    BorrarRectangulo(*destino_render, x0, y0, x1, y1, color, 0.0f, 0);
++    ++borrados_;
++    borrar_color = false;
++  }
+   if (borrar_color) {
+     const uint64_t valor = uint64_t(reg.rb_color_clear) | (uint64_t(reg.rb_color_clear_lo) << 32);
+     borrado_previo_[destino_render->serie] = {valor, dibujados_};
+@@ -1277,6 +1288,13 @@
+     return;
+   }
+   SombraMinimoAntesDeBorrar(*profundidad);
++  if (int32_t x0, y0, x1, y1; Rectangulo(reg, pitch, x0, y0, x1, y1) && RectanguloParcial(*profundidad, x0, y0, x1, y1)) {
++    // Only the copy's rectangle, as for color (Copiar).
++    BorrarRectangulo(*profundidad, x0, y0, x1, y1, nullptr, float(reg.rb_depth_clear >> 8) / 16777215.0f,
++                     uint8_t(reg.rb_depth_clear & 0xFF));
++    ++borrados_profundidad_;
++    return;
++  }
+   profundidad->contenido_invalido = false;  // cleared: what a swap took away is no longer needed
+   const bool saltar_repetidos = REXCVAR_GET(nfsmw_nativo_saltar_borrados_repetidos);  // read each time: the game can switch it (ds2 safe mode)
+   EstadoBorrado& previo = borrado_previo_[profundidad->serie];
+@@ -1318,6 +1336,49 @@
+   OlvidarEstado();
+ }
+ 
++void RenderDk::BorrarRectangulo(ImagenDk& destino, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const float* color,
++                                float z, uint8_t estencil) {
++  x0 = std::max(x0, 0);
++  y0 = std::max(y0, 0);
++  x1 = std::min(x1, int32_t(destino.ancho));
++  y1 = std::min(y1, int32_t(destino.alto));
++  if (x1 <= x0 || y1 <= y0) {
++    return;
++  }
++  AntesDeCambiarDestino(&destino);
++  AsegurarTrabajo();
++  EmitirCieloPendiente();
++  HacerBorradoPendiente(destino);         // a whole clear still pending goes first
++  RestaurarContenido(destino, false);     // the rest of the target must hold its content
++  CompletarBanda(destino, destino.alto, false, 0);
++  AntesDe3D();
++  MarcarGpu(kGpuBorrados);
++  DkCmdBuf cmd = nucleo_.comandos();
++  const DkImageView vista = VistaCompleta(destino.imagen);
++  if (destino.profundidad) {
++    dkCmdBufBindRenderTargets(cmd, nullptr, 0, &vista);
++  } else {
++    dkCmdBufBindRenderTarget(cmd, &vista, nullptr);
++  }
++  const DkScissor tijera = {uint32_t(x0), uint32_t(y0), uint32_t(x1 - x0), uint32_t(y1 - y0)};
++  dkCmdBufSetScissors(cmd, 0, &tijera, 1);
++  if (destino.profundidad) {
++    dkCmdBufClearDepthStencil(cmd, true, z, 0xFF, estencil);
++  } else {
++    dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, color[0], color[1], color[2], color[3]);
++  }
++  borrado_previo_.erase(destino.serie);
++  OlvidarEstado();
++  g_.pase_valido = false;
++  g_.valido = false;  // the scissor is the clear's
++  const uint64_t clave = (uint64_t(destino.profundidad) << 63) | (uint64_t(uint32_t(x0)) << 42) |
++                         (uint64_t(uint32_t(y0)) << 28) | (uint64_t(uint32_t(x1)) << 14) | uint32_t(y1);
++  if (borrados_rectangulo_vistos_.size() < 512 && borrados_rectangulo_vistos_.insert(clave).second) {
++    REXLOG_INFO("[deko3d] clear of a rectangle only: {} {}x{} ({},{})-({},{})", destino.profundidad ? "depth" : "color",
++                destino.ancho, destino.alto, x0, y0, x1, y1);
++  }
++}
++
+ uint32_t RenderDk::AltoDeBorrado(const ImagenDk& destino) const {
+   const bool area_util = REXCVAR_GET(nfsmw_dk_borrar_area_util);  // read each time: the game can switch it (ds2 safe mode)
+   if (!area_util || !destino.alto_usado) {

@@ -124,6 +124,11 @@ REXCVAR_DEFINE_INT32(ds2_omitir_efectos, 0, "DS2",
                      "Diagnostico desde el menu (ZL + ZR + Menos): no dibujar un tipo de dibujo. 0 = nada, 1 luces, "
                      "2 aditivos, 3 con transparencia, 4 listas de cuadrados, 5 todo lo mezclado, 6 con prueba de alfa")
     .range(0, 6);
+REXCVAR_DEFINE_BOOL(ds2_borrado_rectangulo, true, "DS2",
+                    "Las limpiezas de Direct3D de color y estencil sin profundidad (depthcontrol 8701: la de la "
+                    "habitacion de Nicole y las de los necromorfos fantasma en la pelea final) se hacen en el "
+                    "siguiente dibujo, solo dentro de su tijera. Hechas en toda la superficie, la escena de fuera "
+                    "del recuadro quedaba negra o amarilla. false = toda la superficie al momento");
 REXCVAR_DEFINE_BOOL(ds2_borrado_solo_salidas, true, "DS2",
                     "Borrados de Direct3D: borrar la profundidad por c1-c3 solo si el PS del borrado escribe en ellos "
                     "(como la Xbox 360; ds3-nx). false = como antes (todos los c1-c3 con mascara)");
@@ -734,6 +739,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         break;
       }
       case xenos::PM4_XE_SWAP:
+        FlushDeferredClears(false);
 #if DS2_DEKO3D
         FrameTraceSwap();
 #endif
@@ -1021,6 +1027,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         if (!EnsureRenderer()) break;
         // A copy-mode draw is a resolve and/or a clear.
         if (rex::x360::EsCopia(registers_.data())) {
+          FlushDeferredClears(false);  // a copy reads what the clear left: done whole first
           ResolveCatalog();
           FrameTraceCopy();
           if (draw_tracing_ && draw_trace_n_ < draw_trace_cap_) {
@@ -1220,7 +1227,15 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // debris of every frame piled up into grey smears. And only onto an 8-bit color target with a color in 0..1 in the
     // clear shader's c0: the same shape also fills the 80-wide float exposure target with game data (c0 like 0.027 0
     // -18.4 1), which is not a clear.
+    // Direct3D's clear of color and stencil with Z off (depthcontrol 8701), single-sampled, any number of rectangles:
+    // those and its color are in its vertices (LeerBorradoD3D). The final fight clears a box around each ghost that
+    // way, its inside through the multisampled alias and its edges as up to four thin rectangles here; those were
+    // left out, and the boxes kept dark outlines.
     const uint32_t initiator = Register(g::XE_GPU_REG_VGT_DRAW_INITIATOR);
+    const bool clear_8701 = !vs_ && !msaa && (initiator & 0x3F) == 8 && REXCVAR_GET(ds2_borrado_rectangulo) &&
+                            (Register(g::XE_GPU_REG_RB_MODECONTROL) & 0x7) == 4 &&
+                            (Register(g::XE_GPU_REG_RB_DEPTHCONTROL) & 0xFFFF) == 0x8701 &&
+                            LeerBorradoD3D(initiator >> 16);
     bool rect_clear = !msaa && (initiator & 0x3F) == 8 && (initiator >> 16) == 3 &&
                       Register(g::XE_GPU_REG_RB_COLOR_MASK) == 0xFFFF &&
                       ((Register(g::XE_GPU_REG_RB_COLOR_INFO) >> 16) & 0xF) <= 1;
@@ -1229,11 +1244,13 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       std::memcpy(&v, &registers_[0x4400 + j], 4);
       rect_clear = v >= 0.0f && v <= 1.0f;
     }
-    if (!vs_ && ((msaa && (Register(g::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR) & 0x3FFF) >= 0x2000) || rect_clear)) {
+    if (!vs_ && ((msaa && (Register(g::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR) & 0x3FFF) >= 0x2000) || rect_clear ||
+                 clear_8701)) {
       if (draw_tracing_) DrawTraceLine(true, "Direct3D clear, emulated");
       EmulateClear(msaa);
       return;
     }
+    FlushDeferredClears(true);  // a clear waiting for this draw: inside its scissor box
     if (!vs_) {
       ++sin_vs_;
       // A real draw whose VS was not identified (not a Direct3D clear): which microcode, once each.
@@ -1386,6 +1403,79 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   // (to 0); c1-c3 on another base than c0 clear the depth buffer at their base (far plane, stencil 0); the bound
   // depth target is cleared only when depth or stencil is written and it is not on c0's base; depth-only mode
   // clears no color. The first few are logged with what the game had set, to check.
+  // The deferred clears (EmulateClear), inside the current draw's scissor box, or whole when there is none.
+  void FlushDeferredClears(bool con_tijera) {
+    if (borrados_diferidos_.empty() || !clear_rect_) return;
+    namespace g = rex::graphics;
+    const uint32_t tl = Register(g::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL);
+    const uint32_t br = Register(g::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR);
+    float x0 = float(tl & 0x3FFF), y0 = float((tl >> 16) & 0x3FFF);
+    float x1 = float(br & 0x3FFF), y1 = float((br >> 16) & 0x3FFF);
+    const bool caja = con_tijera && x1 > x0 && y1 > y0 && x1 < 8192.0f && y1 < 8192.0f &&
+                      !(x0 == 0.0f && y0 == 0.0f && x1 >= 1280.0f && y1 >= 720.0f);
+    if (!caja) {
+      x0 = y0 = 0.0f;
+      x1 = y1 = 8192.0f;
+    }
+    const float rect[6] = {x0, y0, x1, y0, x0, y1};
+    std::memcpy(memory_->TranslateVirtual<uint8_t*>(clear_rect_), rect, sizeof(rect));
+    for (const auto& c : borrados_diferidos_) {
+      destinos_->Copiar(c);
+    }
+    // Each outcome once (box or whole, and why): the final fight's second half went yellow.
+    const uint64_t clave = (uint64_t(caja) << 63) | (uint64_t(con_tijera) << 62) | (uint64_t(uint32_t(x0)) << 42) |
+                           (uint64_t(uint32_t(y0)) << 28) | (uint64_t(uint32_t(x1)) << 14) | uint32_t(y1);
+    if (borrados_vistos_.size() < 512 && borrados_vistos_.insert(clave).second) {
+      REXLOG_INFO("[gpu] deferred clear done {} ({:.0f},{:.0f})-({:.0f},{:.0f}): {} copies; at {}, scissor {:08X}-{:08X}",
+                  caja ? "inside the box" : "WHOLE", x0, y0, x1, y1, borrados_diferidos_.size(),
+                  con_tijera ? "a draw" : "a copy or Swap", tl, br);
+    }
+    borrados_diferidos_.clear();
+  }
+  std::unordered_set<uint64_t> borrados_vistos_;  // FlushDeferredClears: outcomes logged once each
+  uint32_t borrados_aplazados_log_ = 0;
+
+  // Direct3D's clear rectangles (D3D::ClearRects, XDK d3d/api/clear.cpp): three vertices per rectangle in fetch
+  // constant 0, seven floats each (x, y, z, then the clear color as the PS writes it, x y z w), at (x1,y1) (x2,y1)
+  // (x2,y2) in the target's pixels. Its pixel shader writes the vertex color: PS c0 is whatever the game left there
+  // (the final fight's 401480A0 yellow was a light's). False if the vertices are not that.
+  bool LeerBorradoD3D(uint32_t vertices) {
+    borrado_rects_.clear();
+    const uint32_t f0 = Register(0x4800), f1 = Register(0x4801);
+    if (!vertices || vertices % 3 || vertices > 3 * 64 || (f0 & 0x3) != 3 || ((f1 >> 2) & 0xFFFFFF) != vertices * 7) {
+      return false;
+    }
+    const uint8_t* v = memory_->TranslatePhysical(f0 & ~uint32_t(0x3));
+    if (!v) return false;
+    auto leer = [&](uint32_t i) {
+      uint32_t w;
+      std::memcpy(&w, v + i * 4, 4);
+      w = xenos::GpuSwap(w, static_cast<xenos::Endian>(f1 & 0x3));
+      float x;
+      std::memcpy(&x, &w, 4);
+      return x;
+    };
+    for (uint32_t k = 0; k < vertices / 3; ++k) {
+      const uint32_t b = k * 21;
+      const float xa = leer(b), ya = leer(b + 1), xb = leer(b + 7 + 7), yb = leer(b + 7 + 7 + 1);
+      for (float c : {xa, ya, xb, yb}) {
+        if (!(c >= -16.0f && c <= 8192.0f)) return false;
+      }
+      auto px = [](float c) { return int32_t(std::floor(c + 0.5f)); };
+      borrado_rects_.push_back({px(std::min(xa, xb)), px(std::min(ya, yb)), px(std::max(xa, xb)), px(std::max(ya, yb))});
+    }
+    borrado_color_ = 0;
+    for (uint32_t j = 0; j < 4; ++j) {
+      const float c = leer(3 + j);
+      if (!(c >= -0.01f && c <= 1.01f)) return false;
+      borrado_color_ |= uint32_t(std::lround(std::clamp(c, 0.0f, 1.0f) * 255.0f)) << (j * 8);
+    }
+    return true;
+  }
+  std::vector<std::array<int32_t, 4>> borrado_rects_;  // LeerBorradoD3D
+  uint32_t borrado_color_ = 0;
+  std::unordered_set<uint64_t> borrados_d3d_vistos_;  // EmulateClear: the shapes read from vertices, logged once each
+
   void EmulateClear(uint32_t msaa) {
     namespace g = rex::graphics;
     AliasScope alias(*this);
@@ -1423,12 +1513,44 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
     const uint32_t depth_value = (reversed ? 0u : 0xFFFFFF00u) | stencil;
     constexpr uint32_t kNullCommand = 3u << 20;  // CopyCommand::kNull: clear only, copy nothing
+    // The final fight's clear before ghost Nicole's room (multisampled, color and stencil, no depth test or write:
+    // depthcontrol 8701): on the Xenos it clears only the room's box, given by the clear's own vertices, which then
+    // draws with exactly that box as its scissor. Cleared whole, the scene outside the box was gone and the frame went
+    // black around it. Such a clear waits for the next draw and is done inside that draw's scissor (a copy or a
+    // Swap first does it whole).
+    // The single-sampled ones of that shape too: the fight's third phase clears a box around each ghost necromorph
+    // that way, with the game's colors (401480A0 is orange-yellow); cleared whole, the screen went yellow.
+    const bool es_8701 = REXCVAR_GET(ds2_borrado_rectangulo) && (r[g::XE_GPU_REG_RB_MODECONTROL] & 0x7) == 4 &&
+                         (depth_control & 0xFFFF) == 0x8701;
+    // Its rectangles and color from its vertices (LeerBorradoD3D): a single-sampled one is done at once, each rectangle
+    // on its own; a multisampled one keeps waiting for its box (its vertices are in the alias's pixels), with their
+    // color. Its depth is left alone (Z off): cleared to the far plane, the ghosts in the box drew over the walls
+    // in front of them.
+    const bool con_vertices = es_8701 && LeerBorradoD3D(Register(g::XE_GPU_REG_VGT_DRAW_INITIATOR) >> 16);
+    const bool por_rectangulos = con_vertices && !msaa;
+    const bool diferir = es_8701 && !por_rectangulos;
+    std::vector<rex::x360::RegistrosCopia> copias_rectangulos;
+    auto emitir = [&](rex::x360::RegistrosCopia c) {
+      if (es_8701 && (c.rb_copy_control & (1u << 9))) c.rb_copy_control |= rex::x360::kCopiaSoloEstencil;
+      if (por_rectangulos) {
+        copias_rectangulos.push_back(c);
+      } else if (diferir) {
+        if (borrados_diferidos_.empty() && borrados_aplazados_log_ < 4) {
+          ++borrados_aplazados_log_;
+          REXLOG_INFO("[gpu] Direct3D clear (msaa {}, depthcontrol {:08X}) deferred to the next draw's scissor",
+                      msaa, depth_control);
+        }
+        borrados_diferidos_.push_back(c);
+      } else {
+        destinos_->Copiar(c);
+      }
+    };
     auto clear_depth_at = [&](uint32_t edram_base, std::string& what) {
       rex::x360::RegistrosCopia c = base;
       c.rb_depth_info = (depth_info & ~uint32_t(0xFFF)) | (edram_base & 0xFFF);
       c.rb_copy_control = 4u | (1u << 9) | kNullCommand;
       c.rb_depth_clear = depth_value;
-      destinos_->Copiar(c);
+      emitir(c);
       what += fmt::format(" z={:03X}->{:08X}", edram_base & 0xFFF, depth_value);
     };
     std::string what;
@@ -1437,7 +1559,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // The color: the multisampled ones were all seen clearing to 0. A single-sampled one takes what Direct3D's clear
     // shader writes, the pixel shader's c0 (RGBA8 for the renderer's clear).
     uint32_t color = 0;
-    if (!msaa) {
+    if (con_vertices) {
+      color = borrado_color_;
+    } else if (!msaa) {
       for (uint32_t j = 0; j < 4; ++j) {
         float v;
         std::memcpy(&v, &registers_[0x4400 + j], 4);
@@ -1449,7 +1573,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       c.rb_copy_control = 0u | (1u << 8) | kNullCommand;
       c.rb_color_clear = color;
       c.rb_color_clear_lo = 0;
-      destinos_->Copiar(c);
+      emitir(c);
       what += fmt::format(" c0={:03X}", c0_base);
       if (color) what += fmt::format("={:08X}", color);
     }
@@ -1481,13 +1605,34 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         c.rb_copy_control = 0u | (1u << 8) | kNullCommand;
         c.rb_color_clear = 0;
         c.rb_color_clear_lo = 0;
-        destinos_->Copiar(c);
+        emitir(c);
         what += fmt::format(" c0={:03X} (by the depth over it)", c0_base);
       }
     }
+    if (por_rectangulos) {
+      for (const auto& q : borrado_rects_) {
+        const float rect[6] = {float(q[0]), float(q[1]), float(q[2]), float(q[1]), float(q[0]), float(q[3])};
+        std::memcpy(memory_->TranslateVirtual<uint8_t*>(clear_rect_), rect, sizeof(rect));
+        for (const auto& c : copias_rectangulos) {
+          destinos_->Copiar(c);
+        }
+      }
+    }
+    if (con_vertices && borrados_d3d_vistos_.size() < 64) {
+      const auto& q = borrado_rects_.front();
+      const uint64_t clave = (uint64_t(msaa) << 62) | (uint64_t(borrado_rects_.size()) << 32) | color;
+      if (borrados_d3d_vistos_.insert(clave).second) {
+        REXLOG_INFO("[gpu] Direct3D clear from its vertices: msaa {}, {} rectangle(s), color {:08X}, first "
+                    "({},{})-({},{}){}",
+                    msaa, borrado_rects_.size(), color, q[0], q[1], q[2], q[3],
+                    por_rectangulos ? ", done in them" : ", deferred to the next draw's box");
+      }
+    }
     ++clears_;
-    if (clear_shapes_.insert(what).second && clear_shapes_.size() <= 32) {
-      REXLOG_INFO("[gpu] clear shape: msaa {}, mode {}:{}", msaa, r[g::XE_GPU_REG_RB_MODECONTROL] & 0x7, what);
+    if (clear_shapes_.insert(what + fmt::format(" dc {:08X}{}", depth_control, diferir ? " deferred" : "")).second &&
+        clear_shapes_.size() <= 128) {
+      REXLOG_INFO("[gpu] clear shape: msaa {}, mode {}:{}; depthcontrol {:08X}{}", msaa,
+                  r[g::XE_GPU_REG_RB_MODECONTROL] & 0x7, what, depth_control, diferir ? ", deferred to a box" : "");
     }
     // Single-sampled ones counted apart: they are new, and their game clear color (PS c0) tells whether 0 is right.
     if (msaa ? clears_logged_ < 12 : clears_logged_1x_ < 8) {
@@ -1936,6 +2081,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t vs_physical_ = 0;
   uint32_t syncs_reported_ = 0;
   uint32_t skip_mode_ = 0, capture_after_skip_ = 0, skip_resume_ = 0;
+  std::vector<rex::x360::RegistrosCopia> borrados_diferidos_;  // EmulateClear: clears waiting for the next draw
   uint64_t skipped_by_mode_ = 0;
   uint64_t clears_logged_1x_ = 0;
   std::unordered_set<uint64_t> glow_logged_;

@@ -1,0 +1,365 @@
+Depth resolves read as 8_8_8_8 color get the guest's depth word in bytes (stencil in X, depth's bytes in Y..W), made
+from the depth target at each resolve to a base such a read was seen at; depth clears of the stencil only
+(kCopiaSoloEstencil); and a resolve from the left edge less than 32 texels narrower than the pitch goes into the
+full-size texture already at its address instead of one of its own width. Dead Space 2's ghost necromorphs (final
+fight) take their mask from the stencil byte of a depth copy, its clears around them leave depth alone, and their boxes
+touching the left edge were resolved into textures the shaders did not read.
+
+--- a/include/rex/x360/destinos.h
++++ b/include/rex/x360/destinos.h
+@@ -47,6 +47,9 @@
+   // Fetch constant 0 as vertices: the copy rectangle (D3D9 puts it there).
+   uint32_t fetch_vertices[2] = {};
+ };
++// Not a Xenos bit (RB_COPY_CONTROL leaves bit 30 unused): a depth clear of the stencil only, the depth kept. Direct3D's
++// clears with depthcontrol 8701 (color and stencil, Z off) are emulated as copies, which otherwise clear both.
++constexpr uint32_t kCopiaSoloEstencil = 1u << 30;
+ 
+ // Fetch constant 0 as a texture at the time of the Swap: VdSwap writes it.
+ struct TexturaSwap {
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -225,13 +225,30 @@
+   // instead of Full ones. rop_sin_barrera_: render target writes since the last barrier that made them visible to
+   // sampling; copia3d_pendiente_: a copy since then, which the next draw or clear waits for.
+   // modos_signo (4 ints, per destination channel): 0 copy, 1 signed 8-bit, 2 biased (2x - 1); nullptr: plain copy.
++  // bytes_profundidad: a depth source written to a color destination as the guest's 32-bit depth word in bytes
++  // (BytesProfundidad).
+   bool Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto, ImagenDk& destino,
+-                uint32_t dx, uint32_t dy, const int32_t* modos_signo = nullptr);
++                uint32_t dx, uint32_t dy, const int32_t* modos_signo = nullptr, bool bytes_profundidad = false);
+   bool rop_sin_barrera_ = true;
+   bool copia3d_pendiente_ = false;
+   uint64_t copias_3d_ = 0, barreras_fragmentos_ = 0;
+-  DkShader fs_copia_color_{}, fs_copia_profundidad_{}, fs_copia_signo_{};
+-  bool fs_copia_color_valido_ = false, fs_copia_profundidad_valido_ = false, fs_copia_signo_valido_ = false;
++  DkShader fs_copia_color_{}, fs_copia_profundidad_{}, fs_copia_signo_{}, fs_bytes_profundidad_{};
++  bool fs_copia_color_valido_ = false, fs_copia_profundidad_valido_ = false, fs_copia_signo_valido_ = false,
++       fs_bytes_profundidad_valido_ = false;
++  // A depth resolve fetched as 8_8_8_8 color: the GPU reads the bytes of the 32-bit word the resolve wrote (depth in
++  // the top 24 bits, stencil in the low 8), so X is the stencil and Y..W the depth's bytes from the lowest. The host
++  // resolve holds depth only (its 3D copy writes no stencil), read as depth in every channel. Dead Space 2's ghost
++  // necromorphs (final fight) take their mask from that X: the stencil their draws wrote, 255 on them and 0 around;
++  // read as depth they came out faint. So the resolves to a base such a fetch was seen reading get a color image
++  // of those bytes, made from the depth target at each resolve (CopiarProfundidad), sampled instead (texturas.cpp).
++  struct BytesProfundidad {
++    ImagenDk imagen;
++    uint64_t version = UINT64_MAX;  // the resolve's version it was made with
++  };
++  std::unordered_map<uint32_t, BytesProfundidad> bytes_profundidad_;
++  std::unordered_set<uint32_t> bases_bytes_profundidad_;
++  void HacerBytesProfundidad(const ImagenDk& profundidad, uint32_t base, const ImagenDk& resuelta, int32_t x0,
++                             int32_t y0, uint32_t ancho, uint32_t alto, uint32_t dx, uint32_t dy);
+   // A resolved texture sampled with signed or biased components (TextureSign 1 or 2): the GPU applies them while
+   // fetching, the host image holds the unsigned values, so a converted copy is sampled instead (texturas.cpp).
+   struct ConvertidaSigno {
+@@ -293,6 +310,10 @@
+   DkGpuAddr volcado_gpu_ = 0;
+   uint32_t volcado_usados_ = 0, volcados_ = 0;
+   std::vector<EntradaVolcado> volcado_;
++  // The width of the texture a resolve writes (see Copiar): the pitch, or the resolve's own width when it starts at the
++  // left edge and is narrower than the pitch by less than 32 texels (the rest is padding), unless the address already
++  // has a texture of the full pitch and height: then it is a box in it.
++  uint32_t AnchoResuelta(uint32_t base, int32_t x0, uint32_t ancho_resolve, uint32_t pitch, uint32_t alto) const;
+   Resuelta* ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato, bool intercambio_rb,
+                             bool profundidad);
+   bool CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat formato, uint32_t ancho, uint32_t alto,
+@@ -307,8 +328,9 @@
+   void HacerBorradoPendiente(ImagenDk& destino);
+   // A clear of a rectangle smaller than the target, done now inside it (Copiar and BorrarProfundidad clear whole
+   // targets otherwise). The final fight of Dead Space 2 clears only the box of ghost Nicole's room.
++  // solo_estencil: a depth target's stencil only, its depth kept (kCopiaSoloEstencil).
+   void BorrarRectangulo(ImagenDk& destino, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const float* color,
+-                        float z, uint8_t estencil);
++                        float z, uint8_t estencil, bool solo_estencil = false);
+   bool RectanguloParcial(const ImagenDk& destino, int32_t x0, int32_t y0, int32_t x1, int32_t y1) const {
+     return x0 > 0 || y0 > 0 || x1 < int32_t(destino.ancho) || y1 < int32_t(destino.alto);
+   }
+@@ -470,8 +492,9 @@
+   uint32_t PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint32_t& ancho, uint32_t& alto, bool& puntual,
+                            uint64_t& valido_hasta);
+   // formato_vista: DkImageFormat_None keeps the image's; a compatible one reinterprets it (signed, sRGB).
++  // estencil: a depth image's stencil (unsigned integer) instead of its depth.
+   uint32_t VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint16_t swizzle_host,
+-                   DkImageFormat formato_vista = DkImageFormat_None);
++                   DkImageFormat formato_vista = DkImageFormat_None, bool estencil = false);
+   uint32_t SamplerDe(const uint32_t* f, bool puntual);
+   uint32_t VaciaDe(uint16_t tipo_shader) const;
+   bool LeerNivel(uint64_t direccion, bool mosaico, uint32_t pitch_bloques, uint64_t fila_bytes, const FormatoDk& tf,
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -305,6 +305,23 @@
+ } copia;
+ void main() {
+   gl_FragDepth = texelFetch(origen, ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy, 0).r;
++}
++)";
++
++// A depth target as the guest's 32-bit depth word in bytes (RenderDk::BytesProfundidad): the stencil in R, the 24-bit
++// depth's bytes from the lowest in G, B, A.
++constexpr const char* kFsBytesProfundidad = R"(#version 460
++layout(binding = 0) uniform sampler2D origen;
++layout(binding = 1) uniform usampler2D estencil;
++layout(std140, binding = 0) uniform Copia {
++  ivec4 desplazamiento;
++} copia;
++layout(location = 0) out vec4 color;
++void main() {
++  ivec2 p = ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy;
++  uint z = uint(clamp(texelFetch(origen, p, 0).r, 0.0, 1.0) * 16777215.0 + 0.5);
++  uint s = texelFetch(estencil, p, 0).r & 0xFFu;
++  color = vec4(float(s), float(z & 0xFFu), float((z >> 8) & 0xFFu), float(z >> 16)) / 255.0;
+ }
+ )";
+ 
+@@ -604,10 +621,12 @@
+ }
+ 
+ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
+-                        ImagenDk& destino, uint32_t dx, uint32_t dy, const int32_t* modos_signo) {
++                        ImagenDk& destino, uint32_t dx, uint32_t dy, const int32_t* modos_signo,
++                        bool bytes_profundidad) {
+   const bool z = destino.profundidad;
+   if (!vs_salida_valido_ || !(z ? fs_copia_profundidad_valido_ : fs_copia_color_valido_) ||
+-      (modos_signo && (z || !fs_copia_signo_valido_))) {
++      (modos_signo && (z || !fs_copia_signo_valido_)) ||
++      (bytes_profundidad && (z || !origen.profundidad || !fs_bytes_profundidad_valido_))) {
+     return false;
+   }
+   AsegurarTrabajo();
+@@ -621,7 +640,11 @@
+   if (modos_signo) {
+     std::memcpy(ubo.cpu + sizeof(desplazamiento), modos_signo, 4 * sizeof(int32_t));
+   }
+-  const uint32_t ranura = VistaDe(origen, 0x688, z ? 0 /* RRRR */ : 0x688);
++  const uint32_t ranura = VistaDe(origen, 0x688, z || bytes_profundidad ? 0 /* RRRR */ : 0x688);
++  const uint32_t ranura_estencil = bytes_profundidad ? VistaDe(origen, 0x688, 0, DkImageFormat_None, true) : 0;
++  if (bytes_profundidad && !ranura_estencil) {
++    return false;
++  }
+   DkCmdBuf cmd = nucleo_.comandos();
+   MarcarGpu(kGpuCopias);
+   if (transferencia_sin_barrera_) {
+@@ -675,11 +698,16 @@
+   dkCmdBufBindDepthStencilState(cmd, &ds);
+   dkCmdBufBindVtxAttribState(cmd, nullptr, 0);
+   dkCmdBufBindVtxBufferState(cmd, nullptr, 0);
+-  const DkShader* shaders[2] = {&vs_salida_,
+-                                z ? &fs_copia_profundidad_ : modos_signo ? &fs_copia_signo_ : &fs_copia_color_};
++  const DkShader* shaders[2] = {&vs_salida_, z                   ? &fs_copia_profundidad_
++                                             : bytes_profundidad ? &fs_bytes_profundidad_
++                                             : modos_signo       ? &fs_copia_signo_
++                                                                 : &fs_copia_color_};
+   dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);
+   dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo.gpu, 256);
+   dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura, 0));
++  if (bytes_profundidad) {
++    dkCmdBufBindTexture(cmd, DkStage_Fragment, 1, dkMakeTextureHandle(ranura_estencil, 0));
++  }
+   dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
+   ++copias_3d_;
+   copia3d_pendiente_ = true;
+@@ -979,6 +1007,23 @@
+               profundidad ? " (profundidad)" : "");
+   ++generacion_texturas_;  // that address is now sampled from the resolved texture
+   return &resueltas_.emplace(base, std::move(r)).first->second;
++}
++
++uint32_t RenderDk::AnchoResuelta(uint32_t base, int32_t x0, uint32_t ancho_resolve, uint32_t pitch,
++                                 uint32_t alto) const {
++  if (!(x0 == 0 && ancho_resolve < pitch && ancho_resolve + 32 > pitch)) {
++    return pitch;
++  }
++  if (const auto it = resueltas_.find(base);
++      it != resueltas_.end() && it->second.imagen.ancho == pitch && it->second.imagen.alto == alto) {
++    return pitch;
++  }
++  const auto o = resueltas_otras_.lower_bound(std::make_tuple(base, pitch, alto, 0u));
++  if (o != resueltas_otras_.end() && std::get<0>(o->first) == base && std::get<1>(o->first) == pitch &&
++      std::get<2>(o->first) == alto) {
++    return pitch;
++  }
++  return ancho_resolve;
+ }
+ 
+ const ImagenDk* RenderDk::TexturaResuelta(uint32_t direccion, uint32_t ancho, uint32_t alto) {
+@@ -1156,9 +1201,11 @@
+       // the rest is padding: the texture is created at that width, or it is sampled across the padding too (with
+       // nfsmw_resolucion_interna = escena_960x540 the 240-wide bloom lived in a 256-wide texture and the bloom,
+       // shadows and reflections came out shifted to the left). At 1280x720 every resolved width is a multiple of 32.
++      // Dead Space 2's final fight resolves boxes around its ghosts from the left edge (0 to 1264) into its full-size
++      // textures: made 1264 wide, they went into an image of their own while the shaders, fetching 1280x720, read the
++      // older full one (the scene, the ghost and its mask from another box). AnchoResuelta keeps those in the full one.
+       const uint32_t ancho_resolve = uint32_t(x1 - x0);
+-      const uint32_t ancho_textura =
+-          x0 == 0 && ancho_resolve < pitch_destino && ancho_resolve + 32 > pitch_destino ? ancho_resolve : pitch_destino;
++      const uint32_t ancho_textura = AnchoResuelta(base & 0x1FFFFFFF, x0, ancho_resolve, pitch_destino, alto_destino);
+       resuelta = ObtenerResuelta(base & 0x1FFFFFFF, ancho_textura, alto_destino, formato_destino,
+                                  (info_destino >> 24) & 0x1, false);
+     }
+@@ -1288,10 +1335,12 @@
+     return;
+   }
+   SombraMinimoAntesDeBorrar(*profundidad);
+-  if (int32_t x0, y0, x1, y1; Rectangulo(reg, pitch, x0, y0, x1, y1) && RectanguloParcial(*profundidad, x0, y0, x1, y1)) {
+-    // Only the copy's rectangle, as for color (Copiar).
++  const bool solo_estencil = (reg.rb_copy_control & kCopiaSoloEstencil) != 0;
++  if (int32_t x0, y0, x1, y1; Rectangulo(reg, pitch, x0, y0, x1, y1) &&
++                              (solo_estencil || RectanguloParcial(*profundidad, x0, y0, x1, y1))) {
++    // Only the copy's rectangle, as for color (Copiar); a stencil-only clear that way too, whatever its size.
+     BorrarRectangulo(*profundidad, x0, y0, x1, y1, nullptr, float(reg.rb_depth_clear >> 8) / 16777215.0f,
+-                     uint8_t(reg.rb_depth_clear & 0xFF));
++                     uint8_t(reg.rb_depth_clear & 0xFF), solo_estencil);
+     ++borrados_profundidad_;
+     return;
+   }
+@@ -1336,8 +1385,38 @@
+   OlvidarEstado();
+ }
+ 
++void RenderDk::HacerBytesProfundidad(const ImagenDk& profundidad, uint32_t base, const ImagenDk& resuelta, int32_t x0,
++                                     int32_t y0, uint32_t ancho, uint32_t alto, uint32_t dx, uint32_t dy) {
++  BytesProfundidad& b = bytes_profundidad_[base];
++  b.version = UINT64_MAX;
++  const bool nueva = !b.imagen.viva || b.imagen.ancho != resuelta.ancho || b.imagen.alto != resuelta.alto;
++  if (nueva) {
++    if (b.imagen.viva) {
++      DestruirImagen(b.imagen);
++    }
++    if (!CrearImagen(b.imagen, DkImageType_2D, DkImageFormat_RGBA8_Unorm, resuelta.ancho, resuelta.alto, 1, 1,
++                     DkImageFlags_UsageRender, "profundidad en bytes")) {
++      return;
++    }
++    REXLOG_INFO("[deko3d] resuelta de profundidad en {:08X} ({}x{}) leida como color: sus bytes (estencil en X) en "
++                "una imagen aparte",
++                base, resuelta.ancho, resuelta.alto);
++  }
++  bool ok;
++  if (nueva && int32_t(dx) == x0 && int32_t(dy) == y0) {
++    // New: all the target holds, at the same place (a partial resolve leaves the rest as an earlier one had it).
++    ok = Copiar3D(profundidad, 0, 0, std::min(profundidad.ancho, b.imagen.ancho),
++                  std::min(profundidad.alto, b.imagen.alto), b.imagen, 0, 0, nullptr, true);
++  } else {
++    ok = Copiar3D(profundidad, uint32_t(x0), uint32_t(y0), ancho, alto, b.imagen, dx, dy, nullptr, true);
++  }
++  if (ok) {
++    b.version = resuelta.version + 1;  // CopiarProfundidad counts this resolve right after
++  }
++}
++
+ void RenderDk::BorrarRectangulo(ImagenDk& destino, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const float* color,
+-                                float z, uint8_t estencil) {
++                                float z, uint8_t estencil, bool solo_estencil) {
+   x0 = std::max(x0, 0);
+   y0 = std::max(y0, 0);
+   x1 = std::min(x1, int32_t(destino.ancho));
+@@ -1363,7 +1442,7 @@
+   const DkScissor tijera = {uint32_t(x0), uint32_t(y0), uint32_t(x1 - x0), uint32_t(y1 - y0)};
+   dkCmdBufSetScissors(cmd, 0, &tijera, 1);
+   if (destino.profundidad) {
+-    dkCmdBufClearDepthStencil(cmd, true, z, 0xFF, estencil);
++    dkCmdBufClearDepthStencil(cmd, !solo_estencil, z, 0xFF, estencil);
+   } else {
+     dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, color[0], color[1], color[2], color[3]);
+   }
+@@ -1374,8 +1453,9 @@
+   const uint64_t clave = (uint64_t(destino.profundidad) << 63) | (uint64_t(uint32_t(x0)) << 42) |
+                          (uint64_t(uint32_t(y0)) << 28) | (uint64_t(uint32_t(x1)) << 14) | uint32_t(y1);
+   if (borrados_rectangulo_vistos_.size() < 512 && borrados_rectangulo_vistos_.insert(clave).second) {
+-    REXLOG_INFO("[deko3d] clear of a rectangle only: {} {}x{} ({},{})-({},{})", destino.profundidad ? "depth" : "color",
+-                destino.ancho, destino.alto, x0, y0, x1, y1);
++    REXLOG_INFO("[deko3d] clear of a rectangle only: {} {}x{} ({},{})-({},{})",
++                destino.profundidad ? (solo_estencil ? "stencil" : "depth") : "color", destino.ancho, destino.alto, x0,
++                y0, x1, y1);
+   }
+ }
+ 
+@@ -1527,8 +1607,7 @@
+   const uint32_t formato_textura = ((info >> 16) & 0x1) ? 23 : 22;  // k_24_8_FLOAT : k_24_8
+   // Its width as for color (the pitch is padded to 32 texels; see Copiar).
+   const uint32_t ancho_resolve = uint32_t(x1 - x0);
+-  const uint32_t ancho_textura =
+-      x0 == 0 && ancho_resolve < pitch_destino && ancho_resolve + 32 > pitch_destino ? ancho_resolve : pitch_destino;
++  const uint32_t ancho_textura = AnchoResuelta(base, x0, ancho_resolve, pitch_destino, alto_destino);
+   Resuelta* resuelta = ObtenerResuelta(base, ancho_textura, alto_destino, formato_textura, false, true);
+   if (!resuelta) {
+     return;
+@@ -1549,6 +1628,10 @@
+   }
+   HacerBorradoPendiente(*profundidad);
+   CompletarBanda(*profundidad, uint32_t(std::max(y1, 0)), false, 0);
++  // Read as color bytes somewhere (BytesProfundidad): made now, from the target, with the version this resolve gets.
++  if (bases_bytes_profundidad_.count(base)) {
++    HacerBytesProfundidad(*profundidad, base, resuelta->imagen, x0, y0, ancho, alto, dx, dy);
++  }
+   const bool sin_copia = REXCVAR_GET(nfsmw_nativo_resolver_sin_copia);  // read each time: the game can switch it (ds2 safe mode)
+   const bool entero = x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == profundidad->ancho &&
+                       alto == profundidad->alto && resuelta->imagen.ancho == profundidad->ancho &&
+@@ -1961,6 +2044,12 @@
+   fs_copia_signo_valido_ = signo.ok && nucleo_.CargarShader(fs_copia_signo_, signo.dksh, "copia con signo");
+   if (!fs_copia_signo_valido_) {
+     REXLOG_ERROR("[deko3d] no se pudo compilar la copia con signo: {}", signo.log);
++  }
++  const deko::Compilador::Resultado bytes = compilador_.Compilar(false, kFsBytesProfundidad);
++  fs_bytes_profundidad_valido_ =
++      bytes.ok && nucleo_.CargarShader(fs_bytes_profundidad_, bytes.dksh, "profundidad en bytes");
++  if (!fs_bytes_profundidad_valido_) {
++    REXLOG_ERROR("[deko3d] no se pudo compilar la profundidad en bytes: {}", bytes.log);
+   }
+   const deko::Compilador::Resultado z = compilador_.Compilar(false, kFsCopiaProfundidad);
+   fs_copia_profundidad_valido_ = z.ok && nucleo_.CargarShader(fs_copia_profundidad_, z.dksh, "copia de profundidad");
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -39,6 +39,10 @@
+ REXCVAR_DEFINE_BOOL(nfsmw_dk_cubo_cara0, false, "NFSMW",
+                     "deko3d: un cubo que un shader lee como textura 2D da su primera cara, como en la Xenos. false = "
+                     "una textura vacia, como antes (Dead Space 2: sospechosa de oscurecer la pelea final)");
++REXCVAR_DEFINE_BOOL(nfsmw_dk_profundidad_en_bytes, true, "NFSMW",
++                    "deko3d: una copia de profundidad leida como color 8_8_8_8 da los bytes de su palabra (estencil en "
++                    "X), como en la Xenos (Dead Space 2: la mascara de los necromorfos fantasma). false = la "
++                    "profundidad en todos los canales, como antes");
+ // The Vulkan path's texture checks, same names and defaults (nfsmw_nativo_dibujos.cpp is not in the deko3d build).
+ REXCVAR_DEFINE_INT32(nfsmw_nativo_huellas_muestreo, 8, "NFSMW",
+                      "Renderizador nativo: las texturas ESTABLES se recomprueban con la huella de una muestra (primer y "
+@@ -238,9 +242,9 @@
+ }
+ 
+ uint32_t RenderDk::VistaDe(const ImagenDk& imagen, uint32_t swizzle_guest, uint16_t swizzle_host,
+-                           DkImageFormat formato_vista) {
++                           DkImageFormat formato_vista, bool estencil) {
+   const uint64_t clave = (imagen.serie << 24) ^ (uint64_t(swizzle_guest & 0xFFF) << 12) ^ swizzle_host ^
+-                         (uint64_t(formato_vista) << 56);
++                         (uint64_t(formato_vista) << 56) ^ (uint64_t(estencil) << 55);
+   if (const auto it = vistas_.find(clave); it != vistas_.end()) {
+     return it->second;
+   }
+@@ -256,7 +260,7 @@
+     v.format = formato_vista;
+   }
+   if (imagen.profundidad) {
+-    v.dsSource = DkDsSource_Depth;
++    v.dsSource = estencil ? DkDsSource_Stencil : DkDsSource_Depth;
+   }
+   EscribirDescriptorImagen(ranura, v);
+   vistas_.emplace(clave, ranura);
+@@ -619,8 +623,19 @@
+       ancho_out = resuelta->ancho;
+       alto_out = resuelta->alto;
+       if (resuelta->profundidad) {
+-        // A depth copy (k_24_8): depth in R, which the fetch swizzle distributes; read unfiltered.
+         puntual = true;
++        // Fetched as 8_8_8_8 color: the bytes of the guest's depth word (RenderDk::BytesProfundidad), made at the
++        // resolves to this base from the next one on.
++        if ((f[1] & 0x3F) == 6 && REXCVAR_GET(nfsmw_dk_profundidad_en_bytes)) {
++          const uint32_t dir = base & 0x1FFFFFFF;
++          bases_bytes_profundidad_.insert(dir);
++          const auto it = bytes_profundidad_.find(dir);
++          if (it != bytes_profundidad_.end() && it->second.imagen.viva && it->second.version == resuelta->version &&
++              it->second.imagen.ancho == resuelta->ancho && it->second.imagen.alto == resuelta->alto) {
++            return VistaDe(it->second.imagen, swizzle, kSwizzleRGBA);
++          }
++        }
++        // A depth copy (k_24_8): depth in R, which the fetch swizzle distributes; read unfiltered.
+         return VistaDe(*resuelta, swizzle, kSwizzleRRRR);
+       }
+       // The emulation's copy swaps channels in memory (copy_dest_swap) and the fetch swizzle undoes it; here the copy
