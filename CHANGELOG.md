@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.3.0 (TU2) — 2026-10-27
+
+The whole game can be played through: the final fight (chapter 15) can now be beaten (confirmed on the console).
+Some rendering defects remain in it. At stock clocks the game runs at 540p and a stable 30 fps. With a mild overclock it
+runs at 720p. Only the NRO changes.
+
+- **The final fight's ghost scenes**: in this fight the game clears and redraws a box around ghost Nicole and around each
+  ghost necromorph. It uses Direct3D clears that touch only colour and stencil (depthcontrol 8701). These were done over
+  the whole surface, so the scene outside the box went black or yellow and the ghosts drew over the walls in front of
+  them. Fixes:
+  - The rectangles and colour of such a clear are now read from its own vertices. A clear the console does
+    multisampled waits for the next draw and covers only that draw's scissor box (SDK patch 0018).
+  - These clears keep the depth and clear only the stencil.
+  - The edge strips of each box are cleared as well, so the boxes no longer keep dark outlines.
+- **Ghost necromorphs barely visible**: the ghost pass reads its stencil mask from a depth copy fetched as an 8-bit colour
+  texture, and the renderer gave it the depth value instead. A depth copy read that way now gets its bytes as the Xenos
+  lays them out: stencil, then depth (SDK patch 0019, `nfsmw_dk_profundidad_en_bytes = false` turns it off).
+- A box resolved at the left edge of the screen landed in a texture narrower than the one the game reads (SDK patch 0019).
+- A cube texture read as 2D gets the empty texture again by default (`nfsmw_dk_cubo_cara0 = true` restores its first
+  face, 1.2.5).
+- Occlusion queries can be counted on the GPU (SDK patch 0017, `ds2_oclusion_real = true`). They are off by default:
+  the fixed answer stays.
+- The options menu (ZL + ZR + Minus) has a **SKIP** row for testing. It leaves one kind of draw out (lights, additive,
+  alpha-blended, quad lists, everything blended or alpha-tested), helps find which effect breaks a scene, and is not saved.
+
 ## 1.2.5 (TU2) — 2026-10-26
 
 Cutscenes at the end of chapter 11 and the door after the lift work again (confirmed on the console). Only the NRO
@@ -196,8 +221,9 @@ A/B lap (in 1.0.1 only the FPS counter is on by default).
 ### Known issues
 
 - Shadows show some self-shadowing bands and blotches (shadow acne) on characters and furniture.
-- At stock clocks the heaviest scenes drop to 12-16 fps; the light ones are limited by the 307 MHz GPU (~28 fps).
 - At stock clocks the intro video (and the other full-motion videos) stutters: the game decodes VP6 video in software
   on one thread, which needs more than one core at 1020 MHz. The screen still updates at 30 fps; overclocked the videos
   play nearly smoothly.
+- The final fight (chapter 15) still has rendering defects around the ghosts, though it can be beaten.
+- One room in chapter 8 has a black floor.
 - The final mix has no dynamics compression (`ds2_audio_sin_compresor=false` restores it, at a CPU cost).

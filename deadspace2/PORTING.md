@@ -4,10 +4,10 @@ Dead Space 2 (Xbox 360, Title Update 2) on the Nintendo Switch, as a homebrew NR
 done, every problem met on the way and what fixed it, and what should carry over to the next Xbox 360 → Switch port.
 Release history: [CHANGELOG.md](../CHANGELOG.md). Installation: [INSTALL.md](../INSTALL.md).
 
-## Status (1.2.5)
+## Status (1.3.0)
 
-Playable. Tested through the early chapters, the decompression scene, a space walk and a boss fight (saves reached
-chapter 3); a full playthrough is not verified yet.
+Playable from start to end: the final fight (chapter 15) can be beaten. Some rendering defects remain there. In 1.3.0
+it runs at a stable 30 fps at 540p at stock clocks and at 720p with a mild overclock. The table below is older measurements.
 
 | | Stock clocks (CPU 1020 MHz, GPU 307 MHz) | Overclocked (CPU 1785 MHz, GPU 614-768 MHz) |
 | --- | --- | --- |
@@ -156,6 +156,13 @@ clears (`EmulateClear`):
   color in PS c0. The quarter-size particle buffer needs it (smoke piled up frame after frame). The same shape also
   writes the 80-wide float exposure target with game data (c0 like 0.027 0 -18.4 1): that is **not** a clear.
   Clearing every single-sampled full-surface draw wiped the scene depth (the lamps' 64x8 visibility pass).
+- **Colour and stencil clears with Z off (depthcontrol 8701)** take their rectangles and colour from the clear's own
+  vertices. `ClearRects` writes 3 vertices of 7 floats per rectangle in fetch constant 0. Its PS outputs the vertex
+  colour, so PS c0 holds garbage. These clears clear the stencil and keep the depth (`kCopiaSoloEstencil`). A
+  multisampled one is deferred to the next draw's scissor box. The final fight's ghost boxes depend on all of this.
+  Cleared whole, the screen went black or yellow outside them.
+- **A depth copy fetched as 8_8_8_8** (the ghost composite's stencil mask) gets the Xenos' bytes: stencil in X, then
+  depth from the lowest byte (SDK patch 0019).
 
 ### Targets and resolves
 
